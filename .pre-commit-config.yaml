@@ -1,0 +1,14 @@
+# For teams using the pre-commit framework (https://pre-commit.com):
+#   pip install pre-commit && pre-commit install
+# Runs the PHI guard on every commit and blocks on failure. Equivalent to the
+# plain-git hook in .githooks/pre-commit (enable that with:
+#   git config core.hooksPath .githooks).
+repos:
+  - repo: local
+    hooks:
+      - id: phi-guard
+        name: PHI guard (data/raw gitignored; no patient tokens in shipped files)
+        entry: python -m pytest tests/test_phi_guard.py -q
+        language: system
+        pass_filenames: false
+        always_run: true

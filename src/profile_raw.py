@@ -16,6 +16,7 @@ no wall-clock or randomness enters the analysis path (ASSUMPTIONS §16).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from dataclasses import dataclass, field
@@ -467,6 +468,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--dict", default=str(DEFAULT_DICT_PATH))
     ap.add_argument("--period", default=DEFAULT_CONFIG.target_period)
     ap.add_argument("--no-write", action="store_true", help="profile but do not edit docs")
+    ap.add_argument(
+        "--json", action="store_true",
+        help="emit the summary as JSON (deterministic, aggregate-only) for CI/tools",
+    )
     args = ap.parse_args(argv)
 
     cfg = Config(target_period=args.period)
@@ -476,6 +481,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         config=cfg,
         write=not args.no_write,
     )
+
+    if args.json:
+        # Deterministic, aggregate-only. sort_keys => byte-identical for same input.
+        print(json.dumps(summary, sort_keys=True, indent=2, default=list))
+        return 0
+
     print("Phase A profile summary (aggregates only):")
     for k, v in summary.items():
         print(f"  {k}: {v}")

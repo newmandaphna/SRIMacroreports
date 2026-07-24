@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# PHI firewall pre-commit hook. Blocks the commit if the PHI guarantee is
+# violated (data/raw payload tracked, stray tracked file under data/, or a
+# patient token leaking into a shipped file). This repo is public; a bad commit
+# here is a PHI incident, so this must fail closed.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+py="$(command -v python3 || command -v python || true)"
+if [ -z "$py" ]; then
+  echo "pre-commit: python not found; cannot run the PHI guard. Aborting commit." >&2
+  exit 1
+fi
+
+if ! "$py" -m pytest tests/test_phi_guard.py -q >/tmp/phi_guard.$$ 2>&1; then
+  echo "-------------------------------------------------------------" >&2
+  echo "COMMIT BLOCKED: PHI guard failed (tests/test_phi_guard.py)." >&2
+  echo "This repo is public; committing patient-grain data is a PHI" >&2
+  echo "incident. Fix the finding below before committing." >&2
+  echo "-------------------------------------------------------------" >&2
+  cat /tmp/phi_guard.$$ >&2
+  rm -f /tmp/phi_guard.$$
+  exit 1
+fi
+rm -f /tmp/phi_guard.$$
