@@ -1,0 +1,12 @@
+Textbox12,SRI Practice - NewFeeSchedule,,,,,,,,
+Date Range: 2024-01-01 to 2026-07-31,,,,,,,,,
+,,,,,,,,,
+Provider,Patient,Date of Service,CPT/HCPCS Code,Modifier,Units,Billed Amount,Expected Amount,Charge Status,Encounter ID
+Dr Alice Rivera,P001,2026-07-02,90837,,1,"$250.00","$180.00",Posted,E1001
+Dr Alice Rivera,P001,2026-07-02,90785,,1,"$40.00","$22.00",Posted,E1001
+Dr Bob Nguyen,P002,2026-07-15,99213,,1,"$150.00","$96.50",Posted,E1002
+Dr Bob Nguyen,P002,2026-07-15,90833,,1,"$90.00","$61.00",Posted,E1002
+Dr Alice Rivera,P003,2025-07-09,90837,,1,"$250.00","$180.00",Posted,E0901
+Dr Carol Smith,P004,2024-02-11,90853,,1,"$110.00","$70.00",Posted,E0801
+Dr Bob Nguyen,P002,2026-07-20,90837,,1,"$250.00","$180.00",Voided,E1003
+Dr Alice Rivera,P005,2026-07-22,90838,,2,"$180.00","$120.00",Posted,E1004
