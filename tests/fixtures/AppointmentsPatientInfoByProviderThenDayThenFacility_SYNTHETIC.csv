@@ -1,0 +1,7 @@
+Provider,Patient,Appointment Date,Facility,Appointment Status,Appointment Type,New Patient
+Dr Alice Rivera,P001,2026-07-02,Main Office,Kept,Therapy,No
+Dr Bob Nguyen,P002,2026-07-15,Main Office,Kept,Med Mgmt,No
+Dr Bob Nguyen,P006,2026-07-16,Main Office,No-Show,Intake,Yes
+Dr Alice Rivera,P003,2025-07-09,Telehealth,Kept,Therapy,No
+Dr Carol Smith,P004,2024-02-11,Main Office,Kept,Group,No
+Dr Alice Rivera,P007,2026-07-18,Main Office,Cancelled,Therapy,No
