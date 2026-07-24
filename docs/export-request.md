@@ -9,6 +9,15 @@ never get committed), and I'll run Phase A for real.
 **Report generation date assumed:** 2026-07-24 (today). Pull "as of" the latest
 available date so payment postings are as complete as possible.
 
+> **Gate 0 update (period granularity).** The compensation engine runs on **semi-monthly
+> pay periods** (`"YYYY-MM Period 1|2"`, split at day 15), and this project reconciled to
+> a dual-granularity model (ASSUMPTIONS §2): the pay period is the atomic unit, and monthly
+> reporting windows are built from **whole** pay periods. The **date range below is
+> unchanged** — a by-date-of-service pull over the full span already contains every pay
+> period. No need to export period-by-period; the pipeline slices pay periods from the
+> full range itself. Also provide a **roster snapshot** (provider→therapist map + active
+> status) exported from the engine for the period, per ASSUMPTIONS §1.
+
 ---
 
 ## The one rule that governs every export: **date basis = DATE OF SERVICE**

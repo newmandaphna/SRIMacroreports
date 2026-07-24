@@ -392,6 +392,8 @@ def run(
         "coverage_ok": bool(coverage[0]) if coverage else False,
         "coverage_detail": coverage[1] if coverage else "no data present",
         "rules_md_reconciled": config.rules_md_reconciled,
+        "rules_reconciled": tuple(sorted(config.rules_reconciled)),
+        "rules_unreconciled": config.unreconciled_sections(),
     }
 
 
@@ -423,10 +425,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "\nData present but prior-year coverage is short. Phases B-F stay "
             "blocked until coverage is met -- see docs/export-request.md."
         )
-    if not summary["rules_md_reconciled"]:
+    if summary["rules_unreconciled"]:
         print(
-            "\nNOTE: RULES.md is UNRECONCILED -- roster/period/code definitions use "
-            "documented defaults. Headline numbers remain provisional (ASSUMPTIONS §0)."
+            "\nNOTE: these engine-flagged sections are NOT yet reconciled: "
+            f"{', '.join(summary['rules_unreconciled'])}. They use documented defaults "
+            "(ASSUMPTIONS §0)."
+        )
+    else:
+        print(
+            "\nNOTE: roster/period/code DEFINITIONS are reconciled against the engine "
+            "(Gate 0). Implementation of them lands in Gates 1-3, and headline numbers "
+            "still require real data in data/raw/ (ASSUMPTIONS §0)."
         )
     return 0
 

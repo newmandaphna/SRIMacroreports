@@ -2,16 +2,21 @@
 
 Every value here mirrors a documented default in ASSUMPTIONS.md. The
 [RULES.md]-flagged definitions (provider roster, period naming, code handling)
-are UNRECONCILED against the compensation engine's RULES.md, which was not
-reachable when this was built (the SRIMacroreports repo was empty). The flag
-`rules_md_reconciled = False` records that fact: any headline number stays
-provisional until it flips True after a real reconciliation.
+were reconciled in Gate 0 against the compensation engine (newmandaphna/
+SRIcompensation -- there is no literal RULES.md file). `rules_reconciled` records
+which sections are **definitionally** reconciled; `rules_md_reconciled` is True
+only when all three are. Note: definition-reconciled is not the same as
+implemented -- the canonical-name loaders, dual-granularity periods, and
+non-session-code exclusion are wired in Gates 1-3.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import FrozenSet, Tuple
+
+# The three [RULES.md]-flagged areas that must be reconciled against the engine.
+RULES_SECTIONS: FrozenSet[str] = frozenset({"roster", "periods", "codes"})
 
 
 @dataclass(frozen=True)
@@ -48,9 +53,21 @@ class Config:
     # than being averaged.
     reconciliation_tolerance: Decimal = Decimal("0.01")
 
-    # §0 -- RULES.md reconciliation status. False until roster/period/code
-    # definitions are reconciled against the real compensation-engine RULES.md.
-    rules_md_reconciled: bool = False
+    # §0 -- reconciliation status against the compensation engine. Gate 0
+    # reconciled all three [RULES.md]-flagged areas (roster, periods, codes) at
+    # the DEFINITION level with source lines cited in ASSUMPTIONS.md §1-§3, §10.
+    # A section is listed here once its definition is settled against the engine;
+    # implementation of that definition lands in Gates 1-3.
+    rules_reconciled: FrozenSet[str] = RULES_SECTIONS
+
+    @property
+    def rules_md_reconciled(self) -> bool:
+        """True only when every [RULES.md]-flagged section is reconciled."""
+        return RULES_SECTIONS <= self.rules_reconciled
+
+    def unreconciled_sections(self) -> Tuple[str, ...]:
+        """Flagged sections not yet reconciled (deterministic order)."""
+        return tuple(sorted(RULES_SECTIONS - self.rules_reconciled))
 
 
 DEFAULT_CONFIG = Config()

@@ -75,12 +75,22 @@ def test_rendered_dictionary_contains_no_patient_tokens(tmp_path):
     assert "$" not in text  # no money *values* rendered, only dtype labels
 
 
-def test_profile_run_summary_flags_unreconciled_rules():
+def test_profile_run_summary_reports_reconciliation():
     summary = run(
         data_dir=FIXTURES,  # contains recognized fixtures + coverage
         dict_path=Path("/dev/null"),
         config=Config(),
         write=False,
     )
-    assert summary["rules_md_reconciled"] is False
+    # Gate 0 reconciled all three engine-flagged sections at the definition level.
+    assert summary["rules_md_reconciled"] is True
+    assert summary["rules_unreconciled"] == ()
+    assert set(summary["rules_reconciled"]) == {"roster", "periods", "codes"}
     assert summary["n_recognized"] >= 1
+
+
+def test_partial_reconciliation_is_reported():
+    from src.config import Config as Cfg
+    cfg = Cfg(rules_reconciled=frozenset({"roster", "codes"}))
+    assert cfg.rules_md_reconciled is False
+    assert cfg.unreconciled_sections() == ("periods",)

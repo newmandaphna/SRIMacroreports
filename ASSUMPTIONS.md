@@ -7,10 +7,11 @@ the default here first — the code reads its behavior from these choices.
 Legend:
 - **[DEFAULT]** — the choice I'll implement unless you say otherwise.
 - **[CONFIG]** — exposed as a config switch; all variants computed for comparison.
-- **[RULES.md]** — a definition that the compensation engine's `RULES.md` has already
-  settled. **I could not read `RULES.md` from this session** (see §0). Where marked, I
-  state the default I'd use *and* flag that it must be reconciled against `RULES.md`
-  before any number is trusted.
+- **[RULES.md]** — a definition the compensation engine has already settled. There is no
+  literal `RULES.md` file; the settled rules live in the engine's code
+  (`newmandaphna/SRIcompensation`). As of Gate 0 these are **reconciled against that
+  engine** with the source lines cited inline. `src/config.py` tracks which sections are
+  reconciled (`rules_reconciled`); a section still open is called out explicitly.
 
 ---
 
@@ -24,49 +25,102 @@ Legend:
   unchanged. It imports nothing from, and modifies nothing in, any other codebase.
 - **The repo is PUBLIC.** This raises the stakes on the PHI rule. `data/raw/` is
   gitignored and proven so (`git check-ignore`). Every committed artifact is aggregate.
-- **RULES.md is UNRECONCILED (decision: proceed with documented defaults).**
-  `SRIMacroreports` was **empty** when this landed — no compensation engine, no
-  `RULES.md`. The brief says to **reuse** the engine's settled definitions for
-  **provider roster, period naming, and code handling** rather than invent parallel
-  ones. Since that file is not yet reachable, every such definition below is marked
-  **[RULES.md]** and uses the documented default, and `config.rules_md_reconciled`
-  is `False`. **Before any headline number is trusted, these must be reconciled against
-  the real `RULES.md`** — paste it, or point me at the repo/path that holds it.
-- **No coupling, ever.** This analytics project will not import from, modify, or
-  entangle with the compensation engine. Read-only reuse of definitions only.
+- **RULES.md RECONCILED against the engine (Gate 0).** There is no literal `RULES.md`;
+  the settled rules live in the engine repo `newmandaphna/SRIcompensation`. Gate 0 read
+  it and reconciled the three flagged areas — **provider roster (§1), period naming (§2),
+  code handling (§3)** — with source lines cited inline. `config.rules_reconciled` now
+  records `{roster, periods, codes}` as **definitionally** reconciled. Two honest caveats:
+  (a) *definition reconciled ≠ implemented* — the canonical-name loaders, the
+  dual-granularity period model, and non-session-code exclusion are built in Gates 1–3;
+  (b) headline numbers still need real data (`data/raw/` is empty) before they mean
+  anything.
+- **No coupling, ever.** This analytics project does not import from, modify, or entangle
+  with the engine. Gate 0 was **read-only** reuse of its definitions. Where the analytics
+  needs live engine state (the provider roster), it consumes a **read-only snapshot as an
+  input** (see §1), never a code dependency.
 
 ---
 
-## 1. Provider roster  **[RULES.md]**
+## 1. Provider roster  **[RULES.md — reconciled]**
 
-- **[DEFAULT]** Use the roster/period/code definitions from the engine's `RULES.md`
-  verbatim once available. Until then, the roster is derived from providers **observed in
-  the charges export**, and every provider not on the settled roster is routed to an
-  **explicit exceptions bucket** (counted, reported), never silently included or dropped.
+- **Authoritative roster = the engine's roster**, i.e. `config.therapists` +
+  `provider_map`, seeded from the comp-matrix "Data" tab (`seed.py:68`) and thereafter
+  edited in the engine's Admin Center (the store is source of truth). Sizes observed:
+  **seed = 43** (`tests/test_seed_store.py:118`), **live = 48** (44 active / 4 inactive),
+  `provider_map` = 41 entries. `ProviderID → therapist` resolves through
+  `build_provider_index` (explicit map wins) — `engine.py:208-216`.
+- **[DECISION] Roster is a runtime *snapshot input*.** Because the roster drifts (43→48),
+  the analytics does not hardcode it and does not read the engine repo live. It consumes a
+  read-only roster snapshot (provider_map + therapist name/status/active) exported for the
+  period under analysis, alongside the Valant exports. No code coupling.
+- **Off-roster taxonomy (adopt the engine's, verbatim):**
+  - billed but not mapped to any therapist → `provider_not_in_config` (**block**) —
+    `engine.py:298`
+  - mapped but marked inactive, yet billed → `therapist_inactive` (**block**) —
+    `engine.py:313`
+  - on roster but zero billed sessions → `zero_sessions` (**warning**) — `engine.py:478`
+- **Carry the 41-vs-43 discrepancy by name.** 41 providers billed in the sample period vs
+  43 in the comp workbook; the 2 non-billers are expected salaried/new/inactive
+  (`Build Brief:215, 223`). Both sides surface in the exceptions report — never resolved
+  silently.
 - **Provider names in outputs: allowed.** Patient anything: never.
-- **Flag:** roster membership decides "active provider count" and roster-exclusion
-  reconciliation. Must match `RULES.md`.
 
-## 2. Period naming & boundaries  **[RULES.md]**
+## 2. Period naming & boundaries  **[RULES.md — reconciled; DUAL GRANULARITY]**
 
-- **[DEFAULT]** `PERIOD=YYYY-MM` names a calendar month by date of service. `2026-07` =
-  service dates 2026-07-01 00:00:00 through 2026-07-31 23:59:59.999, inclusive.
-- **Same period prior year** = the identically-named calendar month one year back
-  (2026-07 → 2025-07). No date-shifting to align weekdays; calendar-effect normalization
-  is handled separately (§10), not by moving boundaries.
-- **Boundary rule:** a session at 23:59 on the last day lands in that period and only
-  that period. Half-open interval `[start, next_month_start)` internally to avoid
-  double-counting. Tested (property test).
-- **Flag:** if `RULES.md` names periods differently (e.g. pay-period weeks, 4-4-5
-  calendar), that wins. Reconcile before trusting.
+The engine does **not** use calendar months. Its atomic period is a **semi-monthly pay
+period** split at day 15, identified by a free-text label `"{YYYY-MM} Period {1|2}"`
+(e.g. `2026-06 Period 1`) that the user names and that is the primary key for
+adjustments/history; the pay year is regex-parsed from the label
+(`views/run_period.py:773-779`, `history.py:14-24`). Period membership is the set of
+charge rows in the exported file, optionally narrowed by an **inclusive** date-of-service
+slice `[date_from, date_to]` (`importer.py:515-534`).
 
-## 3. Code handling (CPT/HCPCS)  **[RULES.md]**
+- **[DECISION] Dual granularity — the engine wins on the atomic unit; analytics rolls up.**
+  - **Atomic period = the engine's semi-monthly labeled DOS window.** `src/periods.py`
+    adopts: the label format `"{YYYY-MM} Period {1|2}"`, the day-15 split (Period 1 =
+    days 1–15 inclusive), inclusive DOS bounds, and year-from-label. (Built in Gate 1/3.)
+  - **Analytics reporting windows aggregate whole pay-periods up to calendar months.**
+    The practice-health headlines (current vs same period prior year, rolling 12, trailing
+    3 — §14) are composed of *whole* pay-periods, so a monthly figure always equals the sum
+    of its two pay-periods and reconciles exactly to payroll. No half-period ever splits a
+    reporting window.
+- **Boundary discipline:** internally the rollup uses non-overlapping windows so no charge
+  lands in two reporting windows; the engine's atomic slice is inclusive on both ends, and
+  `periods.py` matches that when reproducing an engine period. Property-tested.
+- **Note:** this supersedes the earlier calendar-month-only model and the monthly framing
+  in `docs/export-request.md`, which is updated to request whole pay-periods across the
+  same date range.
 
-- **[DEFAULT]** Codes are treated as opaque strings, left-padded/normalized only as
-  `RULES.md` specifies. Unrecognized codes → **exceptions bucket**, counted, never
-  coerced to zero or dropped.
-- **Add-on list is derived from the data, not hardcoded blind** (§5).
-- **Flag:** any code-normalization or code-category mapping in `RULES.md` overrides.
+## 3. Code handling (CPT/HCPCS)  **[RULES.md — reconciled]**
+
+- **Codes are opaque strings** (never numeric-coerced — a `code` dtype, §Gate 1), with
+  one settled normalization: **TELE-prefix stripping.** A code beginning `TELE`
+  (case-insensitive) has the 4-char prefix removed → base CPT (`TELE90837` → `90837`);
+  telehealth-ness is preserved as a separate flag derived from the `TELE` prefix **or** a
+  `GT`/`95` modifier (`valant_parse.py:74`, `importer.py:52,151`).
+- **Non-session codes (settled set):**
+  `NON_SESSION_CODES = {99998, 99999, "BAL FWD", "QBCHK", "ADHD2", "FORM FEE", "ADHD", ""}`
+  (`valant_parse.py:27`). These are **never billable sessions** — they must not increment
+  any session grain (§4–§9) and are reported as their own categories. Matched on the
+  TELE-stripped code. The engine's *pay* treatments for these
+  (`99999/99998/BAL FWD`→exclude, `QBCHK`→$15/unit, `ADHD2`→pending; `seed.py:127-140`)
+  are **payroll concerns, out of scope here** — recorded only so the two projects agree on
+  what the codes *are*.
+- **Payer → `payer_category`** (feeds the §13 mix decomposition): reuse the engine's
+  **explicit `payer_map` table**, closed set of **7 categories** —
+  `Commercial, Medicare, Medicaid/CHIP, Self-Pay, QMB, LifeStance, EAP/Other`
+  (`models.py:136-139`) — with exact lookup + a fee-suffix-strip fallback
+  (`"Private Pay $80"` → base) and **unmapped → `None` + warning, never keyword-guessed**
+  (`engine.py:185`). Do not build a second payer classifier.
+- **Canonical column names:** align `src/loaders.py` to the engine's names so the two
+  projects call a column the same thing — charges via `CHARGES_MAPPING` + `COLUMN_ALIASES`
+  (`ProviderID, CPTCode, TransactionCode, Units, Amount, ExpectedCollectionAmount,
+  Insurance123, Modifiers`, DOS = `DateOfService`; `importer.py:27-93`); statements via
+  raw names (`GroupingLevel1, InsurancePayments, PatientPayments`, DOS =
+  `ChargeDateOfService`; `statements.py:21`). (Wired in Gate 1.)
+- **Add-on list is still derived from the data, not hardcoded blind** (§5); the engine has
+  no session-grain add-on-collapsing rule to reuse (it aggregates dateless
+  provider×code×payer), so §5 remains ours.
 
 ---
 
@@ -144,6 +198,16 @@ Legend:
 - **All money is `Decimal`, never float.** Rounding only at presentation. A test asserts
   money columns never silently become float.
 - **Everything bucketed by DATE OF SERVICE**, not posting/payment date.
+- **The distinction that must never blur (reconciled with the engine).** Valant's `Amount`
+  (billed/gross) and `ExpectedCollectionAmount` (the **Contracted Rate** — Insurance Aging
+  Detail *New Fee Schedule*, **Column W, not Column V**) are what **Valant bills and
+  expects to collect from payers**. They are **NOT** SRI's clinician pay schedule. The
+  clinician pay rates are a separate, CPT-keyed `RateSchedule` (`models.py:98-110`),
+  admin-entered in the engine, and are what determine therapist compensation
+  (`engine.py:798-805`). **This analytics project uses the Valant fee columns only**
+  (`expected_collection` is the headline); the engine's pay schedule is out of scope and
+  is never read, mixed in, or confused with the Valant fee. A future session must not
+  substitute one for the other.
 
 ## 11. Claim-lag maturity model (Phase C)
 
@@ -206,9 +270,15 @@ Legend:
 
 ## Open questions for you (defaults chosen, but your call)
 
-1. **Repo:** stay in `sri-analytics/` under `ISSaction`, or move to `SRIMacroreports`? (§0)
-2. **RULES.md:** paste it / grant repo access so roster, period naming, and code handling
-   are reconciled, not assumed? (§0–3)
-3. **Maturity threshold N:** default 95% — good, or 90/98? (§11)
-4. **Group therapy headline:** group = 1 session (default) or per-attendee? (§6)
-5. **Session headline variant:** `billable_encounters` (default) — confirm? (§4)
+1. ~~**Repo:** stay in `sri-analytics/` under `ISSaction`, or move to `SRIMacroreports`?~~
+   **RESOLVED (§0):** home is `SRIMacroreports`.
+2. ~~**RULES.md:** paste it / grant repo access so roster, period naming, and code
+   handling are reconciled?~~ **RESOLVED (Gate 0):** reconciled against the
+   `SRIcompensation` engine; see §1–§3, §10.
+3. ~~**Period model:** calendar month vs the engine's semi-monthly?~~ **RESOLVED (Gate 0):**
+   dual granularity — engine's semi-monthly is the atomic unit, analytics rolls up to
+   months (§2).
+4. ~~**Roster source:**~~ **RESOLVED (Gate 0):** runtime snapshot input (§1).
+5. **Maturity threshold N:** default 95% — good, or 90/98? (§11)
+6. **Group therapy headline:** group = 1 session (default) or per-attendee? (§6)
+7. **Session headline variant:** `billable_encounters` (default) — confirm? (§4)
