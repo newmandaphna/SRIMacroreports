@@ -30,12 +30,34 @@ class MissingColumnsError(LoaderError):
     """A required column is absent, blank, or duplicated after header detection."""
 
 
-# Report family -> filename prefix + the minimal header tokens that identify it.
-# Tokens are matched case-insensitively as substrings of a header cell.
+# Report family metadata. Canonical column names align with the compensation
+# engine (newmandaphna/SRIcompensation) so the two projects call a column the
+# same thing (reconciled in Gate 0, ASSUMPTIONS §3):
+#   charges  -> importer.CHARGES_MAPPING / COLUMN_ALIASES
+#   statements -> statements.py raw names
+# Token lists are matched against header cells on an alphanumeric-only basis
+# (see _norm_alnum), so "Date of Service", "DateOfService", "DATE OF SERVICE"
+# all collapse to the same key.
+#
+# Per family:
+#   prefix        - filename prefix used to route the file
+#   tokens        - minimal header tokens that identify the report
+#   dos_tokens    - ordered candidates for THE date-of-service column (first
+#                   match wins). Explicit per family so a posting/appointment
+#                   date can never be mistaken for DOS (defect: _dos_column).
+#   posting_tokens- ordered candidates for a SEPARATE posting/payment date
+#                   (statements only); never conflated with DOS.
+#   code_tokens   - columns that are CPT/HCPCS/transaction codes: opaque strings,
+#                   never numeric-coerced (defect: CPT classified as int).
 REPORT_FAMILIES: Dict[str, Dict[str, object]] = {
     "charges": {
         "prefix": "ChargesHistoryDetailProviderPatientCode",
         "tokens": ("provider", "date of service", "code"),
+        "dos_tokens": ("DateOfService", "Date of Service", "ServiceDate", "DOS"),
+        "posting_tokens": (),
+        "code_tokens": ("CPTCode", "CPT Code", "CPT", "ProcedureCode",
+                        "TransactionCode", "Transaction Code", "Billed CPT",
+                        "HCPCS"),
         "expected_grain": (
             "one row per charge line (patient x provider x DOS x CPT x modifier)"
         ),
@@ -43,16 +65,29 @@ REPORT_FAMILIES: Dict[str, Dict[str, object]] = {
     "appointments": {
         "prefix": "AppointmentsPatientInfoByProviderThenDayThenFacility",
         "tokens": ("provider", "date", "status"),
+        "dos_tokens": ("Appointment Date", "AppointmentDate", "DateOfService",
+                       "Date of Service", "DOS"),
+        "posting_tokens": (),
+        "code_tokens": (),
         "expected_grain": "one row per scheduled appointment",
     },
     "statements": {
         "prefix": "PatientStatement",
         "tokens": ("date of service", "insurancepayments", "patientpayments"),
+        # DOS and posting date are DIFFERENT columns and must never be confused.
+        "dos_tokens": ("ChargeDateOfService", "Date of Service", "DateOfService",
+                       "DOS"),
+        "posting_tokens": ("StatementDate", "Statement Date", "Posting Date",
+                           "PostingDate", "Payment Date", "PaymentDate"),
+        "code_tokens": ("CPTCode", "CPT", "TransactionCode"),
         "expected_grain": "one row per statement grouping line (GroupingLevel3)",
     },
     "documentation": {
         "prefix": "AppointmentDocumentation",
         "tokens": ("provider", "date of service", "status"),
+        "dos_tokens": ("DateOfService", "Date of Service", "DOS"),
+        "posting_tokens": (),
+        "code_tokens": (),
         "expected_grain": "one row per clinical note / encounter",
     },
 }
@@ -61,6 +96,15 @@ REPORT_FAMILIES: Dict[str, Dict[str, object]] = {
 def _norm(s) -> str:
     """Normalize a cell for matching: lowercase, collapse whitespace."""
     return " ".join(str(s).strip().lower().split())
+
+
+def _norm_alnum(s) -> str:
+    """Alphanumeric-only lowercase key, mirroring the engine's _norm_header.
+
+    'Date of Service', 'DateOfService', 'DATE OF SERVICE' all -> 'dateofservice'.
+    Used for header/token/column matching so spelling/spacing variants agree.
+    """
+    return "".join(c for c in str(s).lower() if c.isalnum())
 
 
 def classify_filename(filename: str) -> Optional[str]:
@@ -82,10 +126,10 @@ def detect_header_row(
     This absorbs the preamble quirk without a hardcoded skip. Raises
     HeaderNotFoundError if no row qualifies.
     """
-    wanted = [_norm(t) for t in expected_tokens]
+    wanted = [_norm_alnum(t) for t in expected_tokens]
     for i, row in enumerate(rows):
-        cells = [_norm(c) for c in row]
-        matches = sum(1 for t in wanted if any(t in c for c in cells))
+        cells = [_norm_alnum(c) for c in row]
+        matches = sum(1 for t in wanted if any(t and t in c for c in cells))
         if matches >= min_match:
             return i
     raise HeaderNotFoundError(
@@ -148,11 +192,79 @@ def _assert_clean_header(header: Sequence[str], path: str) -> None:
 
 def assert_columns(header: Sequence[str], required: Sequence[str]) -> bool:
     """Fail loudly if any required column (normalized substring match) is absent."""
-    norm_header = [_norm(h) for h in header]
-    missing = [req for req in required if not any(_norm(req) in h for h in norm_header)]
+    norm_header = [_norm_alnum(h) for h in header]
+    missing = [
+        req for req in required
+        if not any(_norm_alnum(req) in h for h in norm_header)
+    ]
     if missing:
         raise MissingColumnsError(f"missing required column(s): {list(missing)}")
     return True
+
+
+def _match_token(header: Sequence[str], token: str) -> Optional[str]:
+    """Return the first header cell whose alnum key contains the token's, else None."""
+    t = _norm_alnum(token)
+    if not t:
+        return None
+    for h in header:
+        if t in _norm_alnum(h):
+            return h
+    return None
+
+
+def resolve_dos_column(family: str, header: Sequence[str]) -> str:
+    """The date-of-service column for a family, by explicit per-family tokens.
+
+    Never falls back to a bare "date" match, so a posting or appointment date can
+    never masquerade as DOS. Raises MissingColumnsError if none is present.
+    """
+    spec = REPORT_FAMILIES.get(family)
+    if spec is None:
+        raise LoaderError(f"unknown report family {family!r}")
+    for token in spec.get("dos_tokens", ()):  # type: ignore[union-attr]
+        col = _match_token(header, token)
+        if col is not None:
+            return col
+    raise MissingColumnsError(
+        f"no date-of-service column found for family {family!r} "
+        f"(looked for {tuple(spec.get('dos_tokens', ()))!r})"
+    )
+
+
+def resolve_posting_column(family: str, header: Sequence[str]) -> Optional[str]:
+    """The SEPARATE posting/payment-date column (statements), or None if absent.
+
+    Returns None rather than raising: the posting date is required only for the
+    Phase C maturity model, so Phase A profiling records its presence/absence.
+    It is resolved from a disjoint token set so it can never equal the DOS column.
+    """
+    spec = REPORT_FAMILIES.get(family)
+    if spec is None:
+        raise LoaderError(f"unknown report family {family!r}")
+    for token in spec.get("posting_tokens", ()):  # type: ignore[union-attr]
+        col = _match_token(header, token)
+        if col is not None:
+            return col
+    return None
+
+
+def is_code_column(family: str, column_name: str) -> bool:
+    """True if a column holds CPT/HCPCS/transaction codes for this family.
+
+    Such columns are opaque strings and must never be numeric-coerced (a code
+    like '0362T' or a leading-zero HCPCS must survive). Matched by name against
+    the family's code_tokens.
+    """
+    spec = REPORT_FAMILIES.get(family)
+    if spec is None:
+        return False
+    key = _norm_alnum(column_name)
+    for token in spec.get("code_tokens", ()):  # type: ignore[union-attr]
+        t = _norm_alnum(token)
+        if t and t in key:
+            return True
+    return False
 
 
 def load_report(

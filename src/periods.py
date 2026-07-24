@@ -8,11 +8,20 @@ alignment (calendar-effect normalization is handled separately, §12).
 """
 from __future__ import annotations
 
+import calendar
 import re
-from datetime import datetime
-from typing import Tuple
+from datetime import date, datetime
+from typing import List, Tuple
 
 _PERIOD_RE = re.compile(r"^(\d{4})-(\d{2})$")
+
+# Engine pay-period label: "YYYY-MM Period 1|2" (also tolerates "YYYY-MM P1").
+# Reconciled with the compensation engine (ASSUMPTIONS §2): the atomic period is
+# a semi-monthly pay period split at day 15; analytics reporting windows roll
+# whole pay periods up to calendar months.
+_PAY_PERIOD_RE = re.compile(r"^\s*(\d{4})-(\d{2})\s*(?:Period|P)\s*([12])\s*$", re.I)
+_YEAR_RE = re.compile(r"\b(20\d{2})\b")
+_SPLIT_DAY = 15  # Period 1 = days 1..15 inclusive; Period 2 = 16..end
 
 
 class PeriodError(ValueError):
@@ -61,3 +70,68 @@ def prior_year_floor(period: str) -> datetime:
     """
     year, month = parse_period(period)
     return datetime(year - 1, month, 1)
+
+
+# --- Semi-monthly pay periods (the engine's atomic unit) --------------------
+
+def half_for_day(day: int) -> int:
+    """Pay-period half for a day-of-month: 1 for days 1..15, else 2."""
+    return 1 if day <= _SPLIT_DAY else 2
+
+
+def pay_period_label(year: int, month: int, half: int) -> str:
+    """Canonical engine label, e.g. pay_period_label(2026, 6, 1) -> '2026-06 Period 1'."""
+    if half not in (1, 2):
+        raise PeriodError(f"pay-period half must be 1 or 2, got {half!r}")
+    if not 1 <= month <= 12:
+        raise PeriodError(f"month out of range: {month!r}")
+    return f"{year:04d}-{month:02d} Period {half}"
+
+
+def parse_pay_period_label(label: str) -> Tuple[int, int, int]:
+    """'2026-06 Period 1' (or '2026-06 P1') -> (2026, 6, 1). Raises otherwise."""
+    m = _PAY_PERIOD_RE.match(str(label))
+    if not m:
+        raise PeriodError(
+            f"pay-period label must be 'YYYY-MM Period 1|2', got {label!r}"
+        )
+    year, month, half = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if not 1 <= month <= 12:
+        raise PeriodError(f"month out of range in label {label!r}")
+    return year, month, half
+
+
+def pay_period_window(label: str) -> Tuple[date, date]:
+    """Inclusive date-of-service bounds [start, end] for a pay period.
+
+    Matches the engine's inclusive date slice: Period 1 = the 1st..15th; Period 2
+    = the 16th..last day of the month.
+    """
+    year, month, half = parse_pay_period_label(label)
+    if half == 1:
+        return date(year, month, 1), date(year, month, _SPLIT_DAY)
+    last = calendar.monthrange(year, month)[1]
+    return date(year, month, _SPLIT_DAY + 1), date(year, month, last)
+
+
+def month_pay_periods(period: str) -> List[str]:
+    """The two pay-period labels that compose a calendar month, in order."""
+    year, month = parse_period(period)
+    return [pay_period_label(year, month, 1), pay_period_label(year, month, 2)]
+
+
+def month_of_pay_period(label: str) -> str:
+    """'2026-06 Period 2' -> '2026-06'. The calendar month a pay period rolls up to."""
+    year, month, _ = parse_pay_period_label(label)
+    return f"{year:04d}-{month:02d}"
+
+
+def pay_period_year(label: str) -> int:
+    """Year a pay period belongs to, parsed from the label (engine history.py rule)."""
+    year, _, _ = parse_pay_period_label(label)
+    return year
+
+
+def pay_period_from_dos(d: date) -> str:
+    """The pay-period label a date of service falls in (day-15 split)."""
+    return pay_period_label(d.year, d.month, half_for_day(d.day))

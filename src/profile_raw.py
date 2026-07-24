@@ -82,13 +82,20 @@ def _is_int(s: str) -> bool:
     return s.isdigit()
 
 
+# A column is classified by its DOMINANT cell type; a few dirty cells no longer
+# downgrade the whole column (defect: one N/A killed a 40k-row date column). The
+# non-conforming cells are counted and reported, never silently absorbed.
+DOMINANT_THRESHOLD = 0.90
+
+
 @dataclass
 class ColumnProfile:
     name: str
-    dtype: str  # date | int | decimal | string | empty
+    dtype: str  # date | int | decimal | code | string | empty
     n_nonempty: int
     n_empty: int
     n_distinct: int  # aggregate count only -- never the values themselves
+    n_nonconforming: int = 0  # cells not of the reported dtype (counted, reported)
     date_min: Optional[str] = None  # ISO string, aggregate extremum, PHI-safe
     date_max: Optional[str] = None
 
@@ -100,45 +107,68 @@ class FileProfile:
     n_rows: int
     columns: List[ColumnProfile]
     date_columns: List[str] = field(default_factory=list)
+    dos_column: Optional[str] = None
     dos_min: Optional[str] = None
     dos_max: Optional[str] = None
+    posting_column: Optional[str] = None
+    has_posting: bool = False
     grain: str = ""
     grain_confirmed: Optional[bool] = None
     n_distinct_keys: Optional[int] = None
     notes: List[str] = field(default_factory=list)
 
 
-def _classify_column(cells: Sequence[str]) -> str:
-    nonempty = [c for c in cells if str(c).strip() != ""]
-    if not nonempty:
-        return "empty"
-    if all(parse_date(c) is not None for c in nonempty) and any(
-        ("/" in str(c) or "-" in str(c)) and len(str(c).strip()) >= 6 for c in nonempty
-    ):
+def _cell_type(s: str) -> str:
+    """Type of a single non-empty cell: date | int | decimal | string."""
+    s = str(s).strip()
+    if _is_int(s):
+        return "int"  # check int before date so a bare "2024" is not a date
+    if parse_date(s) is not None and ("/" in s or "-" in s) and len(s) >= 6:
         return "date"
-    if all(_is_int(c) for c in nonempty):
-        return "int"
-    money_ok = True
-    for c in nonempty:
-        try:
-            if parse_money(c) is None:
-                money_ok = False
-                break
-        except MoneyParseError:
-            money_ok = False
-            break
-    if money_ok:
-        return "decimal"
+    try:
+        if parse_money(s) is not None:
+            return "decimal"
+    except MoneyParseError:
+        pass
     return "string"
 
 
-def _profile_column(name: str, cells: Sequence[str]) -> ColumnProfile:
+def _classify_column(
+    cells: Sequence[str], threshold: float = DOMINANT_THRESHOLD
+) -> Tuple[str, int]:
+    """Return (dtype, n_nonconforming) using a dominant-type threshold.
+
+    int and decimal combine (a mostly-money column with a few whole-dollar ints
+    is still money). If no clean type reaches the threshold the column is a
+    string; n_nonconforming counts the cells that did not fit the reported type.
+    """
     nonempty = [str(c) for c in cells if str(c).strip() != ""]
-    dtype = _classify_column(cells)
+    if not nonempty:
+        return ("empty", 0)
+    counts = {"date": 0, "int": 0, "decimal": 0, "string": 0}
+    for c in nonempty:
+        counts[_cell_type(c)] += 1
+    total = len(nonempty)
+
+    if counts["date"] / total >= threshold:
+        return ("date", total - counts["date"])
+    numeric = counts["int"] + counts["decimal"]
+    if numeric / total >= threshold:
+        dtype = "int" if counts["decimal"] == 0 else "decimal"
+        return (dtype, total - numeric)
+    return ("string", total - counts["string"])
+
+
+def _profile_column(name: str, cells: Sequence[str], family: Optional[str]) -> ColumnProfile:
+    nonempty = [str(c) for c in cells if str(c).strip() != ""]
+    dtype, n_nonconforming = _classify_column(cells)
+    # CPT/HCPCS/transaction codes are opaque strings by NAME, never numeric-coerced
+    # (a code like '0362T' or a leading-zero HCPCS must survive).
+    if family is not None and loaders.is_code_column(family, name):
+        dtype, n_nonconforming = "code", 0
     date_min = date_max = None
     if dtype == "date":
-        parsed = [parse_date(c) for c in nonempty]
-        parsed = [d for d in parsed if d is not None]
+        parsed = [d for d in (parse_date(c) for c in nonempty) if d is not None]
         if parsed:
             date_min = min(parsed).isoformat(sep=" ")
             date_max = max(parsed).isoformat(sep=" ")
@@ -148,68 +178,94 @@ def _profile_column(name: str, cells: Sequence[str]) -> ColumnProfile:
         n_nonempty=len(nonempty),
         n_empty=len(cells) - len(nonempty),
         n_distinct=len(set(nonempty)),  # count only; values never leave memory
+        n_nonconforming=n_nonconforming,
         date_min=date_min,
         date_max=date_max,
     )
 
 
 def _find_col(header: Sequence[str], token: str) -> Optional[str]:
-    tnorm = loaders._norm(token)
+    tnorm = loaders._norm_alnum(token)
     for h in header:
-        if tnorm in loaders._norm(h):
+        if tnorm and tnorm in loaders._norm_alnum(h):
             return h
     return None
 
 
-def _dos_column(header: Sequence[str]) -> Optional[str]:
-    return _find_col(header, "date of service") or _find_col(header, "date")
-
-
 def profile_file(path: str) -> FileProfile:
-    """Profile a single raw export into aggregate-only facts."""
+    """Profile a single raw export into aggregate-only facts.
+
+    An unrecognized file does not crash the run: it yields a FileProfile with
+    family=None that lands in the exceptions bucket.
+    """
+    filename = os.path.basename(path)
     family = loaders.classify_filename(path)
+
+    # Defect: an unrecognized file hard-crashed the run. Route it to the bucket.
+    if family is None:
+        return FileProfile(
+            filename=filename,
+            family=None,
+            n_rows=0,
+            columns=[],
+            grain="unknown (unrecognized report family)",
+            notes=["filename did not match any known Valant report prefix; "
+                   "routed to the exceptions bucket, not profiled"],
+        )
+
     header, records = loaders.load_report(path, family=family)
 
-    columns: List[ColumnProfile] = []
-    for name in header:
-        cells = [rec.get(name, "") for rec in records]
-        columns.append(_profile_column(name, cells))
-
+    columns = [
+        _profile_column(name, [rec.get(name, "") for rec in records], family)
+        for name in header
+    ]
     date_cols = [c.name for c in columns if c.dtype == "date"]
 
     fp = FileProfile(
-        filename=os.path.basename(path),
+        filename=filename,
         family=family,
         n_rows=len(records),
         columns=columns,
         date_columns=date_cols,
     )
 
-    # Date of service extent (drives coverage), taken from the DOS column.
-    dos_name = _dos_column(header)
-    if dos_name is not None:
-        col = next((c for c in columns if c.name == dos_name), None)
+    # Date of service: resolve the EXPLICIT per-family DOS column. Never a bare
+    # "date" fallback, so a posting/appointment date can't masquerade as DOS.
+    try:
+        fp.dos_column = loaders.resolve_dos_column(family, header)
+    except loaders.MissingColumnsError as e:
+        fp.notes.append(str(e))
+    if fp.dos_column is not None:
+        col = next((c for c in columns if c.name == fp.dos_column), None)
         if col is not None and col.dtype == "date":
             fp.dos_min, fp.dos_max = col.date_min, col.date_max
         elif col is not None:
             fp.notes.append(
-                f"DOS column {dos_name!r} did not parse as a date (dtype={col.dtype})"
+                f"DOS column {fp.dos_column!r} did not parse as a date "
+                f"(dtype={col.dtype}, {col.n_nonconforming} non-conforming cells)"
             )
 
-    # Grain: documented expectation, and for charges a real confirmation via a
-    # composite key (counts only; the key values never leave memory -- §17).
-    if family is not None:
-        fp.grain = str(loaders.REPORT_FAMILIES[family]["expected_grain"]) + " (expected)"
-    else:
-        fp.grain = "unknown (unrecognized report family)"
-        fp.notes.append("filename did not match any known Valant report prefix")
+    # Posting/payment date is a SEPARATE column (statements) and must never be
+    # confused with DOS. Record its presence for the Phase C maturity model.
+    fp.posting_column = loaders.resolve_posting_column(family, header)
+    fp.has_posting = fp.posting_column is not None
+    if family == "statements" and not fp.has_posting:
+        fp.notes.append(
+            "no posting/payment-date column found -- the Phase C claim-lag "
+            "maturity model cannot be built without it"
+        )
 
+    # Grain: documented expectation, and for charges a real 1:1 confirmation via a
+    # composite key (counts only; the key values never leave memory -- §17).
+    fp.grain = str(loaders.REPORT_FAMILIES[family]["expected_grain"]) + " (expected)"
     if family == "charges":
-        key_tokens = ["patient", "provider", "date of service", "code", "modifier"]
+        # Short tokens so they match both engine canonical names (PatientID,
+        # CPTCode, ...) and simpler export headers (Patient, CPT/HCPCS Code, ...).
+        key_tokens = ["Patient", "Provider", "DateOfService", "CPT", "Modifier"]
         key_cols = [c for c in (_find_col(header, t) for t in key_tokens) if c]
         if len(key_cols) >= 3:
             keys = {
-                tuple(loaders._norm(rec.get(k, "")) for k in key_cols)
+                tuple(loaders._norm_alnum(rec.get(k, "")) for k in key_cols)
                 for rec in records
             }
             fp.n_distinct_keys = len(keys)
@@ -307,18 +363,26 @@ def render_part1(
 
     for fp in profiles:
         lines.append(f"### `{fp.filename}`")
+        if fp.dos_column:
+            lines.append(f"- Date-of-service column: `{fp.dos_column}`")
+        if fp.posting_column:
+            lines.append(f"- Posting/payment-date column: `{fp.posting_column}`")
         if fp.grain_confirmed is not None:
             lines.append(
                 f"- Grain 1:1 check: **{fp.grain_confirmed}** "
                 f"(rows={fp.n_rows}, distinct keys={fp.n_distinct_keys})"
             )
         lines.append("")
-        lines.append("| column | dtype | non-empty | empty | distinct | date min | date max |")
-        lines.append("|---|---|---:|---:|---:|---|---|")
+        lines.append(
+            "| column | dtype | non-empty | empty | distinct | non-conf | "
+            "date min | date max |"
+        )
+        lines.append("|---|---|---:|---:|---:|---:|---|---|")
         for c in fp.columns:
             lines.append(
                 f"| {c.name} | {c.dtype} | {c.n_nonempty} | {c.n_empty} "
-                f"| {c.n_distinct} | {c.date_min or ''} | {c.date_max or ''} |"
+                f"| {c.n_distinct} | {c.n_nonconforming} "
+                f"| {c.date_min or ''} | {c.date_max or ''} |"
             )
         if fp.notes:
             lines.append("")
