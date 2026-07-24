@@ -14,7 +14,7 @@ without ever letting patient-grain data enter version control.
 | Phase | What it does | State |
 |---|---|---|
 | **A** | Discover & profile raw exports; emit data dictionary or export request | **implemented** (this repo) |
-| B | Session ledger (sessions from charges, add-on/group/void rules) | designed in `ASSUMPTIONS.md`, not yet built |
+| **B** | Session ledger (4 grains, derived add-ons, group dual-view, voids, dedupe, appts-vs-charges gap) | **implemented** (`src/sessions.py`) |
 | C | Dollar ladder (billed / expected / collected) + claim-lag maturity | designed, not yet built |
 | D | Calendar normalization + volume/rate/mix decomposition + YoY windows | designed, not yet built |
 | E | Reconciliation harness (every headline from >=2 sources) | designed, not yet built |
