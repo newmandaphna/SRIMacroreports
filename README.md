@@ -59,9 +59,33 @@ ASSUMPTIONS.md    # every definitional default, why, and what must reconcile to 
 # Profile whatever is in data/raw/ and (re)write the data dictionary's Part 1.
 python -m src.profile_raw            # or: python src/profile_raw.py
 python -m src.profile_raw --no-write # profile without touching docs
+python -m src.profile_raw --json     # deterministic, aggregate-only JSON (for CI/tools)
 
 # With data/raw/ empty, it stops cleanly and points you at docs/export-request.md.
 ```
+
+## CI & the PHI pre-commit hook
+
+- **CI** (`.github/workflows/ci.yml`) runs the suite on push and PR across a matrix
+  of Python 3.11/3.12 × {stdlib-only, openpyxl}, so **both loader branches** (the
+  CSV/stdlib path and the optional `.xlsx` path) are exercised.
+- **Pre-commit PHI hook.** Enable it once per clone so a patient-grain leak can
+  never be committed (this repo is public — a bad commit is a PHI incident):
+
+  ```bash
+  git config core.hooksPath .githooks       # plain git, no dependencies
+  # — or, with the pre-commit framework:
+  pip install pre-commit && pre-commit install
+  ```
+
+  The hook runs `tests/test_phi_guard.py` and **blocks the commit on failure**
+  (it fails closed).
+
+## License
+
+Proprietary — see [`LICENSE`](LICENSE). All rights reserved; no reuse license is
+granted. (Placed as the conservative default for an internal, health-adjacent
+tool; swap for MIT/Apache-2.0 if open licensing is intended.)
 
 ## Test it
 

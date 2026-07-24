@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+        # Exercise BOTH loader branches: "core" is the stdlib-only path (the
+        # .xlsx test skips itself); "openpyxl" installs the optional dependency
+        # so the _rows_from_xlsx path actually runs.
+        deps: ["core", "openpyxl"]
+    name: py${{ matrix.python-version }} / ${{ matrix.deps }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # test_phi_guard.py shells `git check-ignore` / `git ls-files`; a real
+          # checkout (with .git and .gitignore) is required for it to be meaningful.
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          if [ "${{ matrix.deps }}" = "openpyxl" ]; then pip install openpyxl; fi
+
+      - name: Show whether openpyxl is present
+        run: python -c "import importlib.util as u; print('openpyxl present:', u.find_spec('openpyxl') is not None)"
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Profiler runs clean on empty data/raw (no fabrication)
+        run: python -m src.profile_raw --no-write --json

@@ -134,3 +134,24 @@ def test_xlsx_round_trip():
         assert header[0] == "Provider"
         assert "Appointment Status" in header
         assert len(records) == 2
+
+
+# --- Gate 2: --json output mode is valid, deterministic JSON ---
+
+def test_json_output_mode(capsys, tmp_path):
+    import json
+    from src.profile_raw import main
+    rc = main(["--data-dir", str(tmp_path), "--no-write", "--json",
+               "--period", "2026-07"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)  # must be valid JSON, nothing else on stdout
+    assert payload["status"] == "EMPTY"
+    assert payload["target_period"] == "2026-07"
+    assert payload["rules_md_reconciled"] is True
+
+    # Deterministic: same input -> byte-identical output.
+    main(["--data-dir", str(tmp_path), "--no-write", "--json", "--period", "2026-07"])
+    out2 = capsys.readouterr().out
+    assert out == out2
+
