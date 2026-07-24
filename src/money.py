@@ -11,8 +11,32 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 
+def value_shape(raw) -> str:
+    """A PHI-safe fingerprint of a cell: its length and character classes, never
+    the value itself. e.g. "len=7 digit+alpha+space". Used in exception messages
+    so a stray patient note in a money/date column can never reach stdout or a
+    traceback (ASSUMPTIONS §17).
+    """
+    if raw is None:
+        return "None"
+    s = str(raw)
+    classes = []
+    if any(c.isdigit() for c in s):
+        classes.append("digit")
+    if any(c.isalpha() for c in s):
+        classes.append("alpha")
+    if any(c.isspace() for c in s):
+        classes.append("space")
+    if any(not c.isalnum() and not c.isspace() for c in s):
+        classes.append("punct")
+    return f"len={len(s)} {'+'.join(classes) if classes else 'empty'}"
+
+
 class MoneyParseError(ValueError):
-    """A money cell was present but could not be parsed to Decimal."""
+    """A money cell was present but could not be parsed to Decimal.
+
+    The message carries only a PHI-safe value shape, never the raw cell.
+    """
 
 
 def parse_money(raw) -> Optional[Decimal]:
@@ -48,9 +72,11 @@ def parse_money(raw) -> Optional[Decimal]:
     s = s.replace(",", "")
 
     if s == "":
-        raise MoneyParseError(f"unparseable money value: {raw!r}")
+        raise MoneyParseError(f"unparseable money value [{value_shape(raw)}]")
     try:
         value = Decimal(s)
     except InvalidOperation:
-        raise MoneyParseError(f"unparseable money value: {raw!r}") from None
+        raise MoneyParseError(
+            f"unparseable money value [{value_shape(raw)}]"
+        ) from None
     return -value if negative else value

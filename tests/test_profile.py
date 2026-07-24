@@ -1,4 +1,5 @@
 """Phase A profiler: aggregates only, no fabrication, PHI never emitted."""
+import re
 import shutil
 from pathlib import Path
 
@@ -72,7 +73,11 @@ def test_rendered_dictionary_contains_no_patient_tokens(tmp_path):
     # Provider names are permitted in outputs, but patient identifiers are not;
     # confirm the profiler emitted structure (column names) without row values.
     assert "Expected Amount" in text
-    assert "$" not in text  # no money *values* rendered, only dtype labels
+    # No money *value* rendered -- a dollar-amount pattern like "$250.00" or
+    # "1,234.50" must not appear (only dtype labels and counts do). This replaces
+    # a brittle bare "$" check that would break on any prose dollar sign.
+    assert not re.search(r"\$\s?\d", text), "a money value leaked into the dictionary"
+    assert not re.search(r"\b\d[\d,]*\.\d{2}\b", text), "a money value leaked"
 
 
 def test_profile_run_summary_reports_reconciliation():
