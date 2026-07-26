@@ -46,6 +46,7 @@ class ChargeLine:
     expected: Optional[Decimal]
     status: str            # normalized status text
     encounter_id: str
+    payer: str = ""        # raw payer string; mapped to a category via payer_map
 
     @property
     def is_void(self) -> bool:
@@ -135,6 +136,8 @@ def build_charge_lines(header: Sequence[str], records: Sequence[Dict[str, str]])
     status_c = _col(header, "Charge Status", "ChargeStatus", "Status")
     enc_c = _col(header, "Encounter ID", "EncounterID", "Encounter/Charge ID",
                  "Charge ID", "ChargeID")
+    payer_c = _col(header, "Insurance123", "PrimaryInsurance", "Payer",
+                   "InsuranceName")
 
     def g(rec, c):
         return rec.get(c, "") if c else ""
@@ -155,6 +158,7 @@ def build_charge_lines(header: Sequence[str], records: Sequence[Dict[str, str]])
             expected=parse_money(g(rec, exp_c)),
             status=loaders._norm(g(rec, status_c)),
             encounter_id=loaders._norm_alnum(g(rec, enc_c)),
+            payer=loaders._norm(g(rec, payer_c)),
         ))
     return lines
 
@@ -189,15 +193,50 @@ def build_appointments(header: Sequence[str], records: Sequence[Dict[str, str]])
     return out
 
 
-def count_signed_notes(header: Sequence[str], records: Sequence[Dict[str, str]]) -> int:
+@dataclass(frozen=True)
+class NoteRecord:
+    provider: str
+    patient: str
+    dos: Optional[date]
+    status: str
+    is_signed: bool
+
+    @property
+    def key(self) -> Tuple[str, str, str]:
+        return (self.provider, self.patient, self.dos.isoformat() if self.dos else "")
+
+
+def build_note_records(
+    header: Sequence[str], records: Sequence[Dict[str, str]]
+) -> List[NoteRecord]:
+    prov_c = _col(header, "ProviderID", "Provider")
+    pat_c = _col(header, "PatientID", "Patient")
+    dos_c = loaders.resolve_dos_column("documentation", header)
     status_c = _col(header, "Note Status", "NoteStatus", "Documentation Status",
                     "Status")
-    n = 0
+    out: List[NoteRecord] = []
     for rec in records:
-        s = loaders._norm_alnum(rec.get(status_c, "") if status_c else "")
-        if "signed" in s and "unsigned" not in s:
-            n += 1
-    return n
+        raw = rec.get(status_c, "") if status_c else ""
+        s = loaders._norm_alnum(raw)
+        out.append(NoteRecord(
+            provider=loaders._norm_alnum(rec.get(prov_c, "") if prov_c else ""),
+            patient=loaders._norm_alnum(rec.get(pat_c, "") if pat_c else ""),
+            dos=_to_date(rec.get(dos_c, "") if dos_c else ""),
+            status=loaders._norm(raw),
+            # "signed" but not "unsigned"/"cosignpending" -- a note awaiting a
+            # co-signature is not yet a signed note (LEAKAGE signal).
+            is_signed=("signed" in s and "unsigned" not in s and "cosign" not in s),
+        ))
+    return out
+
+
+def count_signed_notes(header: Sequence[str], records: Sequence[Dict[str, str]]) -> int:
+    return sum(1 for n in build_note_records(header, records) if n.is_signed)
+
+
+def load_notes(path: str) -> List[NoteRecord]:
+    header, records = loaders.load_report(path, family="documentation")
+    return build_note_records(header, records)
 
 
 # --------------------------------------------------------------------------- #

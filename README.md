@@ -15,10 +15,10 @@ without ever letting patient-grain data enter version control.
 |---|---|---|
 | **A** | Discover & profile raw exports; emit data dictionary or export request | **implemented** (this repo) |
 | **B** | Session ledger (4 grains, derived add-ons, group dual-view, voids, dedupe, appts-vs-charges gap) | **implemented** (`src/sessions.py`) |
-| C | Dollar ladder (billed / expected / collected) + claim-lag maturity | designed, not yet built |
-| D | Calendar normalization + volume/rate/mix decomposition + YoY windows | designed, not yet built |
-| E | Reconciliation harness (every headline from >=2 sources) | designed, not yet built |
-| F | Reporting | designed, not yet built |
+| **C** | Dollar ladder (billed / expected / collected) + claim-lag maturity | **implemented** (`src/dollars.py`) |
+| **D** | Calendar normalization + volume/rate/mix decomposition + YoY windows | **implemented** (`src/decomposition.py`) |
+| **E** | Reconciliation harness (every headline from >=2 sources, never averaged) | **implemented** (`src/reconcile.py`) |
+| **F** | Reporting (labels + reconciliation attached to every headline) | **implemented** (`src/report.py`) |
 
 Phase A is runnable today. Phases B-F have their definitions frozen in
 `ASSUMPTIONS.md` and build on the Phase A loaders.
@@ -62,7 +62,18 @@ python -m src.profile_raw --no-write # profile without touching docs
 python -m src.profile_raw --json     # deterministic, aggregate-only JSON (for CI/tools)
 
 # With data/raw/ empty, it stops cleanly and points you at docs/export-request.md.
+
+# The full practice-health report (Phases B-F), once real exports are in place:
+python -m src.report                                      # markdown to stdout
+python -m src.report --json                               # aggregate-only JSON
+python -m src.report --out docs/report.md \
+                     --reconciliation-out docs/reconciliation.md
 ```
+
+Every headline in the report carries **both** its maturity label (COMPLETE /
+INCOMPLETE / UNKNOWN) and its reconciliation status, because a number without
+those two can be misread. With `data/raw/` empty the report refuses to invent
+anything and points at the export request instead.
 
 ## CI & the PHI pre-commit hook
 

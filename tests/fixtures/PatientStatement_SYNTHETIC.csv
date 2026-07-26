@@ -1,0 +1,7 @@
+GroupingLevel1,ChargeDateOfService,StatementDate,InsurancePayments,PatientPayments,Insurance123
+"SMITH, Carol (C.Smith)",2024-02-11,2024-03-05,-50.00,-10.00,Aetna
+"SMITH, Carol (C.Smith)",2024-02-11,2024-05-20,-8.00,0.00,Aetna
+"RIVERA, Alice (A.Rivera)",2025-07-09,2025-08-15,-150.00,-20.00,BCBS
+"RIVERA, Alice (A.Rivera)",2025-07-09,2025-10-02,-5.00,0.00,BCBS
+"RIVERA, Alice (A.Rivera)",2026-07-02,2026-07-20,-120.00,-30.00,BCBS
+"NGUYEN, Bob (B.Nguyen)",2026-07-15,2026-08-01,-90.00,0.00,Cigna
