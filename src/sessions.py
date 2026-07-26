@@ -46,6 +46,7 @@ class ChargeLine:
     expected: Optional[Decimal]
     status: str            # normalized status text
     encounter_id: str
+    payer: str = ""        # raw payer string; mapped to a category via payer_map
 
     @property
     def is_void(self) -> bool:
@@ -135,6 +136,8 @@ def build_charge_lines(header: Sequence[str], records: Sequence[Dict[str, str]])
     status_c = _col(header, "Charge Status", "ChargeStatus", "Status")
     enc_c = _col(header, "Encounter ID", "EncounterID", "Encounter/Charge ID",
                  "Charge ID", "ChargeID")
+    payer_c = _col(header, "Insurance123", "PrimaryInsurance", "Payer",
+                   "InsuranceName")
 
     def g(rec, c):
         return rec.get(c, "") if c else ""
@@ -155,6 +158,7 @@ def build_charge_lines(header: Sequence[str], records: Sequence[Dict[str, str]])
             expected=parse_money(g(rec, exp_c)),
             status=loaders._norm(g(rec, status_c)),
             encounter_id=loaders._norm_alnum(g(rec, enc_c)),
+            payer=loaders._norm(g(rec, payer_c)),
         ))
     return lines
 

@@ -135,3 +135,19 @@ def pay_period_year(label: str) -> int:
 def pay_period_from_dos(d: date) -> str:
     """The pay-period label a date of service falls in (day-15 split)."""
     return pay_period_label(d.year, d.month, half_for_day(d.day))
+
+
+# --- Month arithmetic for comparison windows (Phase D) ----------------------
+
+def shift_month(period: str, delta: int) -> str:
+    """Shift a 'YYYY-MM' by whole months. shift_month('2026-07', -12) -> '2025-07'."""
+    year, month = parse_period(period)
+    total = year * 12 + (month - 1) + delta
+    return f"{total // 12:04d}-{total % 12 + 1:02d}"
+
+
+def month_range(end_period: str, n_months: int) -> List[str]:
+    """The n consecutive months ENDING at end_period, oldest first."""
+    if n_months < 1:
+        raise PeriodError(f"n_months must be >= 1, got {n_months!r}")
+    return [shift_month(end_period, -i) for i in range(n_months - 1, -1, -1)]
