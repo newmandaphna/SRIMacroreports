@@ -404,6 +404,56 @@ def _detail_redirect_with_flash(source_id: int, message: str) -> Response:
     return RedirectResponse(f"/admin/sources/{source_id}?problem={quote(message)}", status_code=303)
 
 
+def _lookup_redirect(
+    source_id: int,
+    kind: str,
+    result: "lookups_import.AliasImportResult | lookups_import.LookupImportResult",
+) -> Response:
+    from urllib.parse import urlencode
+
+    from app.sync.lookups import AliasImportResult, LookupImportResult
+
+    params: dict[str, str] = {}
+
+    if isinstance(result, AliasImportResult):
+        if result.created_aliases == 0 and not result.unmatched and not result.conflicts:
+            params["notice"] = "No new aliases to import — all were already up to date."
+        else:
+            parts = []
+            if result.created_aliases:
+                n = result.created_aliases
+                parts.append(f"{n} alias{'es' if n != 1 else ''} created.")
+            if not result.created_aliases and not result.unmatched:
+                parts.append("All aliases already up to date.")
+            if result.conflicts:
+                n = len(result.conflicts)
+                parts.append(
+                    f"{n} skipped — already point at a different therapist."
+                )
+            params["notice"] = " ".join(parts) if parts else "Import complete."
+        if result.unmatched:
+            # Pipe-separated so commas inside names survive round-trip.
+            params["unmatched"] = "|".join(result.unmatched)
+    elif isinstance(result, LookupImportResult):
+        if result.imported == 0:
+            params["notice"] = "No abbreviations found to import."
+        else:
+            params["notice"] = (
+                f"{result.imported} abbreviation{'s' if result.imported != 1 else ''} imported"
+                + (
+                    " ("
+                    + ", ".join(f"{v} {k}" for k, v in sorted(result.by_kind.items()))
+                    + ")."
+                    if result.by_kind
+                    else "."
+                )
+            )
+
+    qs = urlencode(params) if params else ""
+    url = f"/admin/sources/{source_id}?{qs}" if qs else f"/admin/sources/{source_id}"
+    return RedirectResponse(url, status_code=303)
+
+
 @router.get("/{source_id}/runs/{run_id}", response_class=HTMLResponse)
 async def run_detail(
     request: Request, db: DbSession, auth: AdminUser, source_id: int, run_id: int
@@ -552,7 +602,7 @@ async def import_lookups(
         request=request,
         detail={"lookup_import": kind, **detail},
     )
-    return RedirectResponse(f"/admin/sources/{source.id}", status_code=303)
+    return _lookup_redirect(source.id, kind, result)
 
 
 @router.get("/{source_id}/errors", response_class=HTMLResponse)

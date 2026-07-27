@@ -17,6 +17,30 @@
 <div class="alert alert--error" role="alert">{{ request.query_params['problem'] }}</div>
 {% endif %}
 
+{% if request.query_params.get('notice') %}
+<div class="alert alert--ok" role="status">{{ request.query_params['notice'] }}</div>
+{% endif %}
+
+{% if request.query_params.get('unmatched') %}
+{% set unmatched_names = request.query_params['unmatched'].split('|') %}
+<div class="alert alert--warning" role="alert">
+  <p>
+    <strong>{{ unmatched_names|length }} name{{ "" if unmatched_names|length == 1 else "s" }} had no matching therapist</strong>
+    and {{ "was" if unmatched_names|length == 1 else "were" }} skipped.
+    Create the therapist record first, then import aliases again.
+  </p>
+  <ul style="margin-top: var(--space-2)">
+    {% for entry in unmatched_names %}
+    {% set raw = entry.split(' -> ')[0] if ' -> ' in entry else entry %}
+    <li style="margin-bottom: var(--space-1)">
+      <code>{{ entry }}</code>
+      <a href="/admin/therapists?prefill={{ raw|urlencode }}" style="margin-left: var(--space-2)">Create therapist →</a>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if tab_error %}
 <div class="alert alert--error" role="alert">
   <p><strong>Cannot read the workbook.</strong> {{ tab_error }}</p>
