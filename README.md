@@ -77,8 +77,8 @@ in a file. `.env` is gitignored and `.env.example` never holds a real value.
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `SESSION_SECRET_KEY` | yes | Minimum 32 characters. Signs session cookies. |
-| `DATABASE_ENCRYPTION_KEY` | yes | SQLCipher key. **Losing it means losing the database.** |
+| `SESSION_SECRET_KEY` | yes | Minimum 32 characters. Reserved for signing. See the secrets reference below. |
+| `DATABASE_ENCRYPTION_KEY` | yes | SQLCipher key for the whole database file. **Losing it means losing all the data, permanently.** |
 | `DATABASE_PATH` | no | Defaults to `data/sri_dashboard.db`. |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | for sync | Full service account JSON, one line. |
 | `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD` | to sign in | Seeds one admin on first start. Password change forced on first login. Must meet the password policy or startup fails. |
@@ -95,6 +95,71 @@ in a file. `.env` is gitignored and `.env.example` never holds a real value.
 
 A missing required secret is a startup failure with a named error. There is no fallback,
 and in particular there is no fallback to an unencrypted database.
+
+### Secrets reference
+
+Two secrets are required at boot. They do very different things, and only one of them
+is dangerous to change.
+
+#### `SESSION_SECRET_KEY`
+
+**What it does today: nothing at runtime.** It is validated at startup (present, at
+least 32 characters) and then not used, because the session design does not need a
+signing key. The session cookie holds an opaque 256 bit random token, and only its
+SHA-256 hash is stored, so the server validates a session by looking the token up
+rather than by verifying a signature. See `app/security/sessions.py`. The CSRF token
+works the same way: random per session, stored server side, compared directly.
+
+It is kept and required so that it is already provisioned for the first feature that
+genuinely needs signing (a password reset link, or a signed export URL). Until then it
+is reserved, not load bearing.
+
+**Safe to generate a fresh random value?** Yes, always, on any deployment. Changing it
+signs nobody out and breaks nothing, because nothing depends on it.
+
+Generate with:
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+**Is `SESSION_SECRET` the same thing?** No. This application reads only
+`SESSION_SECRET_KEY` (see `REQUIRED_SECRETS` in `app/config.py`). A variable named
+`SESSION_SECRET` belongs to something else in the environment and is ignored here.
+Setting one does not satisfy the other. Leave any pre-existing `SESSION_SECRET` alone
+and add `SESSION_SECRET_KEY` separately.
+
+#### `DATABASE_ENCRYPTION_KEY`
+
+**What it does: it is the only thing standing between the database file and anyone who
+gets a copy of it.** It is applied as `PRAGMA key` on every connection before any other
+statement (`app/db.py`), so the entire SQLite file is encrypted with SQLCipher: patient
+names and codes, every balance and payment, user accounts, password hashes, and the
+whole audit log. Without the key the file is indistinguishable from noise, and the
+standard library `sqlite3` driver cannot open it at all.
+
+**Safe to generate a fresh random value?** It depends entirely on whether a database
+already exists at `DATABASE_PATH`:
+
+| Situation | Effect of a new random key |
+| --- | --- |
+| Brand new deployment, no database file yet | Safe. A fresh encrypted database is created with that key. |
+| Database file already exists with data in it | **The application refuses to start.** The data is still there but is unreadable, and stays unreadable until the original key comes back. |
+
+There is no partial or degraded mode. Startup verifies the key actually opens the file
+and exits with a named error if it does not (`_verify_encryption` in `app/db.py`), because
+a PHI application that quietly falls back to an unencrypted database is worse than one
+that will not start.
+
+**If the key is lost, the data is gone.** Not recoverable by us, by Replit, or by
+anyone. Backups of the encrypted file are worthless without it, so the key must be
+escrowed somewhere separate from the backups, by the practice.
+
+**On Replit specifically:** before rotating this, check whether the deployment's disk
+persists between deploys. If it does, the existing database is still there and a new key
+will lock you out of it. If each deploy starts with an empty disk, a new key is fine, but
+so is losing all previously imported data, which is its own problem worth knowing about.
+
+To change the key on an existing database, rekey it rather than just setting a new value.
 
 ### Rotating the database encryption key
 
