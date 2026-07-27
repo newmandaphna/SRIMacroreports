@@ -98,7 +98,9 @@ class ReportContext:
 
     def as_template_context(self) -> dict:
         return {
-            "range": self.range,
+            # Deliberately not "range": that name shadows Jinja's range() builtin,
+            # and a template loop then fails with "DateRange object is not callable".
+            "date_range": self.range,
             "granularity": self.granularity,
             "granularities": list(Granularity),
             "presets": PICKER_PRESETS,

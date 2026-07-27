@@ -29,10 +29,16 @@ from app.routers import (
     admin_users,
     auth,
     reports,
+    rooms,
     utilization,
 )
 from app.security.csrf import CSRFMiddleware
-from app.security.deps import AccessDenied, OptionalUser, RedirectRequired
+from app.security.deps import (
+    AccessDenied,
+    FeatureDisabled,
+    OptionalUser,
+    RedirectRequired,
+)
 from app.seed import seed_admin
 from app.templating import render
 
@@ -73,7 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="SRI Practice Dashboard",
         description="Internal practice management reporting for SRI Psychological Services.",
-        version="0.5.0",
+        version="0.6.0",
         lifespan=lifespan,
         # No public API docs on a PHI application.
         docs_url=None,
@@ -97,6 +103,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_therapists.router)
     app.include_router(reports.router)
     app.include_router(utilization.router)
+    app.include_router(rooms.router)
 
     register_error_handlers(app)
     register_routes(app)
@@ -111,6 +118,20 @@ def register_error_handlers(app: FastAPI) -> None:
         if location == "/login" and request.method == "GET" and request.url.path != "/":
             location = f"/login?next={request.url.path}"
         return RedirectResponse(location, status_code=exc.status_code)
+
+    @app.exception_handler(FeatureDisabled)
+    async def handle_feature_disabled(request: Request, _exc: FeatureDisabled) -> Response:
+        """A disabled module is indistinguishable from one that does not exist.
+
+        A 403 would confirm the feature is there. A 404 is both truer to the state of
+        the world and less informative to a scanner.
+        """
+        return render(
+            request,
+            "errors/not_found.html",
+            {"page_title": "Not found"},
+            status_code=404,
+        )
 
     @app.exception_handler(AccessDenied)
     async def handle_access_denied(request: Request, exc: AccessDenied) -> Response:

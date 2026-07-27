@@ -783,3 +783,85 @@ a {
   padding: var(--space-1) var(--space-2);
   min-width: 180px;
 }
+
+/* ---------------------------------------------------------------------------
+   Phase 5: room utilization heat grid
+   --------------------------------------------------------------------------- */
+
+/* A single hue ramp, deliberately NOT the status colours. A busy room is not good
+   news and an empty one is not an alert: they are different numbers, not different
+   verdicts, and alert red stays reserved for below threshold and overdue. */
+
+.heat-scroll {
+  overflow-x: auto;
+}
+
+.heat-grid {
+  white-space: nowrap;
+}
+
+.heat-cell {
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--radius-sm);
+}
+
+.heat-cell--l0 {
+  background: #eef3f3;
+}
+.heat-cell--l1 {
+  background: #cfe0df;
+}
+.heat-cell--l2 {
+  background: #a5c6c4;
+}
+.heat-cell--l3 {
+  background: #6ba5a2;
+  color: #ffffff;
+}
+.heat-cell--l4,
+.heat-cell--l5 {
+  background: var(--color-primary);
+  color: var(--color-primary-ink);
+}
+
+.heat-blank {
+  color: var(--color-ink-subtle);
+}
+
+.heat-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  flex-wrap: wrap;
+}
+
+.heat-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.heat-legend__note {
+  flex-basis: 100%;
+}
+
+.alert--ok {
+  background: var(--color-positive-soft);
+  border-color: var(--color-positive);
+  color: var(--color-positive);
+}
+
+.code-sample {
+  background: var(--color-surface-sunken);
+  border: var(--border-hairline);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-x: auto;
+  margin: 0;
+}
