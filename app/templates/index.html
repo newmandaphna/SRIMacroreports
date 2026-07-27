@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Overview</h1>
+  <p class="page-head__sub">
+    Phase 0 scaffold. Authentication, the data model, and the reporting modules are not
+    built yet.
+  </p>
+</div>
+
+<div class="state">
+  <p class="state__title">Nothing to report yet</p>
+  <p>
+    The application is running and its encrypted database is open. Reporting appears
+    here once Phase 2 lands and a data source has been synced.
+  </p>
+</div>
+
+<div class="card-grid" style="margin-top: var(--space-4)">
+  <div class="card">
+    <p class="card__title">Phase 1, next</p>
+    <p>Auth, roles, module grants, user administration, audit log, session timeout.</p>
+  </div>
+  <div class="card">
+    <p class="card__title">Room utilization</p>
+    <p>
+      Feature flag is
+      <span class="pill {% if room_utilization_enabled %}pill--ok{% else %}pill--neutral{% endif %}">
+        {{ "on" if room_utilization_enabled else "off" }}
+      </span>
+    </p>
+  </div>
+  <div class="card">
+    <p class="card__title">Patient funnel</p>
+    <p>
+      Feature flag is
+      <span class="pill {% if patient_funnel_enabled %}pill--ok{% else %}pill--neutral{% endif %}">
+        {{ "on" if patient_funnel_enabled else "off" }}
+      </span>
+    </p>
+  </div>
+</div>
+{% endblock %}
