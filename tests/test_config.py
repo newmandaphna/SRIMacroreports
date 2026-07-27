@@ -7,12 +7,18 @@ import pytest
 from app.config import ConfigError, load_settings
 
 
-@pytest.mark.parametrize("missing", ["SESSION_SECRET_KEY", "DATABASE_ENCRYPTION_KEY"])
-def test_missing_required_secret_raises(env, monkeypatch, missing):
-    monkeypatch.delenv(missing, raising=False)
+def test_missing_session_secret_raises(env, monkeypatch):
+    monkeypatch.delenv("SESSION_SECRET_KEY", raising=False)
     with pytest.raises(ConfigError) as exc:
         load_settings()
-    assert missing in str(exc.value)
+    assert "SESSION_SECRET_KEY" in str(exc.value)
+
+
+def test_missing_database_url_raises(env, monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(ConfigError) as exc:
+        load_settings()
+    assert "DATABASE_URL" in str(exc.value)
 
 
 def test_blank_secret_counts_as_missing(env, monkeypatch):
@@ -64,5 +70,5 @@ def test_cpt_exclusions_override_is_normalized(env, monkeypatch):
 def test_repr_never_leaks_secrets(settings):
     rendered = repr(settings)
     assert settings.session_secret_key not in rendered
-    assert settings.database_encryption_key not in rendered
+    assert settings.database_url not in rendered
     assert "REDACTED" in rendered

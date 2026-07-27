@@ -1,7 +1,9 @@
 """Shared test fixtures.
 
-Every credential here is obviously fake. Tests run against a throwaway encrypted
-database in a temp directory, never against a real one.
+Every credential here is obviously fake. Tests run against the Replit built-in
+PostgreSQL database (DATABASE_URL from the environment). Each fixture that
+creates an app instance drops and recreates all tables to guarantee a clean
+slate, so tests are isolated from each other.
 """
 
 from __future__ import annotations
@@ -18,7 +20,6 @@ from app.models.user import ModuleGrant, User
 from app.security.passwords import hash_password
 
 FAKE_SESSION_SECRET = "test-session-secret-value-not-real-000000000000"  # noqa: S105
-FAKE_DB_KEY = "test-database-key-not-real"  # noqa: S105
 
 # Obviously fake, and long enough to pass policy.
 SEED_ADMIN_EMAIL = "admin.aa@example.invalid"
@@ -27,14 +28,17 @@ KNOWN_PASSWORD = "quiet-lantern-thicket-9412"  # noqa: S105
 
 
 @pytest.fixture
-def env(tmp_path, monkeypatch) -> Iterator[dict[str, str]]:
+def env(monkeypatch) -> Iterator[dict[str, str]]:
     """A minimal valid environment, applied to os.environ for the test."""
+    database_url = os.environ.get("DATABASE_URL", "")
+    if not database_url:
+        pytest.skip("DATABASE_URL not set -- skipping database tests")
+
     values = {
         "ENVIRONMENT": "test",
         "DEBUG": "false",
         "SESSION_SECRET_KEY": FAKE_SESSION_SECRET,
-        "DATABASE_ENCRYPTION_KEY": FAKE_DB_KEY,
-        "DATABASE_PATH": str(tmp_path / "test.db"),
+        "DATABASE_URL": database_url,
     }
     for key in list(os.environ):
         if key.startswith(
@@ -59,8 +63,18 @@ def settings(env) -> Settings:
     return load_settings()
 
 
+def _reset_schema(settings: Settings) -> None:
+    """Drop and recreate all tables for a clean test slate."""
+    from app.db import Base, create_db_engine
+
+    engine = create_db_engine(settings)
+    Base.metadata.drop_all(engine)
+    engine.dispose()
+
+
 @pytest.fixture
 def client(settings) -> Iterator[TestClient]:
+    _reset_schema(settings)
     from app.main import create_app
 
     with TestClient(create_app(settings)) as test_client:
@@ -70,9 +84,12 @@ def client(settings) -> Iterator[TestClient]:
 @pytest.fixture
 def seeded_client(seeded_env) -> Iterator[TestClient]:
     """A client whose app seeded the initial administrator at startup."""
+    from app.config import load_settings
     from app.main import create_app
 
-    with TestClient(create_app(load_settings())) as test_client:
+    s = load_settings()
+    _reset_schema(s)
+    with TestClient(create_app(s)) as test_client:
         yield test_client
 
 

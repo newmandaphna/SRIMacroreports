@@ -1,46 +1,55 @@
 """Alembic environment.
 
-Builds its engine from application settings rather than from a URL in alembic.ini,
-because the database is SQLCipher encrypted and the key must never be written into a
-config file in the repository.
+Builds its engine from DATABASE_URL (Replit's built-in PostgreSQL). The URL is
+a runtime-managed environment variable and is never written into alembic.ini.
 """
 
 from __future__ import annotations
 
+import os
+
 from alembic import context
+from sqlalchemy import create_engine
 
 # Importing the models package registers every table on Base.metadata so that
-# autogenerate can see them. It is empty until Phase 2.
+# autogenerate can see them.
 import app.models  # noqa: F401
-from app.config import load_settings
-from app.db import Base, create_db_engine
+from app.db import Base
 
 config = context.config
 target_metadata = Base.metadata
 
 
-def run_migrations_offline() -> None:
-    """Offline mode is not supported: there is no URL to render against.
+def _get_url() -> str:
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL is not set. In Replit this is provided automatically "
+            "by the built-in PostgreSQL database."
+        )
+    return url
 
-    An encrypted database cannot be migrated by emitting SQL to a file, since the
-    file would then need the key to be applied by hand.
-    """
-    raise RuntimeError(
-        "Offline migrations are not supported for the encrypted database. "
-        "Run alembic without --sql."
+
+def run_migrations_offline() -> None:
+    """Offline mode: emit SQL to stdout for review."""
+    context.configure(
+        url=_get_url(),
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+        compare_type=True,
     )
+    with context.begin_transaction():
+        context.run_migrations()
 
 
 def run_migrations_online() -> None:
-    settings = load_settings()
-    engine = create_db_engine(settings)
+    engine = create_engine(_get_url(), future=True)
 
     with engine.connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            # SQLite cannot ALTER most things in place; batch mode rewrites the table.
-            render_as_batch=True,
             compare_type=True,
         )
         with context.begin_transaction():
