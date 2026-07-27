@@ -1,0 +1,50 @@
+{# KPI cards. Each states the question it answers, then the number, then the change.
+
+   A number with no question attached invites everyone to supply their own. #}
+
+<div class="card-grid kpi-row">
+  {% for kpi in kpis %}
+  {% set body %}
+  <p class="kpi-question">{{ kpi.question }}</p>
+  <p class="kpi-value">
+    {% if kpi.kind == "currency" %}{{ kpi.value|currency }}{% else %}{{ kpi.value|count }}{% endif %}
+  </p>
+
+  {% if kpi.has_comparison %}
+  <p class="kpi-delta kpi-delta--{{ kpi.tone }}">
+    {% if kpi.direction == "flat" %}
+    no change
+    {% else %}
+    <span aria-hidden="true">{{ "▲" if kpi.direction == "up" else "▼" }}</span>
+    {% if kpi.kind == "currency" %}{{ (kpi.delta if kpi.delta > 0 else -kpi.delta)|currency }}
+    {% else %}{{ (kpi.delta if kpi.delta > 0 else -kpi.delta)|count }}{% endif %}
+    {% if kpi.delta_percent is not none %}
+    ({{ (kpi.delta_percent if kpi.delta_percent > 0 else -kpi.delta_percent) }}%)
+    {% endif %}
+    {% endif %}
+    <span class="kpi-delta__basis">vs previous {{ range.days }} days</span>
+  </p>
+  {% else %}
+  <p class="kpi-delta kpi-delta--neutral">{{ kpi.label }}</p>
+  {% endif %}
+
+  {% if kpi.note %}<p class="kpi-note">{{ kpi.note }}</p>{% endif %}
+
+  {% if kpi.sparkline|length > 1 %}
+  <div class="sparkline">
+    <canvas
+      id="spark-{{ kpi.key }}"
+      data-spark="{{ kpi.sparkline|join(',') }}"
+      aria-hidden="true"
+    ></canvas>
+  </div>
+  {% endif %}
+  {% endset %}
+
+  {% if kpi.href %}
+  <a class="card card--link" href="{{ kpi.href }}">{{ body }}</a>
+  {% else %}
+  <div class="card">{{ body }}</div>
+  {% endif %}
+  {% endfor %}
+</div>
