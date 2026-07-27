@@ -1,6 +1,0 @@
-Provider,Patient,Date of Service,Note Status,Note Type
-Dr Alice Rivera,P001,2026-07-02,Signed,Therapy
-Dr Bob Nguyen,P002,2026-07-15,Signed,Med Mgmt
-Dr Alice Rivera,P003,2025-07-09,Unsigned,Therapy
-Dr Carol Smith,P004,2024-02-11,Signed,Group
-Dr Alice Rivera,P005,2026-07-22,Co-Sign Pending,Therapy

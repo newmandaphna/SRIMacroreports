@@ -1,5 +1,0 @@
-[tool.pytest.ini_options]
-# Make `import src...` resolve from the repo root without an install step.
-pythonpath = ["."]
-testpaths = ["tests"]
-addopts = "-q"
