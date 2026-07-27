@@ -590,3 +590,176 @@ a {
     flex-wrap: wrap;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Phase 3: reports
+   --------------------------------------------------------------------------- */
+
+.kpi-row .card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.card--link {
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.12s ease;
+}
+
+.card--link:hover {
+  border-color: var(--color-primary);
+}
+
+/* The question the card answers, stated before the number. */
+.kpi-question {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-ink-muted);
+}
+
+.kpi-value {
+  margin: 0;
+}
+
+.kpi-delta {
+  margin: 0;
+}
+
+/* Tone follows meaning, not the arrow: outstanding falling is good news. */
+.kpi-delta--good {
+  color: var(--color-positive);
+}
+.kpi-delta--bad {
+  color: var(--color-warning);
+}
+.kpi-delta--neutral {
+  color: var(--color-ink-muted);
+}
+
+.kpi-delta__basis {
+  color: var(--color-ink-subtle);
+  font-weight: 400;
+}
+
+.kpi-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-subtle);
+}
+
+.sparkline {
+  height: 34px;
+  margin-top: auto;
+  padding-top: var(--space-2);
+}
+
+.section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.chart-frame--short {
+  height: 150px;
+}
+
+.card-grid--wide {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+/* Filter bar */
+
+.filter-bar {
+  display: block;
+  margin-bottom: var(--space-4);
+}
+
+.filter-bar__group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.segmented__item {
+  border: 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-ink-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+}
+
+.segmented__item:last-child {
+  border-right: 0;
+}
+
+.segmented__item:hover {
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+}
+
+.segmented__item--on {
+  background: var(--color-primary);
+  color: var(--color-primary-ink);
+  font-weight: 600;
+}
+
+.filter-bar__more {
+  margin-top: var(--space-3);
+}
+
+.filter-bar__more summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
+.filter-bar__panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: var(--border-hairline);
+}
+
+.filter-bar__summary {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
+/* Print: the overview is handed to the practice owner on paper. */
+
+@media print {
+  .filter-bar,
+  .segmented,
+  .card--link {
+    border-color: #999;
+  }
+  .card--link {
+    text-decoration: none;
+  }
+  .sparkline {
+    display: none;
+  }
+  .section-head .button {
+    display: none;
+  }
+}

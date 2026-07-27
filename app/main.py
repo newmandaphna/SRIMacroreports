@@ -1,7 +1,7 @@
 """Application entry point.
 
-Phase 1: authentication, roles, module grants, user administration, the audit log,
-session timeout, and admin seeding. The reporting modules arrive in Phase 3 onward.
+Phases 1 to 3: authentication and administration, the import pipeline, and the
+Financial module with the Reports overview dashboard.
 """
 
 from __future__ import annotations
@@ -20,7 +20,16 @@ from app.config import Settings, get_settings
 from app.db import Base, DatabaseHandle
 from app.logging_setup import configure_logging
 from app.middleware import install_middleware
-from app.routers import admin_audit, admin_sources, admin_users, auth
+from app.models.enums import Module
+from app.routers import (
+    admin_audit,
+    admin_config,
+    admin_sources,
+    admin_therapists,
+    admin_users,
+    auth,
+    reports,
+)
 from app.security.csrf import CSRFMiddleware
 from app.security.deps import AccessDenied, OptionalUser, RedirectRequired
 from app.seed import seed_admin
@@ -63,7 +72,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="SRI Practice Dashboard",
         description="Internal practice management reporting for SRI Psychological Services.",
-        version="0.3.0",
+        version="0.4.0",
         lifespan=lifespan,
         # No public API docs on a PHI application.
         docs_url=None,
@@ -83,6 +92,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_users.router)
     app.include_router(admin_audit.router)
     app.include_router(admin_sources.router)
+    app.include_router(admin_config.router)
+    app.include_router(admin_therapists.router)
+    app.include_router(reports.router)
 
     register_error_handlers(app)
     register_routes(app)
@@ -134,6 +146,11 @@ def register_routes(app: FastAPI) -> None:
             return RedirectResponse("/login", status_code=303)
         if auth_ctx.user.must_change_password:
             return RedirectResponse("/change-password", status_code=303)
+        # Anyone who can see the financial module lands on the dashboard rather than
+        # on a placeholder they then have to click through.
+        allowed, _ = auth_ctx.user.can_view(Module.FINANCIAL)
+        if allowed:
+            return RedirectResponse("/reports", status_code=303)
         return render(request, "index.html", {"page_title": "Overview", "auth": auth_ctx})
 
 

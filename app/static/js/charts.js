@@ -190,8 +190,60 @@
     });
   }
 
+  /**
+   * A sparkline: shape only, no axes, no grid, no labels.
+   *
+   * Deliberately minimal. A sparkline on a KPI card answers "which way is this
+   * going", and axes on something 40 pixels tall answer nothing while adding noise.
+   */
+  function sparkline(canvasId, values, opts) {
+    var canvas = document.getElementById(canvasId);
+    if (!canvas || typeof global.Chart === "undefined" || values.length < 2) {
+      return null;
+    }
+    opts = opts || {};
+
+    var existing = global.Chart.getChart(canvas);
+    if (existing) {
+      existing.destroy();
+    }
+
+    return new global.Chart(canvas, {
+      type: "line",
+      data: {
+        labels: values.map(function () {
+          return "";
+        }),
+        datasets: [
+          {
+            data: values,
+            borderColor: opts.color || token("--chart-1", "#0f5c5c"),
+            borderWidth: 1.5,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            fill: false,
+            tension: 0.2,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        events: [],
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: {
+          x: { display: false },
+          y: { display: false, beginAtZero: true },
+        },
+        layout: { padding: 0 },
+      },
+    });
+  }
+
   global.SRICharts = {
     render: render,
+    sparkline: sparkline,
     palette: palette,
     formatCurrency: currencyExact.format,
     formatCount: integer.format,
