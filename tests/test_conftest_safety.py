@@ -22,6 +22,22 @@ from tests.conftest import (
     _resolve_test_database_url,
 )
 
+
+@pytest.fixture(autouse=True)
+def _preserve_test_database_url():
+    """Restore TEST_DATABASE_URL after every test in this module."""
+    # _maybe_auto_configure_test_db writes to os.environ directly, and
+    # monkeypatch.delenv records nothing when the variable was absent,
+    # which is what happens in CI, so the write would otherwise leak
+    # into every test that runs after it.
+    original = os.environ.get("TEST_DATABASE_URL")
+    yield
+    if original is None:
+        os.environ.pop("TEST_DATABASE_URL", None)
+    else:
+        os.environ["TEST_DATABASE_URL"] = original
+
+
 # ---------------------------------------------------------------------------
 # _assert_not_production
 # ---------------------------------------------------------------------------
