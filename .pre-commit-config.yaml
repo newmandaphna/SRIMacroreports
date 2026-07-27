@@ -1,0 +1,27 @@
+# Local gate that mirrors CI exactly. Install it once per clone:
+#
+#     pip install pre-commit
+#     pre-commit install
+#
+# After that, ruff check and ruff format run on every commit, so an import
+# order or formatting mistake cannot reach GitHub Actions at all.
+#
+# Ruff is pinned to the same version as requirements.txt on purpose. Ruff
+# versions disagree about formatting, and a mismatch would let the hook pass
+# locally and then fail in CI, which is the exact failure this file prevents.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.2
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=200]
