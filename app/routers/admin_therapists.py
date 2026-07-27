@@ -199,6 +199,167 @@ def _add_aliases(
     return added
 
 
+@router.get("/bulk", response_class=HTMLResponse)
+async def bulk_edit_form(
+    request: Request,
+    db: DbSession,
+    auth: AdminUser,
+    saved: str = Query(default=""),
+) -> Response:
+    """Editable table for updating all therapists' display names and employment types at once.
+
+    Useful after an initial sync that creates placeholder records (all-caps abbreviations
+    like ALEXANDER, HARRIS) and sets employment_type=OTHER for every one of them.
+    """
+    therapists = (
+        db.execute(
+            select(Therapist).order_by(Therapist.active.desc(), func.lower(Therapist.display_name))
+        )
+        .scalars()
+        .all()
+    )
+    return render(
+        request,
+        "admin/therapists_bulk.html",
+        {
+            "page_title": "Bulk edit therapists",
+            "auth": auth,
+            "therapists": therapists,
+            "employment_types": list(EmploymentType),
+            "just_saved": bool(saved),
+        },
+    )
+
+
+@router.post("/bulk")
+async def bulk_update_therapists(
+    request: Request,
+    db: DbSession,
+    auth: AdminUser,
+) -> Response:
+    """Apply name and employment-type changes for every therapist in a single submission.
+
+    Strictly two-phase: validate every row first (zero DB writes), then apply all
+    changes only when the entire submission is clean. One bad row aborts the whole
+    operation so the dataset is never left partially updated.
+    """
+    form = await request.form()
+    therapists = db.execute(select(Therapist).order_by(Therapist.id)).scalars().all()
+
+    # ------------------------------------------------------------------ phase 1
+    # Validate every row. Collect proposed (therapist, new_name, new_type) tuples.
+    # No DB mutations happen here.
+    # ------------------------------------------------------------------ phase 1
+    errors: list[str] = []
+    # List of (therapist_obj, new_name, new_type, before_name, before_type)
+    proposed: list[tuple[Therapist, str, EmploymentType, str, EmploymentType]] = []
+    # Lower-cased names already claimed by earlier rows in this same submission.
+    # Checked in addition to the DB so two rows renaming to the same value are
+    # caught before any write, not at commit time.
+    proposed_names_lower: set[str] = set()
+
+    valid_types = {e.value for e in EmploymentType}
+
+    for therapist in therapists:
+        raw_name = str(form.get(f"name_{therapist.id}", "")).strip()
+        raw_type = str(form.get(f"employment_{therapist.id}", "")).strip()
+
+        if not raw_name:
+            errors.append(f"Name for therapist #{therapist.id} is empty.")
+            continue
+
+        if raw_type not in valid_types:
+            errors.append(f"Invalid employment type for {therapist.display_name!r}.")
+            continue
+
+        new_name = raw_name
+        new_type = EmploymentType(raw_type)
+        new_name_lower = new_name.lower()
+
+        # Uniqueness check: only needed when the name actually changes.
+        if new_name_lower != therapist.display_name.lower():
+            # 1. Collision with a name already proposed earlier in this batch.
+            if new_name_lower in proposed_names_lower:
+                errors.append(f"{new_name!r} appears more than once in this submission.")
+                continue
+
+            # 2. Collision with an existing DB record not being renamed right now.
+            clash = db.execute(
+                select(Therapist).where(
+                    func.lower(Therapist.display_name) == new_name_lower,
+                    Therapist.id != therapist.id,
+                )
+            ).scalar_one_or_none()
+            if clash:
+                errors.append(f"{new_name!r} already belongs to another therapist.")
+                continue
+
+        proposed_names_lower.add(new_name_lower)
+
+        if new_name != therapist.display_name or new_type != therapist.employment_type:
+            proposed.append(
+                (therapist, new_name, new_type, therapist.display_name, therapist.employment_type)
+            )
+
+    # ------------------------------------------------------------------ phase 2
+    # Only reached when validation found zero errors. Apply all writes atomically.
+    # ------------------------------------------------------------------ phase 2
+    if errors:
+        therapists_fresh = (
+            db.execute(
+                select(Therapist).order_by(
+                    Therapist.active.desc(), func.lower(Therapist.display_name)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return render(
+            request,
+            "admin/therapists_bulk.html",
+            {
+                "page_title": "Bulk edit therapists",
+                "auth": auth,
+                "therapists": therapists_fresh,
+                "employment_types": list(EmploymentType),
+                "just_saved": False,
+                "errors": errors,
+            },
+            status_code=400,
+        )
+
+    changed: list[dict] = []
+    for therapist, new_name, new_type, before_name, before_type in proposed:
+        therapist.display_name = new_name
+        therapist.employment_type = new_type
+        changed.append(
+            {
+                "id": therapist.id,
+                "before": {
+                    "display_name": before_name,
+                    "employment_type": before_type.value,
+                },
+                "after": {
+                    "display_name": new_name,
+                    "employment_type": new_type.value,
+                },
+            }
+        )
+
+    if changed:
+        audit.record(
+            db,
+            action=AuditAction.MANUAL_EDIT,
+            actor=auth.user,
+            target_type="therapist",
+            target_id=None,
+            request=request,
+            detail={"bulk_update": {"updated": len(changed), "changes": changed}},
+        )
+
+    return RedirectResponse("/admin/therapists/bulk?saved=1", status_code=303)
+
+
 @router.get("/{therapist_id}", response_class=HTMLResponse)
 async def therapist_detail(
     request: Request, db: DbSession, auth: AdminUser, therapist_id: int

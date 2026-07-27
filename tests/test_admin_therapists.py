@@ -188,6 +188,193 @@ def test_changes_are_audited(admin_client):
     assert "Harris" in (entries[0].detail or "")
 
 
+def test_bulk_edit_get_renders_all_therapists(admin_client):
+    create(admin_client, "Alexander", employment="other")
+    create(admin_client, "Harris", employment="salaried_benefits")
+
+    page = admin_client.get("/admin/therapists/bulk")
+    assert page.status_code == 200
+    assert "Alexander" in page.text
+    assert "Harris" in page.text
+
+
+def test_bulk_edit_updates_names_and_types(admin_client):
+    create(admin_client, "ALEXANDER", employment="other")
+    create(admin_client, "HARRIS", employment="other")
+
+    with admin_client.app.state.db.session() as db:
+        therapists = db.execute(select(Therapist).order_by(Therapist.display_name)).scalars().all()
+        ids = {t.display_name: t.id for t in therapists}
+
+    page = admin_client.get("/admin/therapists/bulk")
+    token = token_from(page.text)
+
+    resp = admin_client.post(
+        "/admin/therapists/bulk",
+        data={
+            "csrf_token": token,
+            f"name_{ids['ALEXANDER']}": "Dr. Sarah Alexander",
+            f"employment_{ids['ALEXANDER']}": "salaried_benefits",
+            f"name_{ids['HARRIS']}": "Andrea Harris, LMFT",
+            f"employment_{ids['HARRIS']}": "percentage_legacy",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        t1 = db.get(Therapist, ids["ALEXANDER"])
+        t2 = db.get(Therapist, ids["HARRIS"])
+
+    assert t1.display_name == "Dr. Sarah Alexander"
+    assert t1.employment_type == EmploymentType.SALARIED_BENEFITS
+    assert t2.display_name == "Andrea Harris, LMFT"
+    assert t2.employment_type == EmploymentType.PERCENTAGE_LEGACY
+
+
+def test_bulk_edit_preserves_existing_aliases(admin_client):
+    """Changing display name must not remove pre-existing aliases."""
+    create(admin_client, "HARRIS", aliases="ANDREA HARRIS, LMFT (A.HARRIS)", employment="other")
+
+    with admin_client.app.state.db.session() as db:
+        t = db.execute(select(Therapist).where(Therapist.display_name == "HARRIS")).scalar_one()
+        tid = t.id
+        original_aliases = set(t.alias_values)
+
+    page = admin_client.get("/admin/therapists/bulk")
+    resp = admin_client.post(
+        "/admin/therapists/bulk",
+        data={
+            "csrf_token": token_from(page.text),
+            f"name_{tid}": "Andrea Harris, LMFT",
+            f"employment_{tid}": "salaried_benefits",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        t = db.get(Therapist, tid)
+        assert t.display_name == "Andrea Harris, LMFT"
+        # All original aliases must still be present.
+        assert original_aliases.issubset(t.alias_values)
+
+
+def test_bulk_edit_is_atomic_one_bad_row_prevents_all_changes(admin_client):
+    """If any row fails validation, zero rows must be written to the database."""
+    create(admin_client, "ALEXANDER", employment="other")
+    create(admin_client, "HARRIS", employment="other")
+
+    with admin_client.app.state.db.session() as db:
+        therapists = db.execute(select(Therapist).order_by(Therapist.display_name)).scalars().all()
+        ids = {t.display_name: t.id for t in therapists}
+
+    page = admin_client.get("/admin/therapists/bulk")
+    resp = admin_client.post(
+        "/admin/therapists/bulk",
+        data={
+            "csrf_token": token_from(page.text),
+            f"name_{ids['ALEXANDER']}": "Dr. Sarah Alexander",  # valid
+            f"employment_{ids['ALEXANDER']}": "salaried_benefits",
+            # HARRIS gets an invalid (empty) name — should abort the whole batch.
+            f"name_{ids['HARRIS']}": "",
+            f"employment_{ids['HARRIS']}": "percentage_legacy",
+        },
+    )
+    # Should return 400 (validation error page).
+    assert resp.status_code == 400
+
+    # ALEXANDER must be unchanged — the valid row must NOT have been written.
+    with admin_client.app.state.db.session() as db:
+        t = db.get(Therapist, ids["ALEXANDER"])
+    assert t.display_name == "ALEXANDER", (
+        "Atomic rollback failed: the valid row was written even though another row was invalid"
+    )
+
+
+def test_bulk_edit_rejects_intra_batch_duplicate_names(admin_client):
+    """Two rows in the same submission sharing a new name must fail with 400 and zero writes."""
+    create(admin_client, "ALEXANDER", employment="other")
+    create(admin_client, "HARRIS", employment="other")
+
+    with admin_client.app.state.db.session() as db:
+        therapists = db.execute(select(Therapist).order_by(Therapist.display_name)).scalars().all()
+        ids = {t.display_name: t.id for t in therapists}
+
+    page = admin_client.get("/admin/therapists/bulk")
+    resp = admin_client.post(
+        "/admin/therapists/bulk",
+        data={
+            "csrf_token": token_from(page.text),
+            # Both rows renamed to the same value — should be caught in phase-1.
+            f"name_{ids['ALEXANDER']}": "Dr. Same Name",
+            f"employment_{ids['ALEXANDER']}": "salaried_benefits",
+            f"name_{ids['HARRIS']}": "Dr. Same Name",
+            f"employment_{ids['HARRIS']}": "percentage_legacy",
+        },
+    )
+    assert resp.status_code == 400
+    assert "more than once" in resp.text
+
+    # Neither therapist must have been written.
+    with admin_client.app.state.db.session() as db:
+        t1 = db.get(Therapist, ids["ALEXANDER"])
+        t2 = db.get(Therapist, ids["HARRIS"])
+    assert t1.display_name == "ALEXANDER", "Intra-batch dup check: first row was mutated"
+    assert t2.display_name == "HARRIS", "Intra-batch dup check: second row was mutated"
+
+
+def test_bulk_edit_rejects_duplicate_display_name(admin_client):
+    create(admin_client, "Alexander")
+    create(admin_client, "Harris")
+
+    with admin_client.app.state.db.session() as db:
+        t = db.execute(select(Therapist).where(Therapist.display_name == "Harris")).scalar_one()
+        tid = t.id
+
+    page = admin_client.get("/admin/therapists/bulk")
+    resp = admin_client.post(
+        "/admin/therapists/bulk",
+        data={
+            "csrf_token": token_from(page.text),
+            f"name_{tid}": "Alexander",  # already taken
+            f"employment_{tid}": "salaried_benefits",
+        },
+    )
+    assert resp.status_code == 400
+    assert "already belongs to another therapist" in resp.text
+
+
+def test_bulk_edit_is_audited(admin_client):
+    create(admin_client, "HARRIS", employment="other")
+
+    with admin_client.app.state.db.session() as db:
+        t = db.execute(select(Therapist).where(Therapist.display_name == "HARRIS")).scalar_one()
+        tid = t.id
+
+    page = admin_client.get("/admin/therapists/bulk")
+    admin_client.post(
+        "/admin/therapists/bulk",
+        data={
+            "csrf_token": token_from(page.text),
+            f"name_{tid}": "Andrea Harris",
+            f"employment_{tid}": "salaried_benefits",
+        },
+        follow_redirects=False,
+    )
+
+    with admin_client.app.state.db.session() as db:
+        entry = db.execute(
+            select(AuditLog).where(
+                AuditLog.action == AuditAction.MANUAL_EDIT,
+                AuditLog.detail.contains("bulk_update"),
+            )
+        ).scalar_one_or_none()
+
+    assert entry is not None
+    assert "Andrea Harris" in (entry.detail or "")
+
+
 def test_a_created_therapist_resolves_a_previously_rejected_row(admin_client):
     """The whole point: reject, add the therapist, sync again, row lands."""
     from app.models.data_source import DataSource, RejectReason, SourceProvider

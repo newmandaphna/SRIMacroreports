@@ -407,7 +407,7 @@ def _detail_redirect_with_flash(source_id: int, message: str) -> Response:
 def _lookup_redirect(
     source_id: int,
     kind: str,
-    result: "lookups_import.AliasImportResult | lookups_import.LookupImportResult",
+    result: lookups_import.AliasImportResult | lookups_import.LookupImportResult,
 ) -> Response:
     from urllib.parse import urlencode
 
@@ -427,9 +427,7 @@ def _lookup_redirect(
                 parts.append("All aliases already up to date.")
             if result.conflicts:
                 n = len(result.conflicts)
-                parts.append(
-                    f"{n} skipped — already point at a different therapist."
-                )
+                parts.append(f"{n} skipped — already point at a different therapist.")
             params["notice"] = " ".join(parts) if parts else "Import complete."
         if result.unmatched:
             # Pipe-separated so commas inside names survive round-trip.
@@ -441,9 +439,7 @@ def _lookup_redirect(
             params["notice"] = (
                 f"{result.imported} abbreviation{'s' if result.imported != 1 else ''} imported"
                 + (
-                    " ("
-                    + ", ".join(f"{v} {k}" for k, v in sorted(result.by_kind.items()))
-                    + ")."
+                    " (" + ", ".join(f"{v} {k}" for k, v in sorted(result.by_kind.items())) + ")."
                     if result.by_kind
                     else "."
                 )

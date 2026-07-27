@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>Bulk edit therapists</h1>
+    <p class="page-head__sub">
+      Update display names and employment types for every therapist in one submission.
+      Existing aliases are not changed here — use each therapist's detail page to manage them.
+    </p>
+  </div>
+  <a href="/admin/therapists" class="button button--quiet">Back to list</a>
+</div>
+
+{% if just_saved %}
+<div class="alert alert--ok" role="alert">Changes saved.</div>
+{% endif %}
+
+{% if errors %}
+<div class="alert alert--error" role="alert">
+  <strong>Some rows were skipped:</strong>
+  <ul style="margin: var(--space-1) 0 0 var(--space-3); padding: 0">
+    {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if therapists %}
+<form method="post" action="/admin/therapists/bulk">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+  <div class="card" style="overflow-x: auto">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="min-width: 14rem">Display name</th>
+          <th style="min-width: 10rem">Employment type</th>
+          <th>Current aliases</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in therapists %}
+        <tr class="{% if not t.active %}row--muted{% endif %}">
+          <td>
+            <input
+              type="text"
+              name="name_{{ t.id }}"
+              value="{{ t.display_name }}"
+              required
+              class="field__input"
+              style="width: 100%"
+              aria-label="Display name for {{ t.display_name }}"
+            />
+          </td>
+          <td>
+            <select
+              name="employment_{{ t.id }}"
+              class="field__input"
+              style="width: 100%"
+              aria-label="Employment type for {{ t.display_name }}"
+            >
+              {% for e in employment_types %}
+              <option
+                value="{{ e.value }}"
+                {% if t.employment_type == e %}selected{% endif %}
+              >{{ e.label }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            {% for a in t.aliases %}
+            <span class="pill pill--neutral">{{ a.alias }}</span>
+            {% endfor %}
+            {% if not t.aliases %}
+            <span class="text-muted" style="font-size: 0.85em">none — rows will reject at import</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if t.active %}
+            <span class="pill pill--ok">active</span>
+            {% else %}
+            <span class="pill pill--neutral">inactive</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="form-actions" style="margin-top: var(--space-3)">
+    <button type="submit" class="button button--primary">Save all changes</button>
+    <a href="/admin/therapists" class="button button--quiet">Cancel</a>
+  </div>
+</form>
+{% else %}
+<div class="state">
+  <p class="state__title">No therapists yet</p>
+  <p>Add therapists on the <a href="/admin/therapists">therapists list</a> first.</p>
+</div>
+{% endif %}
+{% endblock %}
