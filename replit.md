@@ -4,6 +4,22 @@ Internal practice management reporting for SRI Psychological Services. Tracks fi
 
 **This application holds PHI.** See `SECURITY.md` before touching data, logging, or access control.
 
+## Before you commit
+
+Run the same three checks CI runs, from the repository root:
+
+    ruff check .
+    ruff format --check .
+    pytest
+
+All three must pass. Better, install the hook once and let it run itself:
+
+    pip install pre-commit
+    pre-commit install
+
+See `AGENTS.md` for the rest. Every red build in this repository so far was a
+commit that skipped this step, not a real defect in the code.
+
 ## Stack
 
 - Python 3.11, FastAPI, Jinja2, htmx
