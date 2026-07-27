@@ -303,3 +303,25 @@ def csrf_for(test_client: TestClient) -> str:
     match = re.search(r'name="csrf_token" value="([^"]+)"', page.text)
     assert match, "no CSRF token found on the page"
     return match.group(1)
+
+
+# ---------------------------------------------------------------------------
+# Environment isolation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _restore_environment() -> Iterator[None]:
+    """Put os.environ back exactly as it was before the test.
+
+    monkeypatch.delenv(name, raising=False) records nothing when the name is
+    absent, so a test that deletes a variable which was never set does not get
+    it restored. TEST_DATABASE_URL is written into os.environ at import time, so
+    exactly that mistake once leaked into the rest of the session and turned one
+    wrong assumption into seventy errors. Snapshotting here closes the whole
+    class rather than the single case.
+    """
+    before = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(before)
