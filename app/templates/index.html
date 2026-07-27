@@ -4,40 +4,52 @@
 <div class="page-head">
   <h1>Overview</h1>
   <p class="page-head__sub">
-    Phase 0 scaffold. Authentication, the data model, and the reporting modules are not
-    built yet.
+    Signed in as {{ auth.user.display_name }} ({{ auth.role.label }}).
   </p>
 </div>
 
 <div class="state">
-  <p class="state__title">Nothing to report yet</p>
+  <p class="state__title">No synced data yet</p>
   <p>
-    The application is running and its encrypted database is open. Reporting appears
-    here once Phase 2 lands and a data source has been synced.
+    Authentication and administration are in place. Reporting appears here once Phase 2
+    lands and a data source has been synced.
   </p>
 </div>
 
 <div class="card-grid" style="margin-top: var(--space-4)">
   <div class="card">
-    <p class="card__title">Phase 1, next</p>
-    <p>Auth, roles, module grants, user administration, audit log, session timeout.</p>
-  </div>
-  <div class="card">
-    <p class="card__title">Room utilization</p>
+    <p class="card__title">Your access</p>
+    {% if auth.user.granted_modules %}
     <p>
-      Feature flag is
-      <span class="pill {% if room_utilization_enabled %}pill--ok{% else %}pill--neutral{% endif %}">
-        {{ "on" if room_utilization_enabled else "off" }}
-      </span>
+      {% for m in auth.user.granted_modules|sort(attribute='value') %}
+      <span class="pill pill--neutral">{{ m.label }}</span>
+      {% endfor %}
     </p>
+    {% elif auth.role.is_admin %}
+    <p class="text-muted">
+      No explicit grants. As an administrator you may still reach any module, and each
+      time you do it is recorded as emergency access.
+    </p>
+    {% else %}
+    <p class="text-muted">
+      No modules granted yet. An administrator can give you access.
+    </p>
+    {% endif %}
   </div>
+
+  {% if auth.role.is_admin %}
   <div class="card">
-    <p class="card__title">Patient funnel</p>
+    <p class="card__title">Administration</p>
+    <p><a href="/admin/users">Manage users</a></p>
+    <p><a href="/admin/audit">Review the audit log</a></p>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <p class="card__title">Phase 2, next</p>
     <p>
-      Feature flag is
-      <span class="pill {% if patient_funnel_enabled %}pill--ok{% else %}pill--neutral{% endif %}">
-        {{ "on" if patient_funnel_enabled else "off" }}
-      </span>
+      Data model, the Data Sources registry, and the sync engine with dry run and
+      import error review.
     </p>
   </div>
 </div>

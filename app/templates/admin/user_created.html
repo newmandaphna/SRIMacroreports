@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head">
+  <h1>
+    {% if was_reset %}Password reset for {{ new_user.display_name }}
+    {% else %}{{ new_user.display_name }} added{% endif %}
+  </h1>
+</div>
+
+<div class="card">
+  <p class="card__title">Temporary password</p>
+  <p class="temp-password">{{ temporary_password }}</p>
+
+  <div class="alert alert--warning">
+    <p><strong>This is shown once.</strong> It is stored only as a hash, so it cannot be
+    displayed again. If you lose it, reset the password to generate a new one.</p>
+    <p>
+      Give it to {{ new_user.display_name }} in person or by phone rather than email.
+      They must choose their own password before they can reach anything else.
+    </p>
+  </div>
+
+  {% if was_reset %}
+  <p class="text-muted">Any active sessions for this account were signed out.</p>
+  {% endif %}
+
+  <div class="form-actions">
+    <a href="/admin/users" class="button button--primary">Back to users</a>
+  </div>
+</div>
+{% endblock %}

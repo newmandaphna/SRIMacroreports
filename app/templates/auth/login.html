@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="auth-panel">
+  <h1>Sign in</h1>
+  <p class="page-head__sub">SRI Practice Dashboard</p>
+
+  {% if error %}
+  <div class="alert alert--error" role="alert">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="next" value="{{ next }}" />
+
+    <label class="field">
+      <span class="field__label">Email</span>
+      <input
+        type="email"
+        name="email"
+        autocomplete="username"
+        required
+        autofocus
+        class="field__input"
+      />
+    </label>
+
+    <label class="field">
+      <span class="field__label">Password</span>
+      <input
+        type="password"
+        name="password"
+        autocomplete="current-password"
+        required
+        class="field__input"
+      />
+    </label>
+
+    <button type="submit" class="button button--primary">Sign in</button>
+  </form>
+
+  <p class="auth-panel__note">
+    This system contains protected health information. Access is limited to authorized
+    staff, every sign in is recorded, and sessions end after
+    {{ session_timeout_minutes }} minutes of inactivity.
+  </p>
+</div>
+{% endblock %}
