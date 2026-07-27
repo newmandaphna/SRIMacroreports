@@ -1,0 +1,31 @@
+{# Designed empty state, not a blank page.
+
+   Two genuinely different situations, and telling them apart is the whole point:
+   nothing has ever been synced, or nothing falls in the range you picked. #}
+
+<div class="state">
+  {% if not coverage.has_data %}
+  <p class="state__title">No synced data yet</p>
+  <p>
+    Nothing has been imported. An administrator can add the quarter's Q sheet on the
+    Data Sources page and run a sync.
+  </p>
+  {% if auth.role.is_admin %}
+  <p><a href="/admin/sources" class="button button--primary">Go to Data sources</a></p>
+  {% endif %}
+  {% else %}
+  <p class="state__title">No data in this range</p>
+  <p>
+    Nothing between {{ range.start }} and {{ range.end }}.
+    Your synced data covers <strong>{{ coverage.min_date }}</strong> to
+    <strong>{{ coverage.max_date }}</strong>.
+  </p>
+  <p>
+    <a
+      class="button button--primary"
+      href="{{ request.url.path }}?preset=custom&start={{ coverage.min_date }}&end={{ coverage.max_date }}"
+      >Show everything imported</a
+    >
+  </p>
+  {% endif %}
+</div>

@@ -1,0 +1,41 @@
+{# The revenue trend. Title states the question the chart answers. #}
+
+<div class="card" id="trend">
+  <div class="section-head">
+    <div>
+      <h2>Are we collecting what we bill?</h2>
+      <p class="page-head__sub">
+        {{ granularity.label }}{% if granularity.value == "week" %}, weeks labelled by their Monday{% endif %}.
+      </p>
+    </div>
+    <a
+      class="button button--quiet no-print"
+      href="/reports/financial/export.csv?table=trend&{{ query_string }}"
+      >Export CSV</a
+    >
+  </div>
+
+  {% if trend|length > 1 %}
+  <div class="chart-frame">
+    <canvas id="revenue-trend"></canvas>
+  </div>
+  <script type="application/json" id="revenue-trend-data">
+    {
+      "labels": {{ trend | map(attribute="label") | list | tojson }},
+      "billed": {{ trend | map(attribute="billed") | map("float") | list | tojson }},
+      "collected": {{ trend | map(attribute="collected") | map("float") | list | tojson }},
+      "outstanding": {{ trend | map(attribute="outstanding") | map("float") | list | tojson }},
+      "sessions": {{ trend | map(attribute="sessions") | list | tojson }}
+    }
+  </script>
+
+  <div class="chart-frame chart-frame--short" style="margin-top: var(--space-4)">
+    <canvas id="sessions-trend"></canvas>
+  </div>
+  <p class="text-muted">How much clinical work did we do each period?</p>
+  {% else %}
+  <p class="text-muted">
+    Not enough periods to draw a trend. Widen the date range.
+  </p>
+  {% endif %}
+</div>

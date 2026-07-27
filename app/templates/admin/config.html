@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Practice settings</h1>
+  <p class="page-head__sub">
+    These drive the reports. Every change is recorded in the audit log with its before
+    and after value.
+  </p>
+</div>
+
+{% if error %}
+<div class="alert alert--error" role="alert">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="/admin/config" class="card stack">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+  <label class="field">
+    <span class="field__label">Benefits session threshold, per week</span>
+    <input
+      type="number"
+      name="benefits_session_threshold"
+      min="1"
+      max="200"
+      class="field__input"
+      value="{{ values.benefits_session_threshold }}"
+    />
+    <span class="field__hint">
+      This decides which therapists appear in the alert state on the overview, and that
+      number names a real person, so it is worth getting right. It applies to salaried
+      therapists only: percentage based therapists have no session minimum and carry no
+      status at all.
+      {% if values.benefits_session_threshold == defaults.benefits_session_threshold %}
+      <strong>The current value is the placeholder default, not a number the practice
+      has confirmed.</strong>
+      {% endif %}
+    </span>
+  </label>
+
+  <label class="field">
+    <span class="field__label">CPT codes that do not count as sessions</span>
+    <input
+      type="text"
+      name="cpt_exclusion_list"
+      class="field__input"
+      value="{{ values.cpt_exclusion_list|join(', ') }}"
+    />
+    <span class="field__hint">
+      Comma separated, matched against the base code, so 90791-ADHD is treated as
+      90791. These rows are still imported and their money still counts toward revenue:
+      excluding a code says it is not a session, not that its payments are unreal.
+      99998 is a cancellation with no fee and 99999 is a cancellation with a no show
+      fee charged.
+    </span>
+  </label>
+
+  <fieldset class="field">
+    <legend class="field__label">Week starts on</legend>
+    {% for day in ["monday", "sunday"] %}
+    <label class="choice">
+      <input
+        type="radio"
+        name="week_start_day"
+        value="{{ day }}"
+        {% if values.week_start_day == day %}checked{% endif %}
+      />
+      <span><strong>{{ day|capitalize }}</strong></span>
+    </label>
+    {% endfor %}
+    <span class="field__hint">
+      Weeks are labelled by their first day throughout the reports.
+    </span>
+  </fieldset>
+
+  <label class="field">
+    <span class="field__label">Sign out after inactivity, minutes</span>
+    <input
+      type="number"
+      name="session_timeout_minutes"
+      min="1"
+      max="480"
+      class="field__input"
+      value="{{ values.session_timeout_minutes }}"
+    />
+    <span class="field__hint">
+      Enforced server side on every request. Shortening it is a privacy improvement;
+      lengthening it past a working break widens the window in which an unattended
+      screen shows patient data.
+    </span>
+  </label>
+
+  <div class="form-actions">
+    <button type="submit" class="button button--primary">Save settings</button>
+  </div>
+</form>
+{% endblock %}

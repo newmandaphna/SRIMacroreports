@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>Financial</h1>
+    <p class="page-head__sub">{{ range.label }}, {{ range.start }} to {{ range.end }}.</p>
+  </div>
+  <a href="/reports" class="button button--quiet no-print">Overview</a>
+</div>
+
+{% include "reports/_filters.html" %}
+
+{% if totals.visits == 0 %}
+{% include "reports/_empty.html" %}
+{% else %}
+
+<div class="card-grid">
+  <div class="card">
+    <p class="kpi-question">How much clinical work did we do?</p>
+    <p class="kpi-value">{{ totals.sessions|count }}</p>
+    <p class="kpi-delta">sessions, from {{ totals.visits|count }} imported rows</p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">What did we bill?</p>
+    <p class="kpi-value">{{ totals.billed|currency }}</p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">What came in?</p>
+    <p class="kpi-value">{{ totals.collected|currency }}</p>
+    <p class="kpi-delta">
+      {% if totals.collection_rate is not none %}{{ totals.collection_rate }}% of billed{% endif %}
+    </p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">What are we still owed?</p>
+    <p class="kpi-value">{{ totals.outstanding|currency }}</p>
+    <p class="kpi-delta">
+      patient {{ totals.outstanding_patient|currency }},
+      insurance {{ totals.outstanding_insurance|currency }}
+    </p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">What does an average session bring in?</p>
+    <p class="kpi-value">
+      {% if totals.revenue_per_session is not none %}{{ totals.revenue_per_session|currency }}
+      {% else %}-{% endif %}
+    </p>
+    <p class="kpi-note">Collected divided by sessions, so cancellation fees lift it.</p>
+  </div>
+</div>
+
+<div style="margin-top: var(--space-4)">
+  {% include "reports/_trend.html" %}
+</div>
+
+<div style="margin-top: var(--space-4)">
+  {% set show_export = true %}
+  {% include "reports/_utilization_board.html" %}
+</div>
+
+<div class="card-grid card-grid--wide" style="margin-top: var(--space-4)">
+  {% for title, question, rows, table in [
+      ("Insurance", "Which payers are we carrying balances with?", insurance_rows, "insurance"),
+      ("Location", "Where is the work happening?", location_rows, "location"),
+      ("Procedure", "What kind of work is it?", cpt_rows, "cpt"),
+    ] %}
+  <div class="card">
+    <div class="section-head">
+      <div>
+        <h2>{{ question }}</h2>
+        <p class="page-head__sub">By {{ title|lower }}, highest collected first.</p>
+      </div>
+      <a
+        class="button button--quiet no-print"
+        href="/reports/financial/export.csv?table={{ table }}&{{ query_string }}"
+        >Export CSV</a
+      >
+    </div>
+    {% if rows %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>{{ title }}</th>
+          <th class="numeric">Sessions</th>
+          <th class="numeric">Collected</th>
+          <th class="numeric">Outstanding</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.label }}</td>
+          <td class="numeric">{{ r.sessions|count }}</td>
+          <td class="numeric">{{ r.collected|currency }}</td>
+          <td class="numeric">
+            {% if r.outstanding > 0 %}{{ r.outstanding|currency }}{% else %}-{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">Nothing in this range.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', path='js/charts.js') }}"></script>
+<script src="{{ url_for('static', path='js/reports.js') }}"></script>
+{% endblock %}

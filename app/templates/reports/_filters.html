@@ -1,0 +1,91 @@
+{# Global date range picker plus therapist and location filters.
+
+   A plain GET form. htmx swaps the chart section on change where it helps, but the
+   form works without JavaScript, so a filtered view is always a shareable URL. #}
+
+<form
+  class="filter-bar card no-print"
+  method="get"
+  action="{{ filter_action or request.url.path }}"
+  hx-get="{{ filter_action or request.url.path }}"
+  hx-target="body"
+  hx-push-url="true"
+  hx-trigger="change from:(select, input[type=checkbox]) delay:250ms"
+>
+  <div class="filter-bar__group">
+    <span class="field__label">Period</span>
+    <div class="segmented">
+      {% for p in presets %}
+      <button
+        type="submit"
+        name="preset"
+        value="{{ p.value }}"
+        class="segmented__item {% if range.preset == p %}segmented__item--on{% endif %}"
+        {% if range.preset == p %}aria-current="true"{% endif %}
+      >
+        {{ p.label }}
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <details class="filter-bar__more" {% if range.preset.value == 'custom' or selected_therapists or selected_locations %}open{% endif %}>
+    <summary>More filters</summary>
+    <div class="filter-bar__panel">
+      <label class="field field--inline">
+        <span class="field__label">From</span>
+        <input type="date" name="start" class="field__input" value="{{ range.start }}" />
+      </label>
+      <label class="field field--inline">
+        <span class="field__label">To</span>
+        <input type="date" name="end" class="field__input" value="{{ range.end }}" />
+      </label>
+      <input type="hidden" name="preset" value="custom" />
+
+      <label class="field field--inline">
+        <span class="field__label">Group by</span>
+        <select name="granularity" class="field__input">
+          {% for g in granularities %}
+          <option value="{{ g.value }}" {% if granularity == g %}selected{% endif %}>
+            {{ g.label }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      {% if all_therapists %}
+      <label class="field field--inline">
+        <span class="field__label">Therapist</span>
+        <select name="therapist" class="field__input" multiple size="4">
+          {% for t in all_therapists %}
+          <option value="{{ t.id }}" {% if t.id in selected_therapists %}selected{% endif %}>
+            {{ t.display_name }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
+
+      {% if all_locations %}
+      <label class="field field--inline">
+        <span class="field__label">Location</span>
+        <select name="location" class="field__input" multiple size="4">
+          {% for loc in all_locations %}
+          <option value="{{ loc }}" {% if loc in selected_locations %}selected{% endif %}>
+            {{ loc }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
+
+      <button type="submit" class="button button--primary">Apply</button>
+      <a href="{{ request.url.path }}" class="button button--quiet">Clear</a>
+    </div>
+  </details>
+
+  <p class="filter-bar__summary">
+    Showing <strong>{{ range.start }}</strong> to <strong>{{ range.end }}</strong>
+    ({{ range.days }} days){% if selected_therapists or selected_locations %}, filtered{% endif %}.
+  </p>
+</form>

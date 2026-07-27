@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>Practice overview</h1>
+    <p class="page-head__sub">{{ range.label }}, {{ range.start }} to {{ range.end }}.</p>
+  </div>
+  <button type="button" class="button button--quiet no-print" onclick="window.print()">
+    Print
+  </button>
+</div>
+
+{% include "reports/_filters.html" %}
+
+{% if totals.visits == 0 %}
+{% include "reports/_empty.html" %}
+{% else %}
+
+{% include "reports/_kpis.html" %}
+
+<div style="margin-top: var(--space-4)">
+  {% include "reports/_trend.html" %}
+</div>
+
+<div style="margin-top: var(--space-4)">
+  {% set show_export = true %}
+  {% include "reports/_utilization_board.html" %}
+</div>
+
+<div class="card-grid" style="margin-top: var(--space-4)">
+  <div class="card">
+    <p class="card__title">What is still owed, and by whom?</p>
+    <table class="data-table">
+      <tbody>
+        <tr>
+          <td>Patients</td>
+          <td class="numeric">{{ totals.outstanding_patient|currency }}</td>
+        </tr>
+        <tr>
+          <td>Insurers</td>
+          <td class="numeric">{{ totals.outstanding_insurance|currency }}</td>
+        </tr>
+        <tr>
+          <td><strong>Total outstanding</strong></td>
+          <td class="numeric"><strong>{{ totals.outstanding|currency }}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="kpi-note">
+      Shown as a split rather than as components that must add up: on the source data
+      the two sides do not reconcile exactly to the total.
+    </p>
+  </div>
+
+  <div class="card">
+    <p class="card__title">Cancellations</p>
+    <p class="kpi-value">
+      {% if totals.cancellation_rate is not none %}{{ totals.cancellation_rate }}%{% else %}-{% endif %}
+    </p>
+    <p class="kpi-delta">
+      {{ totals.cancellations|count }} cancelled,
+      {{ totals.cancellations_with_fee|count }} with a fee charged
+    </p>
+    <p class="kpi-note">
+      Practice wide. Per therapist rates are not shown here: recorded cancellation
+      rates vary far too much between colleagues to be comparable until recording
+      practice is known to be consistent.
+    </p>
+  </div>
+
+  <div class="card">
+    <p class="card__title">No show fee income</p>
+    <p class="kpi-value">{{ totals.no_show_fee_revenue|currency }}</p>
+    <p class="kpi-note">
+      Real revenue, but not clinical revenue, so it is broken out rather than blended
+      into therapy income. Included in the collected figure above.
+    </p>
+  </div>
+
+  <div class="card">
+    <p class="card__title">Collection rate</p>
+    <p class="kpi-value">
+      {% if totals.collection_rate is not none %}{{ totals.collection_rate }}%{% else %}-{% endif %}
+    </p>
+    <p class="kpi-delta">
+      {{ totals.collected|currency }} collected of {{ totals.billed|currency }} billed
+    </p>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', path='js/charts.js') }}"></script>
+<script src="{{ url_for('static', path='js/reports.js') }}"></script>
+{% endblock %}

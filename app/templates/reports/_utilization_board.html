@@ -1,0 +1,76 @@
+{# Utilization status board. Worst first, because that is what needs attention.
+
+   Two deliberate restraints:
+   - percentage based therapists carry no status at all rather than a passing one,
+     since they have no threshold to meet and a green tick would imply they did
+   - alert red appears only for below threshold, nowhere else in the application #}
+
+<div class="card" id="utilization">
+  <div class="section-head">
+    <div>
+      <h2>Who is below their session threshold?</h2>
+      <p class="page-head__sub">
+        Weekly average over the selected range, against
+        {{ config.benefits_session_threshold }} sessions per week.
+        {% if auth.role.is_admin %}
+        <a href="/admin/config">Change the threshold</a>.
+        {% endif %}
+      </p>
+    </div>
+    {% if show_export %}
+    <a
+      class="button button--quiet no-print"
+      href="/reports/financial/export.csv?table=therapists&{{ query_string }}"
+      >Export CSV</a
+    >
+    {% endif %}
+  </div>
+
+  {% if therapist_rows %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Therapist</th>
+        <th class="numeric">Sessions</th>
+        <th class="numeric">Per week</th>
+        <th class="numeric">Collected</th>
+        <th class="numeric">Cancellations</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row, status in therapist_rows %}
+      <tr>
+        <td>
+          <a href="/reports/financial?therapist={{ row.therapist_id }}&{{ query_string }}"
+            >{{ row.display_name }}</a
+          >
+        </td>
+        <td class="numeric">{{ row.sessions|count }}</td>
+        <td class="numeric">{{ row.sessions_per_week }}</td>
+        <td class="numeric">{{ row.collected|currency }}</td>
+        <td class="numeric">{{ row.cancellations|count }}</td>
+        <td>
+          {% if status == "below" %}
+          <span class="pill pill--below">below threshold</span>
+          {% elif status == "watch" %}
+          <span class="pill pill--watch">watch</span>
+          {% elif status == "ok" %}
+          <span class="pill pill--ok">at threshold</span>
+          {% else %}
+          <span class="text-muted">{{ row.employment_type.label }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <p class="text-muted" style="margin-top: var(--space-3)">
+    A low session count can mean a referral shortage, leave, or a part time schedule as
+    easily as it means anything else. Notes travel with the number from Phase 4.
+  </p>
+  {% else %}
+  <p class="text-muted">No therapist activity in this range.</p>
+  {% endif %}
+</div>
