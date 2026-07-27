@@ -148,9 +148,24 @@ def test_figures_render(financial_user, with_data):
     assert ">3<" in page.replace(" ", "").replace("\n", "") or "3" in page
 
 
-def test_therapist_row_links_to_a_filtered_view(financial_user, with_data):
+def test_therapist_row_is_plain_text_without_the_utilization_grant(financial_user, with_data):
+    """A link that would 403 is worse than no link."""
     page = financial_user.get(f"/reports?{ALL}").text
-    assert "/reports/financial?therapist=" in page
+    assert "Alpha" in page
+    assert "/reports/therapist-utilization/" not in page
+
+
+def test_therapist_row_drills_into_the_weekly_history_when_granted(client, with_data):
+    with client.app.state.db.session() as db:
+        email = make_user(
+            db,
+            email="both@example.invalid",
+            modules=(Module.FINANCIAL, Module.THERAPIST_UTILIZATION),
+        ).email
+    sign_in(client, email)
+
+    page = client.get(f"/reports?{ALL}").text
+    assert "/reports/therapist-utilization/" in page
 
 
 def test_kpi_cards_link_into_the_module(financial_user, with_data):
