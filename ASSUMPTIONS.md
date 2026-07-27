@@ -4,7 +4,7 @@ Every definitional choice made while building the SRI Practice Dashboard, record
 moment it was made. Read this after every phase. Anything marked **NEEDS CONFIRMATION** is a
 default I picked to keep moving, not a decision I am confident in.
 
-Last updated: Phase 4 complete.
+Last updated: Phase 5 complete. Phase 6 not started, still gated.
 
 ---
 
@@ -623,6 +623,57 @@ them, which is a courtesy and not the control.
 The overview is gated on the financial grant, and the therapist drill in on the utilization
 grant, so a reader can hold one without the other. Where they cannot follow the link, the
 therapist's name renders as plain text: a link that 403s is worse than no link.
+
+---
+
+## 5d. Room utilization decisions (Phase 5)
+
+**A-090. The module ships inert, and a disabled module answers 404 rather than 403.**
+`FEATURE_ROOM_UTILIZATION` defaults off. With it off, every route in the module answers 404,
+the module is absent from navigation, and nothing about it appears anywhere else. A 403 would
+confirm to a prober that the feature exists and is merely switched off; a 404 is both truer to
+the state of the world and less informative.
+
+The flag is checked at the router, before the authentication dependencies run. Checked after
+them, an anonymous visitor would get a login redirect, which tells them the path exists.
+
+**A-091. The flag lives in the environment, not on the settings page.**
+Turning it on is a deployment decision that depends on a real data source existing, not a
+preference an administrator should be able to toggle on a whim. The settings page shows its
+state so nobody has to guess, and says why it is not editable there.
+
+**A-092. There is no automated source, and none is invented.**
+The practice has schedules but nothing that records which rooms were actually used. Deriving
+usage from appointment schedules would produce a confident number for something nobody
+measured, so the only ingestion path is a manual CSV upload, and the report says plainly on
+every view that the figures are uploaded rather than observed.
+
+**A-093. Usage is counted in slots, not hours.**
+"How many of the bookable slots in this room on this day were used" is the question the
+practice asked. Slot length varies by appointment type, so an hours figure would be quietly
+wrong in a way nobody would notice.
+
+**A-094. A room with no available slots reports no rate, not zero percent.**
+A closed room had no utilization to report. Showing 0 percent would read as a room sitting
+empty all day, which is a different and worse fact.
+
+**A-095. A period with nothing recorded is blank, not zero.**
+Same reasoning one level up: an unrecorded week is not an empty week, and a heat grid that
+paints them identically would invite a conclusion the data does not support.
+
+**A-096. The heat grid uses a single hue ramp, deliberately not the status colours.**
+A busy room is not good news and an empty one is not an alert: they are different numbers, not
+different verdicts. Alert red stays reserved for below threshold and overdue, as it has been
+since Phase 0.
+
+**A-097. Re-uploading a day replaces it.**
+The upload is keyed on room and date, so a corrected file can simply be uploaded again rather
+than requiring anyone to find and delete the wrong rows first.
+
+**A-098. Upload rejections behave like sheet import rejections.**
+A row that cannot be read is rejected with its line number and reason, never coerced into a
+zero. An unknown room is rejected rather than created, for the same reason the sheet importer
+never creates a therapist.
 
 ---
 

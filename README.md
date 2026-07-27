@@ -10,10 +10,14 @@ that touches data, logging, or access control. Read [ASSUMPTIONS.md](ASSUMPTIONS
 every definitional choice, including the places where observed data forced a deviation
 from the build specification.
 
-Current state: **Phase 4 complete.** Authentication and administration, the import
-pipeline, the Financial module with the Reports overview dashboard, and therapist
-utilization with per period notes. A synthetic demo source lets you exercise the whole
-path without credentials.
+Current state: **Phase 5 complete.** Authentication and administration, the import
+pipeline, the Financial module with the Reports overview dashboard, therapist
+utilization with per period notes, and room utilization behind a feature flag. A
+synthetic demo source lets you exercise the whole path without credentials.
+
+Phase 6, the patient level funnel, is **not built**. It is gated on the practice owner
+confirming its scope, and it is the only module that would surface patient identity
+outside the import error queue.
 
 ---
 
@@ -46,8 +50,10 @@ else is reachable. Then:
 | `/reports` | The overview dashboard |
 | `/reports/financial` | Sessions, revenue, outstanding, and the breakdowns |
 | `/reports/therapist-utilization` | Status board, weekly history, and per period notes |
+| `/reports/room-utilization` | Heat grid, only when `FEATURE_ROOM_UTILIZATION` is on |
 | `/admin/sources` | The quarterly Q sheets and the sync |
 | `/admin/therapists` | Therapists, their aliases, and their employment type |
+| `/admin/rooms` | Rooms and the manual usage upload, only when the flag is on |
 | `/admin/config` | Benefits threshold, CPT exclusions, week start, session timeout |
 | `/admin/users` | People and their access |
 | `/admin/audit` | The append only log |
@@ -105,7 +111,7 @@ in a file. `.env` is gitignored and `.env.example` never holds a real value.
 | `CPT_EXCLUSIONS` | no | Comma separated. Defaults to `99998,99999,QBCHK,FORM,PRO BONO`. Governs session counts only, not revenue. |
 | `WEEK_START_DAY` | no | `monday` (default) or `sunday`. |
 | `APP_TIMEZONE` | no | Default `America/New_York`. |
-| `FEATURE_ROOM_UTILIZATION` | no | Default off, per the build specification. |
+| `FEATURE_ROOM_UTILIZATION` | no | Default off. With it off the module is a 404 everywhere and absent from navigation. |
 | `FEATURE_PATIENT_FUNNEL` | no | Default off. Phase 6, gated on your confirmation. |
 
 A missing required secret is a startup failure with a named error. There is no fallback,
@@ -305,8 +311,8 @@ tests/
 | 2 | Data model, Data Sources registry, sync engine with dry run and import errors | **done** |
 | 3 | Financial module and the Reports overview dashboard | **done** |
 | 4 | Therapist utilization: threshold config, status board, drill in, notes | **done** |
-| 5 | Room utilization behind its flag, manual upload path | next |
-| 6 | Patient funnel: AR aging, new patient volume, no show patterns. Gated. | |
+| 5 | Room utilization behind its flag, manual upload path | **done** |
+| 6 | Patient funnel: AR aging, new patient volume, no show patterns | **gated, not started** |
 
 Each phase stops for review before the next one starts.
 

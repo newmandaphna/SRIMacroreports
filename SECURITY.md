@@ -5,7 +5,7 @@ This document is written to be handed to an auditor. It is kept current as each 
 every control below is marked with its implementation status so nobody mistakes an intention for a
 control.
 
-Last updated: Phase 4.
+Last updated: Phase 5.
 Status key: **IMPLEMENTED** / **PARTIAL** / **PLANNED (phase N)**.
 
 ---
@@ -136,7 +136,7 @@ Logged events:
 | Data sources | source created, edited, activated, deactivated, mapping changed | live |
 | Sync | every run, dry run and live, with rows read, upserted, rejected, and by whom | live |
 | Manual data entry | utilization notes, with the previous text on every edit | live |
-| Manual data entry | room utilization uploads | Phase 5 |
+| Manual data entry | room utilization uploads, with counts and rejections | live |
 
 The action types for the later rows exist in the enum now, so adding the feature does not also
 require remembering to add its audit call.
@@ -353,5 +353,8 @@ is not credible.
    `UPDATE audit_log` or `DELETE FROM audit_log`. No such statement exists in the codebase, and a
    test greps the source on every build to keep it that way, but a database administrator with
    direct file access and the encryption key is outside what application code can control.
-7. **Single tenant assumption.** The application serves one practice. There is no tenant isolation
+7. **Room utilization data is self reported.** Every figure in that module comes from a file
+   somebody filled in by hand, because no system records actual room usage. It is labelled as
+   such on every view of it. It contains no PHI: rooms, dates, and slot counts only.
+8. **Single tenant assumption.** The application serves one practice. There is no tenant isolation
    layer, because there are no other tenants.
