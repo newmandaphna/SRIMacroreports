@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse
@@ -41,6 +42,7 @@ def _datetime(value: Any, fmt: str = "%Y-%m-%d %H:%M") -> str:
 templates.env.filters["currency"] = _currency
 templates.env.filters["count"] = _count
 templates.env.filters["datetime"] = _datetime
+templates.env.filters["urlencode"] = quote_plus
 
 
 def render(

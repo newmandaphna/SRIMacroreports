@@ -441,6 +441,15 @@ async def run_detail(
             detail={"view": "import_errors", "rows": len(rejections)},
         )
 
+    # Unique unrecognized therapist names, ordered by frequency so the most
+    # impactful ones are at the top of the callout.
+    unknown_therapists: list[tuple[str, int]] = []
+    _unknown_counts: dict[str, int] = {}
+    for r in rejections:
+        if r.reason.value == RejectReason.UNKNOWN_THERAPIST.value and r.raw_value:
+            _unknown_counts[r.raw_value] = _unknown_counts.get(r.raw_value, 0) + 1
+    unknown_therapists = sorted(_unknown_counts.items(), key=lambda t: -t[1])
+
     return render(
         request,
         "admin/sync_run.html",
@@ -451,6 +460,7 @@ async def run_detail(
             "run": run,
             "rejections": rejections,
             "reasons": {r.value: r.label for r in RejectReason},
+            "unknown_therapists": unknown_therapists,
         },
     )
 

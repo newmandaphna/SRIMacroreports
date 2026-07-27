@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import func, select
 
@@ -57,11 +57,26 @@ def _list_context(db: DbSession) -> dict:
 
 
 @router.get("", response_class=HTMLResponse)
-async def list_therapists(request: Request, db: DbSession, auth: AdminUser) -> Response:
+async def list_therapists(
+    request: Request,
+    db: DbSession,
+    auth: AdminUser,
+    prefill: str = Query(default=""),
+) -> Response:
+    """List therapists. `?prefill=RAW+NAME` pre-fills the alias field on the add form.
+
+    Used by the sync run page to send admins directly here after an unrecognized
+    therapist rejection, with the raw name already in the alias box.
+    """
     return render(
         request,
         "admin/therapists.html",
-        {"page_title": "Therapists", "auth": auth, **_list_context(db)},
+        {
+            "page_title": "Therapists",
+            "auth": auth,
+            "prefill_alias": prefill.strip(),
+            **_list_context(db),
+        },
     )
 
 

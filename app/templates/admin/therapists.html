@@ -63,6 +63,12 @@
 
 <form method="post" action="/admin/therapists/new" class="card stack" style="margin-top: var(--space-4)">
   <p class="card__title">Add a therapist</p>
+  {% if prefill_alias %}
+  <div class="alert alert--warning">
+    Creating therapist for unrecognized sync name: <strong>{{ prefill_alias }}</strong>.
+    Confirm the display name and employment type below, then save.
+  </div>
+  {% endif %}
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
 
   <label class="field">
@@ -84,7 +90,7 @@
       name="aliases"
       class="field__input"
       placeholder="HARRIS, Andrea Harris, LMFT (A.Harris)"
-      value="{{ form.aliases if form else '' }}"
+      value="{{ form.aliases if form else (prefill_alias if prefill_alias else '') }}"
     />
     <span class="field__hint">
       Comma separated, matched on the whole name and never on a substring. Add every

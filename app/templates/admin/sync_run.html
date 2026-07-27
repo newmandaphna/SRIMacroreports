@@ -84,6 +84,27 @@
   </div>
 </div>
 
+{% if unknown_therapists %}
+<div class="alert alert--warning" style="margin-top: var(--space-5)">
+  <p>
+    <strong>{{ unknown_therapists|length }} unrecognized therapist name{{ "s" if unknown_therapists|length != 1 else "" }}.</strong>
+    The rows for these names were not imported. Create a therapist record for each one,
+    then sync again. The importer never creates therapists automatically — a wrong merge
+    is invisible once it happens.
+  </p>
+  <ul style="margin: var(--space-2) 0 0 0; padding-left: var(--space-4);">
+    {% for name, count in unknown_therapists %}
+    <li style="margin-bottom: var(--space-1);">
+      <strong>{{ name }}</strong>
+      <span class="text-muted">({{ count }} row{{ "s" if count != 1 else "" }})</span>
+      —
+      <a href="/admin/therapists?prefill={{ name|urlencode }}">Create therapist →</a>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if rejections %}
 <h2 style="margin-top: var(--space-5)">Rejected rows</h2>
 <p class="text-muted">
