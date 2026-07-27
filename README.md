@@ -10,9 +10,10 @@ that touches data, logging, or access control. Read [ASSUMPTIONS.md](ASSUMPTIONS
 every definitional choice, including the places where observed data forced a deviation
 from the build specification.
 
-Current state: **Phase 1 complete.** Authentication, roles, module grants, user
-administration, the append only audit log, session timeout, and admin seeding are in
-place and tested. The reporting modules arrive from Phase 3.
+Current state: **Phase 2 complete.** Authentication and administration (Phase 1) plus
+the data model, the Data Sources registry, and the sync engine with dry run and import
+error review. A synthetic demo source lets you exercise the whole import path without
+credentials. The reporting modules arrive from Phase 3.
 
 ---
 
@@ -38,8 +39,15 @@ Then:
 - `http://127.0.0.1:8000/readyz` readiness, which proves the encrypted database opens
 
 Sign in as `ADMIN_EMAIL`. You will be required to choose a new password before anything
-else is reachable. From there, `/admin/users` manages people and `/admin/audit` shows
-the log.
+else is reachable. From there, `/admin/users` manages people, `/admin/sources` manages
+the quarterly sheets, and `/admin/audit` shows the log.
+
+### Trying the import without credentials
+
+On `/admin/sources`, click **Create demo source**. That builds a synthetic workbook
+mirroring the real Q2 Snapshot layout exactly, with obviously fake patients (Patient AA,
+Patient AB) and three invented therapists. Run a dry run, then a live sync, then look at
+the rejected rows: five are deliberately broken, one per failure mode.
 
 Tests and lint:
 
@@ -151,6 +159,28 @@ and ZIP codes. The app blocks those tabs outright and never imports any of it.
 
 ---
 
+## Adding next quarter's sheet
+
+The Q sheet is a new Google Sheet every quarter. Rotation is meant to be three steps and
+no downtime.
+
+1. Put the new sheet in the shared Drive folder. It inherits the service account's
+   access, so there is nothing to re-share.
+2. On **Data sources**, paste its URL and give it a label such as `Q3 2026`. The column
+   mapping is prefilled from the previous quarter, so you confirm rather than retype.
+3. Pick the tab, save, run a **dry run**, read the summary, then **Sync now**.
+
+Deactivate the old quarter whenever you like. Its rows stay exactly where they are: the
+database is the system of record and the sheets are only ingestion, so the app is the
+only place full cross quarter history exists.
+
+What the dry run tells you before you commit to anything: how many rows were read, the
+date range found, any column in the sheet that nothing maps to (which is how layout
+drift announces itself), and every row that would be rejected with the reason and the
+offending value.
+
+---
+
 ## Architecture
 
 ```
@@ -160,9 +190,11 @@ app/
   logging_setup.py   PHI scrubbing log filter and formatter
   middleware.py      security headers, CSP, safe error responses
   main.py            application factory, health endpoints, routes
-  models/            SQLAlchemy models: users, grants, sessions, audit log
-  routers/           auth, admin user management, audit log viewer
+  models/            SQLAlchemy models: users, grants, therapists, visits,
+                     data sources, sync runs, import errors, audit log
+  routers/           auth, user management, audit viewer, data sources
   security/          passwords, sessions, CSRF, audit writer, route dependencies
+  sync/              normalization, Sheets clients, the import engine, demo data
   seed.py            first administrator, from the environment, once
   templating.py      one render() that supplies CSRF, user, and navigation everywhere
   templates/         Jinja2 server rendered pages
@@ -188,8 +220,8 @@ tests/
 | --- | --- | --- |
 | 0 | Scaffold, dependencies, README, SECURITY.md, ASSUMPTIONS.md | **done** |
 | 1 | Auth, roles, module grants, user administration, audit log, session timeout, seeding | **done** |
-| 2 | Data model, Data Sources registry, sync engine with dry run and import errors | next |
-| 3 | Financial module and the Reports overview dashboard | |
+| 2 | Data model, Data Sources registry, sync engine with dry run and import errors | **done** |
+| 3 | Financial module and the Reports overview dashboard | next |
 | 4 | Therapist utilization: threshold config, status board, drill in, notes | |
 | 5 | Room utilization behind its flag, manual upload path | |
 | 6 | Patient funnel: AR aging, new patient volume, no show patterns. Gated. | |
