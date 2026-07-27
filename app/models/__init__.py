@@ -27,6 +27,7 @@ from app.models.therapist import (
     TherapistAlias,
 )
 from app.models.user import ModuleGrant, User
+from app.models.utilization import UtilizationNote
 from app.models.visit import Visit
 
 __all__ = [
@@ -54,5 +55,6 @@ __all__ = [
     "TherapistAlias",
     "User",
     "UserSession",
+    "UtilizationNote",
     "Visit",
 ]

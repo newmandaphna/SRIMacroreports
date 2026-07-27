@@ -392,3 +392,131 @@ def active_therapists(db: Session) -> list[Therapist]:
         .scalars()
         .all()
     )
+
+
+# ------------------------------------------------------- therapist weekly history
+
+
+@dataclass
+class TherapistPeriod:
+    """One period in a single therapist's history, with its note and status."""
+
+    start: date
+    label: str
+    sessions: int = 0
+    collected: Decimal = ZERO
+    cancellations: int = 0
+    note: str | None = None
+
+
+def therapist_history(
+    db: Session,
+    therapist_id: int,
+    filters: Filters,
+    granularity: Granularity,
+    *,
+    week_starts_monday: bool = True,
+) -> list[TherapistPeriod]:
+    """One therapist's periods across the range, continuous and note annotated.
+
+    Still no patient columns: this is one therapist's aggregate by period.
+    """
+    scoped = Filters(
+        start=filters.start,
+        end=filters.end,
+        cpt_exclusions=filters.cpt_exclusions,
+        therapist_ids=(therapist_id,),
+        locations=filters.locations,
+    )
+
+    rows = db.execute(
+        select(
+            Visit.dos,
+            _session_count_expr(scoped.cpt_exclusions),
+            _money(Visit.total_paid),
+            _cancellation_count_expr(),
+        )
+        .where(and_(*_base_conditions(scoped)))
+        .group_by(Visit.dos)
+    ).all()
+
+    from app.reporting.periods import period_start
+
+    buckets: dict[date, TherapistPeriod] = {
+        start: TherapistPeriod(start=start, label=format_period(start, granularity))
+        for start in period_series(
+            filters.start, filters.end, granularity, week_starts_monday=week_starts_monday
+        )
+    }
+
+    for dos, sessions, collected, cancellations in rows:
+        bucket = buckets.get(period_start(dos, granularity, week_starts_monday=week_starts_monday))
+        if bucket is None:
+            continue
+        bucket.sessions += int(sessions or 0)
+        bucket.collected += _as_money(collected)
+        bucket.cancellations += int(cancellations or 0)
+
+    from app.models.utilization import UtilizationNote
+
+    # Bounded by the buckets, not by the filter range. The first bucket usually starts
+    # before the range does (a range beginning mid week belongs to the Monday before
+    # it), and bounding on the range would silently drop that week's note.
+    notes = (
+        db.execute(
+            select(UtilizationNote.period_start, UtilizationNote.body).where(
+                UtilizationNote.therapist_id == therapist_id,
+                UtilizationNote.granularity == granularity,
+                UtilizationNote.period_start >= min(buckets),
+                UtilizationNote.period_start <= max(buckets),
+            )
+        ).all()
+        if buckets
+        else []
+    )
+    for period, body in notes:
+        if period in buckets:
+            buckets[period].note = body
+
+    return list(buckets.values())
+
+
+def notes_for_period(
+    db: Session, period_start_date: date, granularity: Granularity
+) -> dict[int, str]:
+    """Every therapist's note for one period, keyed by therapist id."""
+    from app.models.utilization import UtilizationNote
+
+    rows = db.execute(
+        select(UtilizationNote.therapist_id, UtilizationNote.body).where(
+            UtilizationNote.period_start == period_start_date,
+            UtilizationNote.granularity == granularity,
+        )
+    ).all()
+    return dict(rows)
+
+
+def latest_notes(db: Session, therapist_ids: list[int]) -> dict[int, str]:
+    """The most recent note per therapist, for the status board.
+
+    Shown so that a low number carries its explanation on the board itself rather
+    than only on a page somebody has to think to open.
+    """
+    from app.models.utilization import UtilizationNote
+
+    if not therapist_ids:
+        return {}
+    rows = db.execute(
+        select(
+            UtilizationNote.therapist_id,
+            UtilizationNote.body,
+            UtilizationNote.period_start,
+        )
+        .where(UtilizationNote.therapist_id.in_(therapist_ids))
+        .order_by(UtilizationNote.therapist_id, UtilizationNote.period_start.desc())
+    ).all()
+
+    out: dict[int, str] = {}
+    for therapist_id, body, _period in rows:
+        out.setdefault(therapist_id, body)
+    return out
