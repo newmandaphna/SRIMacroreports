@@ -30,6 +30,7 @@ from app.routers import (
     auth,
     reports,
     rooms,
+    status,
     utilization,
 )
 from app.security.csrf import CSRFMiddleware
@@ -104,6 +105,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(reports.router)
     app.include_router(utilization.router)
     app.include_router(rooms.router)
+    app.include_router(status.router)
 
     register_error_handlers(app)
     register_routes(app)

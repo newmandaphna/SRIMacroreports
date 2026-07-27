@@ -41,6 +41,18 @@
           {% endif %}
         </nav>
 
+        {# A plain link rather than a badge with a count: a count would mean running
+           the status queries on every page render, for a number the page itself
+           shows anyway. #}
+        <a
+          class="app-header__status"
+          href="/status"
+          {% if current_path == '/status' %}aria-current="page"{% endif %}
+          title="What is still undecided, and what qualifies these numbers"
+        >
+          In development
+        </a>
+
         <div class="app-header__user">
           <span class="app-header__who">{{ auth.user.display_name }}</span>
           <span class="pill pill--neutral">{{ auth.role.label }}</span>

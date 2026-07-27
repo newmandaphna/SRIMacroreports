@@ -865,3 +865,57 @@ a {
   overflow-x: auto;
   margin: 0;
 }
+
+/* "In development": pending decisions and the caveats that qualify the numbers. */
+
+.app-header__status {
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+  text-decoration: none;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  padding: var(--space-1) 0;
+}
+
+.app-header__status:hover,
+.app-header__status[aria-current="page"] {
+  color: var(--color-ink);
+  border-bottom-color: var(--color-primary);
+}
+
+.status-heading {
+  margin-top: var(--space-5);
+  margin-bottom: var(--space-1);
+}
+
+.status-card {
+  border-left-width: 4px;
+}
+
+/* Amber, not red: an unanswered question is not a failure. */
+.status-card--open {
+  border-left-color: var(--color-warning);
+}
+
+.status-card--caveat {
+  border-left-color: var(--color-primary);
+}
+
+.status-card__title {
+  font-size: var(--text-base);
+  margin: 0 0 var(--space-1);
+}
+
+.status-card__detail {
+  margin: 0;
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+
+.status-card__consequence {
+  margin: var(--space-2) 0 0;
+  padding-top: var(--space-2);
+  border-top: var(--border-hairline);
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}

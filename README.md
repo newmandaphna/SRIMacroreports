@@ -19,6 +19,10 @@ Phase 6, the patient level funnel, is **not built**. It is gated on the practice
 confirming its scope, and it is the only module that would surface patient identity
 outside the import error queue.
 
+Whatever is still undecided is listed in the application itself at **`/status`**, worked
+out from the current state of the data rather than from a hardcoded list, so an item
+disappears once it is genuinely resolved.
+
 ---
 
 ## Quick start
@@ -47,6 +51,7 @@ else is reachable. Then:
 
 | Where | What |
 | --- | --- |
+| `/status` | **In development**: open questions, caveats on the numbers, what is not built |
 | `/reports` | The overview dashboard |
 | `/reports/financial` | Sessions, revenue, outstanding, and the breakdowns |
 | `/reports/therapist-utilization` | Status board, weekly history, and per period notes |

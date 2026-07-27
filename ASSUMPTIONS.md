@@ -700,6 +700,12 @@ Logged per the rule that the prompt wins but conflicts get flagged.
 
 One place to see what is still unanswered. Nothing here blocks the current phase.
 
+**These are also surfaced inside the application, at `/status`.** That page is generated
+from the current state of the database rather than from this list, so an item disappears
+when it is genuinely resolved and nobody has to remember to edit a document. This section
+remains the fuller record, with the measurements behind each item; the page is where the
+people reading the numbers will actually see the caveats.
+
 | # | Question | Status | If the answer changes things |
 | --- | --- | --- | --- |
 | 1 | Can Patient Code be filled in on the Q sheet going forward? | not yet asked | Would let the upsert key drop patient name, which is the cleaner design. See A-020. |
