@@ -37,6 +37,18 @@ commit that skipped this step, not a real defect in the code.
 | `SESSION_SECRET_KEY` | At least 32 chars. Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
 | `DATABASE_URL` | Injected automatically by the Replit PostgreSQL database. Nothing to set by hand. |
 | `ADMIN_INITIAL_PASSWORD` | Password for the seeded admin account. You will be forced to change it on first login. |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Full JSON key file content for a Google Service Account (see below). Required to sync from Google Sheets. |
+
+#### Setting up Google Sheets access
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project (or use an existing one).
+2. Enable the **Google Sheets API** and **Google Drive API** for that project.
+3. Create a **Service Account** (IAM & Admin → Service Accounts → Create).
+4. Under the service account, go to **Keys → Add Key → Create new key → JSON**. Download the `.json` file.
+5. **Share the Google Sheet** (or the Drive folder containing it) with the service account's email address (shown in the JSON as `client_email`) as **Viewer**.
+6. Copy the entire contents of the downloaded `.json` file and set it as the `GOOGLE_SERVICE_ACCOUNT_JSON` secret in Replit Secrets.
+
+Once the secret is set, go to **Admin → Data Sources**, create a new Google Sheets source, paste the sheet URL, pick the tab, map the columns, and run a sync.
 
 ### 2. Set required environment variables
 
