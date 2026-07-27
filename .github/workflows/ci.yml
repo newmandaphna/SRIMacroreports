@@ -8,6 +8,25 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    # The suite needs a real PostgreSQL. Without TEST_DATABASE_URL every test that
+    # touches the database skips, so a run with no database passes while asserting
+    # nothing, which is worse than failing.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sri_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,8 +43,26 @@ jobs:
           ruff check .
           ruff format --check .
 
+      # The suite skips rather than fails when the database is unreachable, which is
+      # right on a laptop and wrong here: a green run that asserted nothing looks
+      # exactly like a green run that passed. Prove the database is there first.
+      - name: Verify the test database is reachable
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sri_test
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+
+          url = os.environ["TEST_DATABASE_URL"]
+          with create_engine(url).connect() as connection:
+              print(connection.execute(text("SELECT version()")).scalar())
+          PY
+
       - name: Test
-        run: pytest
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sri_test
+        run: pytest -ra
 
   phi-guard:
     # Refuses the build if a raw export, a credential, or a database file was

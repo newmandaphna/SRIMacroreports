@@ -492,6 +492,17 @@ Details and the operational caveats are in SECURITY.md. If the SQLCipher driver 
 the deployment environment, the app refuses to start rather than silently falling back to an
 unencrypted SQLite file.
 
+**A-054a. On PostgreSQL the test suite needs its own database, and a missing one must fail loudly.**
+The suite drops every table and re runs the migrations before each test, which under the old design
+was free: each test got its own SQLite file in a temp directory. On one shared PostgreSQL database
+it is not free, and tests that build their own app rather than using the `client` fixture were
+inheriting the previous test's users, rooms, and audit rows. The reset therefore happens in the
+`env` fixture, which everything that reaches the database depends on, rather than in `client`.
+
+The suite skips rather than fails when `TEST_DATABASE_URL` is unset, which is right on a laptop and
+dangerous in CI: a run that asserted nothing is indistinguishable from a run that passed. CI now
+provisions a PostgreSQL service and proves it is reachable in a separate step before pytest runs.
+
 **A-055. Audit log retention is 6 years, and there is no delete path in code.**
 No ORM delete, no update, no admin UI affordance. Retention is enforced by not deleting.
 

@@ -17,7 +17,7 @@ from alembic import op
 import app.models.types  # noqa: F401
 
 revision: str = "b4e43e90a81f"
-down_revision: str | None = "0d32800a2e28"
+down_revision: str | None = "a1b2c3d4e5f6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
