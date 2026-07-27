@@ -24,16 +24,20 @@
       />
     </label>
 
-    <label class="field">
-      <span class="field__label">Password</span>
+    {# Explicit for/id rather than the wrapping label used elsewhere, because the show
+       and hide toggle is injected next to the input and a button inside a label is
+       both invalid HTML and a double click waiting to happen. #}
+    <div class="field">
+      <label class="field__label" for="password">Password</label>
       <input
         type="password"
         name="password"
+        id="password"
         autocomplete="current-password"
         required
         class="field__input"
       />
-    </label>
+    </div>
 
     <button type="submit" class="button button--primary">Sign in</button>
   </form>

@@ -54,6 +54,13 @@ are deactivated, never deleted, so that audit log entries always resolve to a re
 - Passwords hashed with Argon2id via passlib. No reversible storage, no MD5 or SHA family.
 - Minimum 12 characters, checked against a common password list. No forced rotation, per current
   NIST guidance, since rotation drives users toward predictable increments.
+- Every password field carries a show and hide toggle, masked by default. NIST 800-63B recommends
+  allowing this: a password the user can check is a password they will make longer, and length is
+  what this application asks for. Revealing is a display change in the browser only, never sent,
+  stored, or logged, and the field re-masks itself when the form is submitted or the page is left
+  so a validation error or a back navigation cannot redisplay the secret. The residual risk is
+  shoulder surfing in a shared clinical space, which is why it is off until the user asks for it
+  and obvious while it is on.
 - One admin is seeded from `ADMIN_EMAIL` and `ADMIN_INITIAL_PASSWORD`. That password must be changed
   on first login before any other route is reachable. Same for every admin created user, who gets a
   temporary password and a forced change.

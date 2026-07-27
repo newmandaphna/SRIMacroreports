@@ -422,6 +422,56 @@ a {
   outline-offset: 1px;
 }
 
+/* Password field with its show and hide toggle. The wrapper and the button are both
+   created by password-reveal.js, so without JavaScript the input keeps the plain
+   .field__input appearance and nothing here applies. */
+.password-field {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+.password-field .field__input {
+  /* Without this the input refuses to shrink below its default size inside the flex
+     row and pushes the button off the edge on a narrow screen. */
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.password-field__toggle {
+  flex: 0 0 auto;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  color: var(--color-ink-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  /* Fixed so the field does not jump sideways when the word changes length. */
+  min-width: 4.5rem;
+}
+
+.password-field__toggle:hover {
+  color: var(--color-ink);
+  border-color: var(--color-primary);
+}
+
+.password-field__toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* Revealed is a state worth seeing at a glance, since the whole point is that the
+   password is legible to anyone looking at the screen. Not the alert colour: this is
+   a deliberate action by the user, not a problem. */
+.password-field__toggle[aria-pressed="true"] {
+  color: var(--color-ink);
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
 .field__hint,
 .choice__hint {
   display: block;
