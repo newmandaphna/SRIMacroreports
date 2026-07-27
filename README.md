@@ -10,9 +10,10 @@ that touches data, logging, or access control. Read [ASSUMPTIONS.md](ASSUMPTIONS
 every definitional choice, including the places where observed data forced a deviation
 from the build specification.
 
-Current state: **Phase 1 complete.** Authentication, roles, module grants, user
-administration, the append only audit log, session timeout, and admin seeding are in
-place and tested. The reporting modules arrive from Phase 3.
+Current state: **Phase 2 complete.** Authentication and administration (Phase 1) plus
+the data model, the Data Sources registry, and the sync engine with dry run and import
+error review. A synthetic demo source lets you exercise the whole import path without
+credentials. The reporting modules arrive from Phase 3.
 
 ---
 
@@ -38,8 +39,15 @@ Then:
 - `http://127.0.0.1:8000/readyz` readiness, which proves the encrypted database opens
 
 Sign in as `ADMIN_EMAIL`. You will be required to choose a new password before anything
-else is reachable. From there, `/admin/users` manages people and `/admin/audit` shows
-the log.
+else is reachable. From there, `/admin/users` manages people, `/admin/sources` manages
+the quarterly sheets, and `/admin/audit` shows the log.
+
+### Trying the import without credentials
+
+On `/admin/sources`, click **Create demo source**. That builds a synthetic workbook
+mirroring the real Q2 Snapshot layout exactly, with obviously fake patients (Patient AA,
+Patient AB) and three invented therapists. Run a dry run, then a live sync, then look at
+the rejected rows: five are deliberately broken, one per failure mode.
 
 Tests and lint:
 
@@ -69,8 +77,8 @@ in a file. `.env` is gitignored and `.env.example` never holds a real value.
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `SESSION_SECRET_KEY` | yes | Minimum 32 characters. Signs session cookies. |
-| `DATABASE_ENCRYPTION_KEY` | yes | SQLCipher key. **Losing it means losing the database.** |
+| `SESSION_SECRET_KEY` | yes | Minimum 32 characters. Reserved for signing. See the secrets reference below. |
+| `DATABASE_ENCRYPTION_KEY` | yes | SQLCipher key for the whole database file. **Losing it means losing all the data, permanently.** |
 | `DATABASE_PATH` | no | Defaults to `data/sri_dashboard.db`. |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | for sync | Full service account JSON, one line. |
 | `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD` | to sign in | Seeds one admin on first start. Password change forced on first login. Must meet the password policy or startup fails. |
@@ -87,6 +95,71 @@ in a file. `.env` is gitignored and `.env.example` never holds a real value.
 
 A missing required secret is a startup failure with a named error. There is no fallback,
 and in particular there is no fallback to an unencrypted database.
+
+### Secrets reference
+
+Two secrets are required at boot. They do very different things, and only one of them
+is dangerous to change.
+
+#### `SESSION_SECRET_KEY`
+
+**What it does today: nothing at runtime.** It is validated at startup (present, at
+least 32 characters) and then not used, because the session design does not need a
+signing key. The session cookie holds an opaque 256 bit random token, and only its
+SHA-256 hash is stored, so the server validates a session by looking the token up
+rather than by verifying a signature. See `app/security/sessions.py`. The CSRF token
+works the same way: random per session, stored server side, compared directly.
+
+It is kept and required so that it is already provisioned for the first feature that
+genuinely needs signing (a password reset link, or a signed export URL). Until then it
+is reserved, not load bearing.
+
+**Safe to generate a fresh random value?** Yes, always, on any deployment. Changing it
+signs nobody out and breaks nothing, because nothing depends on it.
+
+Generate with:
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+**Is `SESSION_SECRET` the same thing?** No. This application reads only
+`SESSION_SECRET_KEY` (see `REQUIRED_SECRETS` in `app/config.py`). A variable named
+`SESSION_SECRET` belongs to something else in the environment and is ignored here.
+Setting one does not satisfy the other. Leave any pre-existing `SESSION_SECRET` alone
+and add `SESSION_SECRET_KEY` separately.
+
+#### `DATABASE_ENCRYPTION_KEY`
+
+**What it does: it is the only thing standing between the database file and anyone who
+gets a copy of it.** It is applied as `PRAGMA key` on every connection before any other
+statement (`app/db.py`), so the entire SQLite file is encrypted with SQLCipher: patient
+names and codes, every balance and payment, user accounts, password hashes, and the
+whole audit log. Without the key the file is indistinguishable from noise, and the
+standard library `sqlite3` driver cannot open it at all.
+
+**Safe to generate a fresh random value?** It depends entirely on whether a database
+already exists at `DATABASE_PATH`:
+
+| Situation | Effect of a new random key |
+| --- | --- |
+| Brand new deployment, no database file yet | Safe. A fresh encrypted database is created with that key. |
+| Database file already exists with data in it | **The application refuses to start.** The data is still there but is unreadable, and stays unreadable until the original key comes back. |
+
+There is no partial or degraded mode. Startup verifies the key actually opens the file
+and exits with a named error if it does not (`_verify_encryption` in `app/db.py`), because
+a PHI application that quietly falls back to an unencrypted database is worse than one
+that will not start.
+
+**If the key is lost, the data is gone.** Not recoverable by us, by Replit, or by
+anyone. Backups of the encrypted file are worthless without it, so the key must be
+escrowed somewhere separate from the backups, by the practice.
+
+**On Replit specifically:** before rotating this, check whether the deployment's disk
+persists between deploys. If it does, the existing database is still there and a new key
+will lock you out of it. If each deploy starts with an empty disk, a new key is fine, but
+so is losing all previously imported data, which is its own problem worth knowing about.
+
+To change the key on an existing database, rekey it rather than just setting a new value.
 
 ### Rotating the database encryption key
 
@@ -151,6 +224,28 @@ and ZIP codes. The app blocks those tabs outright and never imports any of it.
 
 ---
 
+## Adding next quarter's sheet
+
+The Q sheet is a new Google Sheet every quarter. Rotation is meant to be three steps and
+no downtime.
+
+1. Put the new sheet in the shared Drive folder. It inherits the service account's
+   access, so there is nothing to re-share.
+2. On **Data sources**, paste its URL and give it a label such as `Q3 2026`. The column
+   mapping is prefilled from the previous quarter, so you confirm rather than retype.
+3. Pick the tab, save, run a **dry run**, read the summary, then **Sync now**.
+
+Deactivate the old quarter whenever you like. Its rows stay exactly where they are: the
+database is the system of record and the sheets are only ingestion, so the app is the
+only place full cross quarter history exists.
+
+What the dry run tells you before you commit to anything: how many rows were read, the
+date range found, any column in the sheet that nothing maps to (which is how layout
+drift announces itself), and every row that would be rejected with the reason and the
+offending value.
+
+---
+
 ## Architecture
 
 ```
@@ -160,9 +255,11 @@ app/
   logging_setup.py   PHI scrubbing log filter and formatter
   middleware.py      security headers, CSP, safe error responses
   main.py            application factory, health endpoints, routes
-  models/            SQLAlchemy models: users, grants, sessions, audit log
-  routers/           auth, admin user management, audit log viewer
+  models/            SQLAlchemy models: users, grants, therapists, visits,
+                     data sources, sync runs, import errors, audit log
+  routers/           auth, user management, audit viewer, data sources
   security/          passwords, sessions, CSRF, audit writer, route dependencies
+  sync/              normalization, Sheets clients, the import engine, demo data
   seed.py            first administrator, from the environment, once
   templating.py      one render() that supplies CSRF, user, and navigation everywhere
   templates/         Jinja2 server rendered pages
@@ -188,8 +285,8 @@ tests/
 | --- | --- | --- |
 | 0 | Scaffold, dependencies, README, SECURITY.md, ASSUMPTIONS.md | **done** |
 | 1 | Auth, roles, module grants, user administration, audit log, session timeout, seeding | **done** |
-| 2 | Data model, Data Sources registry, sync engine with dry run and import errors | next |
-| 3 | Financial module and the Reports overview dashboard | |
+| 2 | Data model, Data Sources registry, sync engine with dry run and import errors | **done** |
+| 3 | Financial module and the Reports overview dashboard | next |
 | 4 | Therapist utilization: threshold config, status board, drill in, notes | |
 | 5 | Room utilization behind its flag, manual upload path | |
 | 6 | Patient funnel: AR aging, new patient volume, no show patterns. Gated. | |

@@ -5,7 +5,7 @@ This document is written to be handed to an auditor. It is kept current as each 
 every control below is marked with its implementation status so nobody mistakes an intention for a
 control.
 
-Last updated: Phase 1.
+Last updated: Phase 2.
 Status key: **IMPLEMENTED** / **PARTIAL** / **PLANNED (phase N)**.
 
 ---
@@ -57,8 +57,12 @@ are deactivated, never deleted, so that audit log entries always resolve to a re
 - One admin is seeded from `ADMIN_EMAIL` and `ADMIN_INITIAL_PASSWORD`. That password must be changed
   on first login before any other route is reachable. Same for every admin created user, who gets a
   temporary password and a forced change.
-- Server side sessions. The cookie holds an opaque identifier, never user data, never a role claim,
-  never a JWT the client could tamper with.
+- Server side sessions. The cookie holds an opaque 256 bit random token, never user data, never a
+  role claim, never a JWT the client could tamper with. Only the token's SHA-256 hash is stored, so
+  reading the database does not yield usable session cookies.
+- Note that no signing key is involved anywhere. A random token looked up server side cannot be
+  forged without guessing 256 bits, so a signature would add nothing. `SESSION_SECRET_KEY` is
+  provisioned for future use and is currently not read at runtime.
 
 ### 3.3 Authorization
 
@@ -198,11 +202,17 @@ not a rewrite. Nothing in the model layer depends on SQLite.
 
 ### 5.3 Integrity of imported data
 
-**PLANNED (Phase 2).**
+**IMPLEMENTED (Phase 2).**
 Imports are idempotent through the upsert key (see ASSUMPTIONS.md A-020, which documents a
 deviation from the originally specified key and the measurement that forced it). Rows that fail
 validation are never silently dropped; they land in `import_errors` with the reason and the
-offending raw value, for admin review. Every sync run writes a summary record.
+offending raw value, for admin review. Every sync run writes a summary record, dry runs included,
+and every run is separately audit logged with its counts and the user who ran it.
+
+Money is stored as integer cents and handled as Decimal, so totals over thousands of rows are
+exact rather than approximately right (ASSUMPTIONS.md A-060). An amount that cannot be parsed
+rejects its row rather than defaulting to zero, so a typo can never quietly become a missing
+payment.
 
 ---
 
@@ -212,6 +222,8 @@ offending raw value, for admin review. Every sync run writes a summary record.
 
 ### 6.1 Column allowlist
 
+**IMPLEMENTED (Phase 2), verified by test.**
+
 Exactly 18 columns may be imported:
 
 ```
@@ -220,24 +232,45 @@ Due from pt, Paid by pt, Pt. Amount Due, Due from ins, Paid by ins,
 Ins balance, Total due, Total paid, Total balance, Recorded
 ```
 
-The allowlist is enforced server side at import time, not in the mapping UI alone. A mapping that
-names a column outside the list is rejected. Values for unmapped columns are discarded at the API
-boundary, before a row object is constructed, so they never reach the ORM, the database, or a log.
+The allowlist is enforced server side at import time, not in the mapping UI alone. The importer
+builds its column index from the allowlist, so a mapping naming any other column is ignored rather
+than honoured: a hand crafted mapping claiming `BirthDate1` imports nothing. Values for unmapped
+columns are never read out of the row, so they do not reach the ORM, the database, or a log.
+
+A test asserts this directly by feeding the mapper a mapping for `BirthDate1` and `HomeEmail` and
+checking that neither survives.
 
 ### 6.2 RAW tabs are blocked
 
+**IMPLEMENTED (Phase 2), verified by test.**
+
 The workbook's `RAW_Appointments`, `RAW_Documentation`, `RAW_PatientStatement`, and `RAW_Unrecorded`
 tabs carry dates of birth, home and work emails, phone numbers, and ZIP codes. The Data Sources
-mapping UI will not offer any tab whose name begins with `RAW_`, and the server rejects a source
-configured against one. This is belt and braces with the column allowlist: either control alone
-would stop a DOB from being imported.
+mapping UI will not offer any tab whose name begins with `RAW_`, and the importer refuses one even
+if a source is configured against it by hand. This is belt and braces with the column allowlist:
+either control alone would stop a DOB from being imported.
+
+### 6.2a Import errors hold patient identity, deliberately
+
+A rejected row records its offending raw value plus a patient and therapist hint, because the row
+that failed to parse is usually a patient's own row and an administrator cannot fix what they
+cannot see. This is the same data class already held in `sessions`, not a new exposure.
+
+Controls: the review pages are admin only; every view of them is audit logged as a PHI view with
+the row count and never the rows; and only the offending cell is stored, not the whole row.
 
 ### 6.3 Aggregate views carry no identity
 
-Financial, therapist utilization, and room utilization queries do not select `patient_name` or
-`patient_code`. This is a property of the query builders, not of the templates. Patient identity
-appears only inside the Phase 6 patient funnel module, behind the `patient_funnel` grant, and every
-read of it is audit logged.
+**PLANNED (Phase 3), with the first reporting query.**
+
+Financial, therapist utilization, and room utilization queries will not select `patient_name` or
+`patient_code`. This will be a property of the query builders, not of the templates. Patient
+identity appears only inside the Phase 6 patient funnel module, behind the `patient_funnel` grant,
+and every read of it is audit logged.
+
+As of Phase 2 there are no reporting queries yet, so there is nothing here to enforce. The two
+places patient identity is currently reachable are the import error review pages (6.2a), both
+admin only and both audit logged.
 
 ### 6.4 PHI never reaches logs
 
@@ -264,7 +297,7 @@ In addition:
 | --- | --- | --- |
 | Google service account key | `GOOGLE_SERVICE_ACCOUNT_JSON` | Full JSON, from Replit Secrets. Read only Sheets and Drive scopes. |
 | Database encryption key | `DATABASE_ENCRYPTION_KEY` | See 5.2. |
-| Session signing secret | `SESSION_SECRET_KEY` | At least 32 bytes of randomness. |
+| Session signing secret | `SESSION_SECRET_KEY` | At least 32 characters. Reserved: nothing signs with it yet, because session and CSRF tokens are random values validated server side rather than signed. See README. |
 | Seed admin | `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD` | Used once. Password change forced on first login. |
 
 Rules that hold for all of them:

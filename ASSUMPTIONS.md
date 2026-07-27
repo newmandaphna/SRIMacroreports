@@ -4,7 +4,7 @@ Every definitional choice made while building the SRI Practice Dashboard, record
 moment it was made. Read this after every phase. Anything marked **NEEDS CONFIRMATION** is a
 default I picked to keep moving, not a decision I am confident in.
 
-Last updated: Phase 1 complete.
+Last updated: Phase 2 complete.
 
 ---
 
@@ -235,10 +235,29 @@ Per the build prompt: a blank money cell reads as 0. A money cell that will not 
 as 0, it sends the row to `import_errors` with the raw string preserved, so nobody silently loses a
 payment to a typo.
 
-**A-039. Eleven rows have a blank DOS.**
+**A-039. Eleven rows have a blank DOS, and they cost 424.55 of reported revenue.**
 A row with no date of service cannot be placed in any period, so it cannot be counted. Those rows
 are rejected to `import_errors` for admin review rather than imported and quietly excluded from
 every report.
+
+Measured by running the finished import engine over the real Q2 Snapshot, this is the difference
+between what the sheet contains and what the dashboard will show:
+
+| | In the sheet | Imported | Gap |
+| --- | --- | --- | --- |
+| Rows | 9,389 | 9,378 | 11 rejected, all blank DOS |
+| Sessions after the exclusion list | 8,454 | 8,444 | 10 |
+| Cancellations | 912 | 911 | 1 |
+| Revenue collected | 926,412.60 | 925,988.05 | 424.55 |
+| Revenue outstanding | 198,520.62 | 197,870.86 | 649.76 |
+| No show fee revenue | 17,674.46 | 17,674.46 | none |
+
+The figures elsewhere in this document are counted over the raw sheet. The dashboard will report
+the imported column, because those 11 rows genuinely cannot be placed in a week, a month, or a
+quarter. The gap is not hidden: the rows sit in the import errors queue with the reason, and the
+sync summary names the count.
+**TO RAISE WITH THE PRACTICE**: 11 rows carrying 424.55 in collected revenue are missing a date of
+service. Adding the dates in the Q sheet and re-syncing brings them in, and nothing else is needed.
 
 **A-039a. The benefits session threshold defaults to 25 per week, and that number is a placeholder.**
 Utilization status is derived by comparing a therapist's weekly session count against
@@ -402,6 +421,73 @@ No ORM delete, no update, no admin UI affordance. Retention is enforced by not d
 **A-056. Synthetic test data uses obviously fake names.**
 `Patient AA`, `Patient AB`, and so on, with codes `PATAA`, `PATAB`. No name that could be mistaken
 for a real person appears in any fixture, seed, or demo.
+
+---
+
+## 5a. Import and storage decisions (Phase 2)
+
+**A-060. Money is stored as integer cents and handled as Decimal.**
+Not as a float. SQLite has no DECIMAL type, so SQLAlchemy's Numeric falls back to float there, and
+summing nine thousand floats drifts. The sheet is full of values like 156.05 that have no exact
+binary representation, and a revenue figure that is wrong in the cents is a revenue figure nobody
+trusts. A `Money` column type converts at the boundary, so callers only ever see Decimal, and the
+representation ports to PostgreSQL unchanged.
+
+**A-061. The Python class for a session row is called `Visit`; the table is still `sessions`.**
+The domain word is session and the table name follows the specification. The class is not called
+`Session` because the codebase already has SQLAlchemy's `Session` and the auth `UserSession`, and
+three different things called Session is how somebody eventually authenticates against a therapy
+appointment.
+
+**A-062. Rejected rows can contain patient identity, and that is accepted rather than avoided.**
+`import_errors` stores the offending raw value plus a patient and therapist hint, because the row
+that failed to parse is usually a patient's own row and an admin cannot fix what they cannot see.
+This is the same data class already held in `sessions`. Mitigations: the review pages are admin
+only, every view of them is audit logged as a PHI view, and only the offending cell is stored
+rather than the whole row.
+
+**A-063. The importer stops at the first row with no identity at all.**
+The real sheet carries about 5,000 rows of dragged down formulas below the data, every identity
+column blank and every money column 0. Importing them would add thousands of meaningless zero
+rows. A blank row appearing *inside* the data block would be a rejection, not a stop signal; there
+are currently none.
+
+**A-064. Re-syncing unchanged rows changes nothing.**
+The importer compares the payload and leaves identical rows alone, so `updated_at` does not churn
+across nine thousand rows on every sync and the modification history stays meaningful. Verified
+against the real sheet: a second live run reports 9,378 unchanged, 0 inserted, 0 updated, in
+0.6 seconds.
+
+**A-065. A dry run writes no session rows, but does record its own findings.**
+It performs the same read, mapping, validation, and rejection analysis, and inserts or changes no
+visit. It does persist its `SyncRun` and its `import_errors`, because a preview whose findings
+vanish when you navigate away is not a preview anyone can act on.
+
+**A-066. Unmapped sheet columns are reported, not ignored.**
+Every header the mapping does not claim is listed on the run summary. A new column appearing is
+how a quarter's layout drift announces itself, and silence would waste that signal. On the real Q2
+Snapshot there are none: all 18 allowlisted fields map, and the two unnamed columns (M, the
+composite match key, and N, empty) are correctly left alone.
+
+**A-067. The app ships a synthetic demo source.**
+A bundled workbook that mirrors the real Q2 Snapshot header row exactly, including the two unnamed
+columns, Patient Code sitting in column S, Excel float codes, the suffixed CPT spellings, and both
+cancellation codes. Patients are Patient AA through Patient AN with codes PATAA through PATAN.
+It exists so the whole import path can be exercised with no credentials and no PHI, which also
+means the engine is covered by tests that never touch the network. Five of its rows are
+deliberately broken, one per rejection reason.
+
+**A-068. Enum columns are declared as enums, not as strings.**
+A plain String column stores an enum's value correctly but hands back a bare `str`. Anything then
+reaching for `.value` or `.label` raises an AttributeError, Jinja swallows it into an empty string,
+and a status badge silently shows the wrong state. This was a real bug, caught in Phase 2 and
+fixed across every enum column including the Phase 1 ones.
+
+**A-069. Alias resolution is exact, and creating a therapist is never automatic.**
+An unrecognized therapist rejects the row and offers ranked suggestions to an admin. The alias
+column is globally unique, so two therapists cannot both claim one alias and a silent merge is
+impossible at the database level, not merely by convention. This is the PAVLOVA and ROSENFELD
+lesson from A-040a expressed as a constraint.
 
 ---
 

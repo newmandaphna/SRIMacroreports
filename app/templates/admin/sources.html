@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Data sources</h1>
+  <p class="page-head__sub">
+    The database is the system of record. Sheets are ingestion only, so deactivating a
+    quarter leaves its rows in place and rotation never interrupts reporting.
+  </p>
+</div>
+
+{% if error %}
+<div class="alert alert--error" role="alert">{{ error }}</div>
+{% endif %}
+
+{% if sources %}
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Where from</th>
+        <th>Tab</th>
+        <th class="numeric">Rows</th>
+        <th>Coverage</th>
+        <th>Last sync</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in sources %}
+      <tr class="{% if not s.active %}row--muted{% endif %}">
+        <td><a href="/admin/sources/{{ s.id }}">{{ s.label }}</a></td>
+        <td>{{ s.provider.label }}</td>
+        <td>{{ s.tab_name or "not chosen yet" }}</td>
+        <td class="numeric">{{ visit_counts.get(s.id, 0)|count }}</td>
+        <td>
+          {% if s.coverage_start %}{{ s.coverage_start }} to {{ s.coverage_end }}
+          {% else %}<span class="text-muted">not synced</span>{% endif %}
+        </td>
+        <td class="numeric">{{ s.last_synced_at|datetime }}</td>
+        <td>
+          {% if s.active %}
+          <span class="pill pill--ok">active</span>
+          {% else %}
+          <span class="pill pill--neutral">inactive</span>
+          {% endif %}
+          {% if open_errors.get(s.id) %}
+          <a href="/admin/sources/{{ s.id }}/errors" class="pill pill--watch"
+            >{{ open_errors[s.id] }} to review</a
+          >
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="text-muted" style="margin-top: var(--space-3)">
+    {{ total_visits|count }} session rows held across all sources.
+  </p>
+</div>
+{% else %}
+<div class="state">
+  <p class="state__title">No data sources yet</p>
+  <p>
+    Add the current quarter's Q sheet below, or create the demo source to try the
+    import path with synthetic data and no credentials.
+  </p>
+</div>
+{% endif %}
+
+<div class="card-grid" style="margin-top: var(--space-4)">
+  <form method="post" action="/admin/sources/new" class="card stack">
+    <p class="card__title">Add a quarter</p>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="provider" value="google_sheets" />
+
+    <label class="field">
+      <span class="field__label">Label</span>
+      <input type="text" name="label" class="field__input" placeholder="Q3 2026" required />
+    </label>
+
+    <label class="field">
+      <span class="field__label">Google Sheets URL</span>
+      <input
+        type="text"
+        name="spreadsheet_url"
+        class="field__input"
+        placeholder="https://docs.google.com/spreadsheets/d/..."
+        required
+      />
+      <span class="field__hint">
+        Paste the whole address bar. The sheet must be in the Drive folder shared with
+        the service account.
+      </span>
+    </label>
+
+    <button type="submit" class="button button--primary">Add source</button>
+  </form>
+
+  <form method="post" action="/admin/sources/demo" class="card stack">
+    <p class="card__title">Demo source</p>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <p class="text-muted">
+      Creates a synthetic workbook that mirrors the real Q2 Snapshot layout exactly,
+      with obviously fake patients (Patient AA, Patient AB) and three invented
+      therapists. Use it to exercise mapping, dry run, and the rejection queue before
+      any Google credential exists.
+    </p>
+    <button type="submit" class="button">Create demo source</button>
+  </form>
+</div>
+
+{% if recent_runs %}
+<h2 style="margin-top: var(--space-5)">Recent sync runs</h2>
+<div class="card" style="margin-top: var(--space-2)">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>When</th>
+        <th>Source</th>
+        <th>Mode</th>
+        <th class="numeric">Read</th>
+        <th class="numeric">Added</th>
+        <th class="numeric">Changed</th>
+        <th class="numeric">Rejected</th>
+        <th>Result</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in recent_runs %}
+      <tr>
+        <td class="numeric">
+          <a href="/admin/sources/{{ r.source_id }}/runs/{{ r.id }}"
+            >{{ r.started_at|datetime }}</a
+          >
+        </td>
+        <td>{{ r.source.label }}</td>
+        <td>
+          {% if r.mode.value == "dry_run" %}
+          <span class="pill pill--neutral">dry run</span>
+          {% else %}<span class="pill pill--ok">live</span>{% endif %}
+        </td>
+        <td class="numeric">{{ r.rows_read|count }}</td>
+        <td class="numeric">{{ r.rows_inserted|count }}</td>
+        <td class="numeric">{{ r.rows_updated|count }}</td>
+        <td class="numeric">
+          {% if r.rows_rejected %}
+          <span class="pill pill--watch">{{ r.rows_rejected }}</span>
+          {% else %}0{% endif %}
+        </td>
+        <td><span class="pill {{ r.status.pill_class }}">{{ r.status.value }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

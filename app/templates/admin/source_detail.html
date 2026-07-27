@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>{{ source.label }}</h1>
+    <p class="page-head__sub">
+      {{ source.provider.label }}{% if source.spreadsheet_id %}, sheet
+      <code>{{ source.spreadsheet_id }}</code>{% endif %}.
+      {{ visit_count|count }} session rows imported.
+    </p>
+  </div>
+  <a href="/admin/sources" class="button button--quiet">All sources</a>
+</div>
+
+{% if request.query_params.get('problem') %}
+<div class="alert alert--error" role="alert">{{ request.query_params['problem'] }}</div>
+{% endif %}
+
+{% if tab_error %}
+<div class="alert alert--error" role="alert">
+  <p><strong>Cannot read the workbook.</strong> {{ tab_error }}</p>
+</div>
+{% endif %}
+
+{% if open_error_count %}
+<div class="alert alert--warning">
+  <p>
+    {{ open_error_count }} row{{ "" if open_error_count == 1 else "s" }} were rejected and
+    have not been reviewed.
+    <a href="/admin/sources/{{ source.id }}/errors">Review them</a>.
+  </p>
+</div>
+{% endif %}
+
+<form method="post" action="/admin/sources/{{ source.id }}" class="card stack">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+  <div class="card-grid">
+    <label class="field">
+      <span class="field__label">Label</span>
+      <input type="text" name="label" class="field__input" value="{{ source.label }}" />
+    </label>
+
+    <label class="field">
+      <span class="field__label">Tab</span>
+      {% if tabs %}
+      <select name="tab_name" class="field__input">
+        <option value="">Choose a tab</option>
+        {% for t in tabs %}
+        <option value="{{ t }}" {% if source.tab_name == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+      <span class="field__hint">
+        Tabs beginning RAW_ are not listed. They hold raw Valant exports with patient
+        dates of birth, emails, and phone numbers, which this application never imports.
+      </span>
+      {% else %}
+      <input
+        type="text"
+        name="tab_name"
+        class="field__input"
+        value="{{ source.tab_name or '' }}"
+      />
+      <span class="field__hint">The tab list could not be read, so type the name.</span>
+      {% endif %}
+    </label>
+
+    <label class="field">
+      <span class="field__label">Header row</span>
+      <input
+        type="number"
+        name="header_row"
+        min="1"
+        class="field__input"
+        value="{{ source.header_row }}"
+      />
+    </label>
+
+    <label class="field">
+      <span class="field__label">Active</span>
+      <label class="choice">
+        <input type="checkbox" name="active" value="1" {% if source.active %}checked{% endif %} />
+        <span>
+          <strong>Sync this source</strong>
+          <span class="choice__hint">
+            Deactivating stops future syncs. Rows already imported stay exactly where
+            they are.
+          </span>
+        </span>
+      </label>
+    </label>
+  </div>
+
+  <h2 style="margin-top: var(--space-3)">Column mapping</h2>
+  <p class="text-muted">
+    Only these {{ allowlist|length }} columns may ever be imported. Nothing else in the
+    sheet is read, whatever it contains.
+  </p>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Expected header</th>
+        <th>Column in this sheet</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for field_name, expected in allowlist.items() %}
+      <tr>
+        <td>
+          <code>{{ field_name }}</code>
+          {% if field_name in ("therapist", "patient_name", "dos", "cpt") %}
+          <span class="pill pill--neutral">required</span>
+          {% endif %}
+        </td>
+        <td class="text-muted">{{ expected }}</td>
+        <td>
+          {% if headers %}
+          {% set current = source.column_mapping.get(field_name) or suggested.get(field_name, '') %}
+          <select name="map__{{ field_name }}" class="field__input">
+            <option value="">not mapped</option>
+            {% for h in headers %}
+            <option value="{{ h }}" {% if current == h %}selected{% endif %}>{{ h }}</option>
+            {% endfor %}
+          </select>
+          {% else %}
+          <input
+            type="text"
+            name="map__{{ field_name }}"
+            class="field__input"
+            value="{{ source.column_mapping.get(field_name, '') }}"
+          />
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="form-actions">
+    <button type="submit" class="button button--primary">Save source</button>
+  </div>
+</form>
+
+<div class="card-grid" style="margin-top: var(--space-4)">
+  <div class="card">
+    <p class="card__title">Sync</p>
+    {% if source.is_ready_to_sync %}
+    <p class="text-muted">
+      A dry run reads and validates everything and writes no session rows. Always worth
+      running first on a new quarter.
+    </p>
+    <div class="form-actions">
+      <form method="post" action="/admin/sources/{{ source.id }}/sync" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="mode" value="dry_run" />
+        <button type="submit" class="button">Dry run</button>
+      </form>
+      <form method="post" action="/admin/sources/{{ source.id }}/sync" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="mode" value="live" />
+        <button type="submit" class="button button--primary">Sync now</button>
+      </form>
+    </div>
+    {% else %}
+    <p class="text-muted">
+      Not ready yet.
+      {% if source.missing_required_fields %}
+      Map these first: {{ source.missing_required_fields|join(", ") }}.
+      {% else %}Choose a tab first.{% endif %}
+    </p>
+    {% endif %}
+  </div>
+
+  <form method="post" action="/admin/sources/{{ source.id }}/lookups" class="card stack">
+    <p class="card__title">Import abbreviations</p>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="kind" value="abbreviations" />
+    <p class="text-muted">
+      Reads the Abbreviations tab so reports can show friendly insurance and location
+      names. Several long names map to one short code, so the mapping is one way.
+    </p>
+    <label class="field">
+      <span class="field__label">Tab</span>
+      {% if tabs %}
+      <select name="tab_name" class="field__input">
+        {% for t in tabs %}
+        <option value="{{ t }}" {% if t == "Abbreviations" %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+      {% else %}
+      <input type="text" name="tab_name" class="field__input" value="Abbreviations" />
+      {% endif %}
+    </label>
+    <button type="submit" class="button">Import abbreviations</button>
+  </form>
+
+  <form method="post" action="/admin/sources/{{ source.id }}/lookups" class="card stack">
+    <p class="card__title">Import provider aliases</p>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="kind" value="config" />
+    <p class="text-muted">
+      Reads the PROVIDER rows on the Config tab. Aliases are matched on the whole name,
+      never a substring, and an alias already pointing at a different therapist is
+      refused rather than reassigned.
+    </p>
+    <label class="field">
+      <span class="field__label">Tab</span>
+      {% if tabs %}
+      <select name="tab_name" class="field__input">
+        {% for t in tabs %}
+        <option value="{{ t }}" {% if t == "Config" %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+      {% else %}
+      <input type="text" name="tab_name" class="field__input" value="Config" />
+      {% endif %}
+    </label>
+    <button type="submit" class="button">Import aliases</button>
+  </form>
+</div>
+
+{% if runs %}
+<h2 style="margin-top: var(--space-5)">Sync history</h2>
+<div class="card" style="margin-top: var(--space-2)">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>When</th>
+        <th>Mode</th>
+        <th>By</th>
+        <th class="numeric">Read</th>
+        <th class="numeric">Added</th>
+        <th class="numeric">Changed</th>
+        <th class="numeric">Unchanged</th>
+        <th class="numeric">Rejected</th>
+        <th>Result</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td class="numeric">
+          <a href="/admin/sources/{{ source.id }}/runs/{{ r.id }}">{{ r.started_at|datetime }}</a>
+        </td>
+        <td>
+          {% if r.mode.value == "dry_run" %}<span class="pill pill--neutral">dry run</span>
+          {% else %}<span class="pill pill--ok">live</span>{% endif %}
+        </td>
+        <td class="text-muted">{{ r.run_by_id or "-" }}</td>
+        <td class="numeric">{{ r.rows_read|count }}</td>
+        <td class="numeric">{{ r.rows_inserted|count }}</td>
+        <td class="numeric">{{ r.rows_updated|count }}</td>
+        <td class="numeric">{{ r.rows_unchanged|count }}</td>
+        <td class="numeric">{{ r.rows_rejected|count }}</td>
+        <td><span class="pill {{ r.status.pill_class }}">{{ r.status.value }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}
