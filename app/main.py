@@ -1,8 +1,7 @@
 """Application entry point.
 
-Phase 0 scaffold: the app boots, proves its configuration and its encrypted database,
-serves a health endpoint and a placeholder shell rendered with the real design tokens.
-Auth arrives in Phase 1, the data model and sync in Phase 2.
+Phase 1: authentication, roles, module grants, user administration, the audit log,
+session timeout, and admin seeding. The reporting modules arrive in Phase 3 onward.
 """
 
 from __future__ import annotations
@@ -13,34 +12,42 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
+import app.models  # noqa: F401  registers every model on Base.metadata
 from app.config import Settings, get_settings
-from app.db import DatabaseHandle
+from app.db import Base, DatabaseHandle
 from app.logging_setup import configure_logging
 from app.middleware import install_middleware
+from app.routers import admin_audit, admin_users, auth
+from app.security.csrf import CSRFMiddleware
+from app.security.deps import AccessDenied, OptionalUser, RedirectRequired
+from app.seed import seed_admin
+from app.templating import render
 
 logger = logging.getLogger(__name__)
 
 APP_DIR = Path(__file__).resolve().parent
-TEMPLATES_DIR = APP_DIR / "templates"
 STATIC_DIR = APP_DIR / "static"
-
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Open the encrypted database at startup, dispose of it at shutdown.
-
-    Failures here stop the process. That is deliberate: a PHI application should not
-    serve traffic while its database is misconfigured.
-    """
+    """Open the encrypted database, run migrations metadata, seed the admin."""
     settings: Settings = app.state.settings
     logger.info("Starting SRI Practice Dashboard (environment=%s)", settings.environment)
+
     app.state.db = DatabaseHandle(settings)
+
+    # Alembic owns the schema in a real deployment. This creates any table that a
+    # migration has not yet produced, which keeps development and tests runnable
+    # without a migration step for every model change.
+    Base.metadata.create_all(app.state.db.engine)
+
+    with app.state.db.session() as db:
+        seed_admin(db, settings)
+
     try:
         yield
     finally:
@@ -56,7 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="SRI Practice Dashboard",
         description="Internal practice management reporting for SRI Psychological Services.",
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
         # No public API docs on a PHI application.
         docs_url=None,
@@ -66,13 +73,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
 
     install_middleware(app, settings)
+    # Added after the security headers so it runs before them on the way in: a
+    # rejected request still gets the headers on the way out.
+    app.add_middleware(CSRFMiddleware)
+
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-    register_routes(app, settings)
+    app.include_router(auth.router)
+    app.include_router(admin_users.router)
+    app.include_router(admin_audit.router)
+
+    register_error_handlers(app)
+    register_routes(app)
     return app
 
 
-def register_routes(app: FastAPI, settings: Settings) -> None:
+def register_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(RedirectRequired)
+    async def handle_redirect(request: Request, exc: RedirectRequired) -> Response:
+        location = exc.location
+        # Preserve where they were going, so signing in lands them there.
+        if location == "/login" and request.method == "GET" and request.url.path != "/":
+            location = f"/login?next={request.url.path}"
+        return RedirectResponse(location, status_code=exc.status_code)
+
+    @app.exception_handler(AccessDenied)
+    async def handle_access_denied(request: Request, exc: AccessDenied) -> Response:
+        logger.warning("Access denied on %s %s", request.method, request.url.path)
+        return render(
+            request,
+            "errors/forbidden.html",
+            {"page_title": "Access denied", "message": exc.message},
+            status_code=403,
+        )
+
+
+def register_routes(app: FastAPI) -> None:
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> JSONResponse:
         """Liveness probe. Deliberately carries no data and needs no auth."""
@@ -92,17 +128,12 @@ def register_routes(app: FastAPI, settings: Settings) -> None:
         return JSONResponse({"status": "ready"})
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    async def index(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(
-            request,
-            "index.html",
-            {
-                "page_title": "Overview",
-                "environment": settings.environment,
-                "room_utilization_enabled": settings.room_utilization_enabled,
-                "patient_funnel_enabled": settings.patient_funnel_enabled,
-            },
-        )
+    async def index(request: Request, auth_ctx: OptionalUser) -> Response:
+        if auth_ctx is None:
+            return RedirectResponse("/login", status_code=303)
+        if auth_ctx.user.must_change_password:
+            return RedirectResponse("/change-password", status_code=303)
+        return render(request, "index.html", {"page_title": "Overview", "auth": auth_ctx})
 
 
 # Served with the factory form so that importing this module does not require a valid
