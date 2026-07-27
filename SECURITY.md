@@ -175,32 +175,49 @@ target id is the internal row id, not the patient name.
 
 ### 5.2 At rest
 
-**IMPLEMENTED (Phase 0), verified by test.**
+**NOT IMPLEMENTED at the application layer. This is a known open gap, recorded here rather than
+papered over.**
 
-The database is SQLite encrypted with SQLCipher. The test suite asserts that a canary value written
-through the application does not appear in the file's bytes, that the file does not carry the plain
-SQLite magic header, and that the standard library `sqlite3` driver cannot open it. The key comes from the `DATABASE_ENCRYPTION_KEY`
-environment variable and is applied as a `PRAGMA key` on every new connection, before any other
-statement runs.
+Until 2026-07-27 the database was SQLite encrypted with SQLCipher, keyed from
+`DATABASE_ENCRYPTION_KEY` and applied as a `PRAGMA key` on every connection, with tests asserting
+that a canary value did not appear in the file's bytes and that the stock `sqlite3` driver could not
+open the file. The deployment then moved to Replit's managed PostgreSQL. SQLCipher, the encryption
+key, and the tests that proved the encryption all went with it. Nothing in the application encrypts
+data at rest now.
 
-**Fail loud, never fall back.** At startup the application verifies that (a) the encryption key is
-present and (b) the SQLCipher capable driver actually loaded. If either check fails, the process
-exits with a clear error. It does not degrade to an unencrypted SQLite file. An unencrypted PHI
-database that looks like it is working is worse than a service that refuses to start.
+**What this means in practice.** PHI in this system is currently protected at rest only by whatever
+Replit's managed PostgreSQL provides at the storage layer, plus the access controls in section 3 and
+the transport protections in section 5.1. That may well be adequate, but this document cannot claim
+it, because:
 
-**Key handling.**
-- The key lives in Replit Secrets. It is never in the repository, never in a `.env` file that is
-  committed, never in a log line, never in an error message, and never rendered in the UI.
-- `.env.example` documents the variable name with an empty value and a comment. It never holds a
-  real key.
-- Rotation: SQLCipher supports `PRAGMA rekey`. Rotation is an operator procedure, documented in the
-  README, performed with the service stopped and a verified backup in hand.
-- Loss of the key means loss of the database. Backups of the encrypted file are worthless without
-  it, so the key must be escrowed separately from the backups, by the practice, outside this system.
+- The specific control has not been confirmed. Managed PostgreSQL providers generally encrypt
+  volumes, but the algorithm, scope, and key custody have not been read from Replit's
+  documentation and recorded here.
+- The key would be held by the provider, not by the practice. The previous design deliberately kept
+  the key in the practice's own Replit Secrets so that a copy of the database, however obtained, was
+  useless without a key the practice controlled. That property is gone.
+- Section 1 records an executed BAA with Replit as the hosting provider. The managed database is a
+  distinct service with its own subprocessor, so whether that agreement reaches it should be
+  confirmed. Encryption at rest would not substitute for the agreement either way.
 
-**Portability.** All database access goes through SQLAlchemy with Alembic migrations. Moving to
-PostgreSQL later is a connection string change plus turning on Postgres level encryption at rest,
-not a rewrite. Nothing in the model layer depends on SQLite.
+**Three ways to close it,** in rough order of effort:
+
+1. Confirm and document what Replit's PostgreSQL actually provides, obtain the BAA, and rewrite this
+   section to describe the real control. Cheapest, and honest, but leaves key custody with the
+   provider.
+2. Encrypt the PHI columns in the application (`patient_name`, `patient_name_normalized`,
+   `patient_code`), keyed from a secret the practice holds. Restores the property the old design
+   had. Costs a `TypeDecorator` and rules out SQL `LIKE` on those columns. Nothing outside the
+   Phase 6 patient funnel reads them (section 6), so the blast radius is small.
+3. Return to SQLCipher SQLite. Restores the old guarantee exactly and gives up managed backups.
+
+Until one of these lands, the application is not making a claim about encryption at rest, and this
+gap is listed on the In development page inside the application so it is visible to whoever is
+reading the numbers rather than only to whoever reads this file.
+
+**Portability.** All database access goes through SQLAlchemy with Alembic migrations, so the move
+from SQLite to PostgreSQL was a configuration change in `app/db.py` plus a new baseline migration,
+not a rewrite. Nothing in the model layer depends on either engine.
 
 ### 5.3 Integrity of imported data
 
@@ -309,7 +326,7 @@ In addition:
 | Secret | Variable | Notes |
 | --- | --- | --- |
 | Google service account key | `GOOGLE_SERVICE_ACCOUNT_JSON` | Full JSON, from Replit Secrets. Read only Sheets and Drive scopes. |
-| Database encryption key | `DATABASE_ENCRYPTION_KEY` | See 5.2. |
+| Database connection URL | `DATABASE_URL` | Injected by Replit for its managed PostgreSQL. Carries the database password, so it is treated as a secret: redacted from `Settings.__repr__` and never logged. |
 | Session signing secret | `SESSION_SECRET_KEY` | At least 32 characters. Reserved: nothing signs with it yet, because session and CSRF tokens are random values validated server side rather than signed. See README. |
 | Seed admin | `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD` | Used once. Password change forced on first login. |
 
@@ -335,10 +352,17 @@ is not credible.
 2. **No BAA coverage claim is made for Google.** The Google Sheets side of this is the practice's
    existing workflow, and whether Google Workspace is covered by a BAA for that data is the
    practice's determination, not this application's. The app reads from it either way.
-3. **No encryption of the database backup process is specified here.** Backups of a SQLCipher file
-   are encrypted at rest by construction, but backup storage, retention, and key escrow are
-   operational matters outside this codebase.
-4. **Login throttling is per account, not per source.** After 5 consecutive failed passwords an
+3. **Encryption at rest is not implemented at the application layer.** See 5.2, which describes the
+   gap in full and the three ways to close it. This is the most significant open item in this
+   document. Backup storage and retention are operational matters outside this codebase, and with
+   no application level encryption a backup is only as protected as wherever it is kept.
+4. **The existing Replit BAA has not been checked against the managed database specifically.**
+   Section 1 records an executed BAA with Replit as the hosting provider, which was true of the
+   arrangement when PHI lived in an application managed encrypted file on Replit's disk. PHI now
+   lives in Replit's managed PostgreSQL service, which is a different service with its own
+   subprocessor. Whether the existing agreement covers it is a question for the practice, and it is
+   worth asking now rather than at audit.
+5. **Login throttling is per account, not per source.** After 5 consecutive failed passwords an
    account locks for 15 minutes, and the lockout is audited. That stops password guessing against
    one account. It does not stop password spraying, one attempt each against many accounts from one
    source, because there is no per IP limit. Adding one at the application layer is of limited
@@ -348,15 +372,15 @@ is not credible.
    Note the tradeoff the lockout itself creates: an attacker who knows a colleague's email address
    can lock them out for 15 minutes at will. For an internal application of this size, with an
    administrator who can reset on request, that is the better side of the trade.
-5. **No intrusion detection and no WAF.** Both depend on the hosting posture rather than on this
+6. **No intrusion detection and no WAF.** Both depend on the hosting posture rather than on this
    codebase.
-6. **A bulk SQL statement could still modify the audit log.** The append only guarantee is enforced
+7. **A bulk SQL statement could still modify the audit log.** The append only guarantee is enforced
    by ORM events, which fire per instance and are bypassed by a hand written
    `UPDATE audit_log` or `DELETE FROM audit_log`. No such statement exists in the codebase, and a
    test greps the source on every build to keep it that way, but a database administrator with
-   direct file access and the encryption key is outside what application code can control.
-7. **Room utilization data is self reported.** Every figure in that module comes from a file
+   direct database access is outside what application code can control.
+8. **Room utilization data is self reported.** Every figure in that module comes from a file
    somebody filled in by hand, because no system records actual room usage. It is labelled as
    such on every view of it. It contains no PHI: rooms, dates, and slot counts only.
-8. **Single tenant assumption.** The application serves one practice. There is no tenant isolation
+9. **Single tenant assumption.** The application serves one practice. There is no tenant isolation
    layer, because there are no other tenants.

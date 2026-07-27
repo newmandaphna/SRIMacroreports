@@ -253,6 +253,28 @@ def test_data_caveats_appear_only_once_there_is_data(admin):
     assert "counted as revenue, not as sessions" in page
 
 
+# ------------------------------------------------------------- security posture
+
+
+def test_the_encryption_gap_is_stated_on_the_page(admin):
+    """A security document nobody opens is not a disclosure. This one is on the page."""
+    page = admin.get("/status").text
+    assert "not encrypted at rest by this application" in page
+    assert "SECURITY.md section 5.2" in page
+
+
+def test_the_encryption_gap_is_shown_to_everyone_not_only_admins(viewer):
+    """Anyone reading the numbers should know what protects the data behind them."""
+    assert "not encrypted at rest by this application" in viewer.get("/status").text
+
+
+def test_the_encryption_gap_does_not_wait_for_data(admin):
+    """It is true of an empty database too, so it is not conditioned on having rows."""
+    page = admin.get("/status").text
+    assert "Cancellation rates are not comparable" not in page, "precondition: no data yet"
+    assert "not encrypted at rest by this application" in page
+
+
 # --------------------------------------------------------------------- not built
 
 

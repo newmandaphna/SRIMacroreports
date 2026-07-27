@@ -487,10 +487,20 @@ round trip and hands back a naive value. A custom `UTCDateTime` column type make
 explicit. Under PostgreSQL it becomes a no op, so the models port unchanged. Display conversion to
 America/New_York happens at the template layer, never in storage.
 
-**A-054. Database encryption at rest uses SQLCipher, and the app fails loudly without a key.**
-Details and the operational caveats are in SECURITY.md. If the SQLCipher driver is unavailable in
-the deployment environment, the app refuses to start rather than silently falling back to an
-unencrypted SQLite file.
+**A-054. SUPERSEDED 2026-07-27. Encryption at rest is no longer implemented.**
+This originally read: "Database encryption at rest uses SQLCipher, and the app fails loudly without
+a key." That held while the database was a SQLCipher encrypted SQLite file keyed from
+`DATABASE_ENCRYPTION_KEY`.
+
+The deployment then moved to Replit's managed PostgreSQL. SQLCipher, the key, and the tests that
+proved a canary value was unreadable in the file's bytes all went with it. **Nothing in the
+application encrypts data at rest now.** The decision recorded here is to state that plainly rather
+than to leave a document claiming a control the code does not implement, and to surface it on the In
+development page inside the application so it is visible where the numbers are read.
+
+SECURITY.md section 5.2 carries the full account, including the three ways to close the gap and the
+question of whether the existing Replit BAA reaches the managed database service. This is the
+largest open security item in the project.
 
 **A-054a. On PostgreSQL the test suite needs its own database, and a missing one must fail loudly.**
 The suite drops every table and re runs the migrations before each test, which under the old design

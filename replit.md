@@ -7,7 +7,8 @@ Internal practice management reporting for SRI Psychological Services. Tracks fi
 ## Stack
 
 - Python 3.11, FastAPI, Jinja2, htmx
-- SQLite with SQLCipher (encrypted at rest), managed via SQLAlchemy + Alembic
+- PostgreSQL (Replit managed), via SQLAlchemy + Alembic. No application level encryption at
+  rest: see SECURITY.md section 5.2
 - Chart.js 4 from CDN
 - No SPA framework
 
@@ -18,7 +19,7 @@ Internal practice management reporting for SRI Psychological Services. Tracks fi
 | Secret | Notes |
 |---|---|
 | `SESSION_SECRET_KEY` | At least 32 chars. Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
-| `DATABASE_ENCRYPTION_KEY` | Encrypts the SQLite database. Back this up separately -- losing it means losing the database. |
+| `DATABASE_URL` | Injected automatically by the Replit PostgreSQL database. Nothing to set by hand. |
 | `ADMIN_INITIAL_PASSWORD` | Password for the seeded admin account. You will be forced to change it on first login. |
 
 ### 2. Set required environment variables
@@ -32,7 +33,6 @@ Optional variables (defaults shown):
 ```
 ENVIRONMENT=development
 DEBUG=false
-DATABASE_PATH=data/sri_dashboard.db
 SESSION_TIMEOUT_MINUTES=15
 SESSION_WARNING_MINUTES=13
 BENEFITS_SESSION_THRESHOLD=25

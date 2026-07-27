@@ -185,6 +185,28 @@ def build_status(db: DbSession, request: Request, is_admin: bool) -> StatusRepor
             )
         )
 
+    # --- security posture -------------------------------------------------------
+    # Hardcoded rather than computed, unlike everything else on this page, because
+    # there is nothing in the database that could tell us. It comes off the page when
+    # the gap is closed in code, which is the same commit that would change this line.
+    report.caveats.append(
+        OpenItem(
+            title="The database is not encrypted at rest by this application",
+            detail=(
+                "Until the move to Replit's managed PostgreSQL, the database was an encrypted "
+                "file whose key the practice held, so a copy of it was useless without that key. "
+                "That layer is gone. Patient names, balances, and the audit log now rely on "
+                "whatever the hosting provider encrypts at the storage layer, with the key held "
+                "by the provider rather than by the practice."
+            ),
+            consequence=(
+                "Needs a decision: confirm and document what Replit actually provides, encrypt "
+                "the patient columns in the application, or return to an encrypted file. "
+                "SECURITY.md section 5.2 sets out all three."
+            ),
+        )
+    )
+
     # --- what is not built ------------------------------------------------------
     report.not_built.append(
         OpenItem(
