@@ -42,7 +42,9 @@ def upgrade() -> None:
         sa.Column("created_by_id", sa.Integer(), nullable=True),
         sa.Column("updated_at", app.models.types.UTCDateTime(timezone=True), nullable=False),
         sa.Column("last_login_at", app.models.types.UTCDateTime(timezone=True), nullable=True),
-        sa.Column("password_changed_at", app.models.types.UTCDateTime(timezone=True), nullable=True),
+        sa.Column(
+            "password_changed_at", app.models.types.UTCDateTime(timezone=True), nullable=True
+        ),
         sa.ForeignKeyConstraint(["created_by_id"], ["users.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id"),
     )
