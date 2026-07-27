@@ -5,7 +5,7 @@ This document is written to be handed to an auditor. It is kept current as each 
 every control below is marked with its implementation status so nobody mistakes an intention for a
 control.
 
-Last updated: Phase 3.
+Last updated: Phase 4.
 Status key: **IMPLEMENTED** / **PARTIAL** / **PLANNED (phase N)**.
 
 ---
@@ -135,7 +135,8 @@ Logged events:
 | **PHI read** | every load of a patient level view, with the filter parameters used | live, exercised from Phase 6 |
 | Data sources | source created, edited, activated, deactivated, mapping changed | live |
 | Sync | every run, dry run and live, with rows read, upserted, rejected, and by whom | live |
-| Manual data entry | utilization notes, room utilization uploads | Phase 4 |
+| Manual data entry | utilization notes, with the previous text on every edit | live |
+| Manual data entry | room utilization uploads | Phase 5 |
 
 The action types for the later rows exist in the enum now, so adding the feature does not also
 require remembering to add its audit call.

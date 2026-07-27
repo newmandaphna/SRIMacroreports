@@ -4,7 +4,7 @@ Every definitional choice made while building the SRI Practice Dashboard, record
 moment it was made. Read this after every phase. Anything marked **NEEDS CONFIRMATION** is a
 default I picked to keep moving, not a decision I am confident in.
 
-Last updated: Phase 3 complete.
+Last updated: Phase 4 complete.
 
 ---
 
@@ -576,6 +576,56 @@ configuration rather than discovered later.
 
 ---
 
+## 5c. Utilization decisions (Phase 4)
+
+**A-080. A therapist with no session minimum carries no status, not a passing one.**
+Only `salaried_benefits` therapists are compared against the threshold. Everyone else shows
+"not measured". A green tick would imply a target they were never given, and a red one would be
+a false alarm about a real person's work. The board reports the unmeasured count openly rather
+than quietly omitting those rows, so nobody reads a short list as the whole practice.
+
+**A-081. The weekly average is compared as a decimal, not truncated to a whole number.**
+Truncating first would put a therapist at 19.9 sessions in the same bucket as one at 19.0. That
+is a rounding artifact, not a judgement anyone intended to make.
+
+**A-082. Status bands: at or above the threshold is fine, within 20 percent below is watch,
+further below is the alert state.**
+The 20 percent band is my choice, not the practice's. It exists so that "slightly short this
+week" and "systematically short" are not the same colour. Alert red appears here and nowhere
+else in the application.
+**TO CONFIRM WITH THE PRACTICE**: whether a watch band is wanted at all, and how wide.
+
+**A-083. One note per therapist per period, editable, with the history in the audit log.**
+The build specification asks for "a notes field so context like referral shortage travels with
+the number". A single editable field matches that, and the audit entry records the previous text
+on every change, so an edited explanation is still recoverable. The alternative, an append only
+thread, is more faithful to a conversation but heavier than what was asked for.
+
+**A-084. The note appears on the status board, not only on the drill in page.**
+Context that lives one click away from the number is context most readers never see. The board
+shows each therapist's most recent note in its own column, and for anyone flagged below threshold
+without a note it shows an "add context" prompt to whoever can write one.
+
+**A-085. A note is snapped to its period boundary.**
+Whatever date the form submits, the note attaches to the start of the period the reports actually
+render, so a note can never end up on a period that no view displays.
+
+**A-086. Note text is recorded in the audit log, before and after.**
+It is staff written context about a colleague's workload, not patient information. The point of
+auditing it is that an edit to someone's explanation of their own numbers should be recoverable.
+
+**A-087. Notes are writable by managers and admins, never by viewers.**
+Enforced by the same role dependency as everywhere else, so a viewer posting the form directly
+gets a 403 and an audit entry rather than a silent no-op. The form is simply not rendered for
+them, which is a courtesy and not the control.
+
+**A-088. A drill in link is only rendered to someone who can follow it.**
+The overview is gated on the financial grant, and the therapist drill in on the utilization
+grant, so a reader can hold one without the other. Where they cannot follow the link, the
+therapist's name renders as plain text: a link that 403s is worse than no link.
+
+---
+
 ## 6. Conflicts between the build prompt and observed reality
 
 Logged per the rule that the prompt wins but conflicts get flagged.
@@ -604,7 +654,8 @@ One place to see what is still unanswered. Nothing here blocks the current phase
 | 1 | Can Patient Code be filled in on the Q sheet going forward? | not yet asked | Would let the upsert key drop patient name, which is the cleaner design. See A-020. |
 | 2 | Is cancellation recording in Valant consistent across therapists? | not yet asked | Decides whether per therapist cancellation rates can be compared at all. See A-032b. |
 | 3 | Which visit level tab exists in the live Q2 workbook? | blocked until credentials | Answered by the mapping UI in Phase 2. Nothing hardcoded. See A-004. |
-| 4 | Is the 25 session benefits threshold correct? | not yet asked | Drives every utilization status flag. Placeholder default. See A-039a. |
+| 4 | Is the 25 session benefits threshold correct? | **asked, still open** | Drives every status flag on the utilization board, which is now built. At 25, 30 of 42 therapists show red. See A-039a. |
+| 5 | Which therapists are salaried rather than percentage based? | not yet asked | Decides who is measured at all. Everyone currently defaults to unmeasured. See A-039b. |
 
 Answered:
 

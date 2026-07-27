@@ -10,9 +10,10 @@ that touches data, logging, or access control. Read [ASSUMPTIONS.md](ASSUMPTIONS
 every definitional choice, including the places where observed data forced a deviation
 from the build specification.
 
-Current state: **Phase 3 complete.** Authentication and administration, the import
-pipeline, and the Financial module with the Reports overview dashboard. A synthetic
-demo source lets you exercise the whole path without credentials.
+Current state: **Phase 4 complete.** Authentication and administration, the import
+pipeline, the Financial module with the Reports overview dashboard, and therapist
+utilization with per period notes. A synthetic demo source lets you exercise the whole
+path without credentials.
 
 ---
 
@@ -44,6 +45,7 @@ else is reachable. Then:
 | --- | --- |
 | `/reports` | The overview dashboard |
 | `/reports/financial` | Sessions, revenue, outstanding, and the breakdowns |
+| `/reports/therapist-utilization` | Status board, weekly history, and per period notes |
 | `/admin/sources` | The quarterly Q sheets and the sync |
 | `/admin/therapists` | Therapists, their aliases, and their employment type |
 | `/admin/config` | Benefits threshold, CPT exclusions, week start, session timeout |
@@ -302,8 +304,8 @@ tests/
 | 1 | Auth, roles, module grants, user administration, audit log, session timeout, seeding | **done** |
 | 2 | Data model, Data Sources registry, sync engine with dry run and import errors | **done** |
 | 3 | Financial module and the Reports overview dashboard | **done** |
-| 4 | Therapist utilization: threshold config, status board, drill in, notes | next |
-| 5 | Room utilization behind its flag, manual upload path | |
+| 4 | Therapist utilization: threshold config, status board, drill in, notes | **done** |
+| 5 | Room utilization behind its flag, manual upload path | next |
 | 6 | Patient funnel: AR aging, new patient volume, no show patterns. Gated. | |
 
 Each phase stops for review before the next one starts.
