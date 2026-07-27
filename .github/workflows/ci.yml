@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Test
+        run: pytest
+
+  phi-guard:
+    # Refuses the build if a raw export, a credential, or a database file was
+    # committed. Defence in depth behind .gitignore, which only catches mistakes
+    # nobody forced past it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for PHI bearing or secret files
+        run: |
+          set -euo pipefail
+          offenders=$(git ls-files \
+            | grep -Ei '\.(xlsx|xls|db|sqlite3?|pem|key)$|service-account.*\.json|credentials.*\.json|(^|/)\.env$' \
+            || true)
+          if [ -n "$offenders" ]; then
+            echo "Refusing: files that may carry PHI or secrets are tracked:"
+            echo "$offenders"
+            exit 1
+          fi
+          # CSV is allowed only for clearly synthetic fixtures.
+          bad_csv=$(git ls-files '*.csv' | grep -v '_SYNTHETIC\.csv$' || true)
+          if [ -n "$bad_csv" ]; then
+            echo "Refusing: CSV files that are not marked _SYNTHETIC are tracked:"
+            echo "$bad_csv"
+            exit 1
+          fi
+          echo "No PHI bearing or secret files tracked."
