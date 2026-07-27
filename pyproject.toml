@@ -22,3 +22,5 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Test fixtures set obviously fake credentials.
 "tests/*" = ["S105", "S106"]
+# Alembic writes these files. Their line lengths are not ours to police.
+"migrations/versions/*" = ["E501"]
