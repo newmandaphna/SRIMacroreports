@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% set editing = user is not none %}
+{% set current = form if form is defined else none %}
+
+{% block content %}
+<div class="page-head">
+  <h1>{% if editing %}Edit {{ user.display_name }}{% else %}Add user{% endif %}</h1>
+  <p class="page-head__sub">
+    {% if editing %}
+    Changing a role or a grant signs this person out of any active session, so the
+    change takes effect immediately.
+    {% else %}
+    A temporary password is generated and shown once. The user must choose their own on
+    first sign in.
+    {% endif %}
+  </p>
+</div>
+
+{% if error %}
+<div class="alert alert--error" role="alert">{{ error }}</div>
+{% endif %}
+
+<form
+  method="post"
+  action="{% if editing %}/admin/users/{{ user.id }}{% else %}/admin/users/new{% endif %}"
+  class="card stack"
+>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+  {% if not editing %}
+  <label class="field">
+    <span class="field__label">Email</span>
+    <input
+      type="email"
+      name="email"
+      required
+      class="field__input"
+      value="{{ current.email if current else '' }}"
+    />
+    <span class="field__hint">This is their unique sign in identity. No shared accounts.</span>
+  </label>
+  {% else %}
+  <div class="field">
+    <span class="field__label">Email</span>
+    <p class="field__static">{{ user.email }}</p>
+  </div>
+  {% endif %}
+
+  <label class="field">
+    <span class="field__label">Display name</span>
+    <input
+      type="text"
+      name="display_name"
+      required
+      class="field__input"
+      value="{{ user.display_name if editing else (current.display_name if current else '') }}"
+    />
+  </label>
+
+  <fieldset class="field">
+    <legend class="field__label">Role</legend>
+    {% set selected_role = user.role if editing else (current.role if current else 'viewer') %}
+    {% for role in all_roles %}
+    <label class="choice">
+      <input
+        type="radio"
+        name="role"
+        value="{{ role.value }}"
+        {% if selected_role == role.value %}checked{% endif %}
+      />
+      <span>
+        <strong>{{ role.label }}</strong>
+        <span class="choice__hint">{{ role.description }}</span>
+      </span>
+    </label>
+    {% endfor %}
+  </fieldset>
+
+  <fieldset class="field">
+    <legend class="field__label">Module access</legend>
+    <p class="field__hint">
+      Financial access does not confer patient level access. The patient funnel must be
+      granted on its own.
+    </p>
+    {% set selected_modules = user.granted_modules|map(attribute='value')|list if editing else (current.modules if current else []) %}
+    {% for module in all_modules %}
+    <label class="choice">
+      <input
+        type="checkbox"
+        name="modules"
+        value="{{ module.value }}"
+        {% if module.value in selected_modules %}checked{% endif %}
+      />
+      <span>
+        <strong>{{ module.label }}</strong>
+        {% if module.shows_patient_identity %}
+        <span class="choice__hint">
+          Shows patient identity. Every read is recorded in the audit log.
+        </span>
+        {% endif %}
+      </span>
+    </label>
+    {% endfor %}
+  </fieldset>
+
+  <div class="form-actions">
+    <button type="submit" class="button button--primary">
+      {% if editing %}Save changes{% else %}Create user{% endif %}
+    </button>
+    <a href="/admin/users" class="button button--quiet">Cancel</a>
+  </div>
+</form>
+{% endblock %}

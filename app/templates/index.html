@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Overview</h1>
+  <p class="page-head__sub">
+    Signed in as {{ auth.user.display_name }} ({{ auth.role.label }}).
+  </p>
+</div>
+
+<div class="state">
+  <p class="state__title">No synced data yet</p>
+  <p>
+    Authentication and administration are in place. Reporting appears here once Phase 2
+    lands and a data source has been synced.
+  </p>
+</div>
+
+<div class="card-grid" style="margin-top: var(--space-4)">
+  <div class="card">
+    <p class="card__title">Your access</p>
+    {% if auth.user.granted_modules %}
+    <p>
+      {% for m in auth.user.granted_modules|sort(attribute='value') %}
+      <span class="pill pill--neutral">{{ m.label }}</span>
+      {% endfor %}
+    </p>
+    {% elif auth.role.is_admin %}
+    <p class="text-muted">
+      No explicit grants. As an administrator you may still reach any module, and each
+      time you do it is recorded as emergency access.
+    </p>
+    {% else %}
+    <p class="text-muted">
+      No modules granted yet. An administrator can give you access.
+    </p>
+    {% endif %}
+  </div>
+
+  {% if auth.role.is_admin %}
+  <div class="card">
+    <p class="card__title">Administration</p>
+    <p><a href="/admin/users">Manage users</a></p>
+    <p><a href="/admin/audit">Review the audit log</a></p>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <p class="card__title">Phase 2, next</p>
+    <p>
+      Data model, the Data Sources registry, and the sync engine with dry run and
+      import error review.
+    </p>
+  </div>
+</div>
+{% endblock %}

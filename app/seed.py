@@ -1,0 +1,92 @@
+"""Seed the first administrator from the environment.
+
+Runs at startup, once. If an active admin already exists it does nothing, so a restart
+never resurrects or overwrites an account.
+
+The seeded password must be changed on first login before any other route is reachable
+(SECURITY.md section 3.2).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.config import ConfigError, Settings
+from app.models.enums import AuditAction, Module, Role
+from app.models.user import ModuleGrant, User
+from app.security import audit
+from app.security.passwords import (
+    MIN_PASSWORD_LENGTH,
+    PasswordPolicyError,
+    hash_password,
+    validate_password,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def seed_admin(db: Session, settings: Settings) -> User | None:
+    """Create the initial admin if there is not already one. Returns it if created."""
+    existing = db.execute(
+        select(func.count(User.id)).where(User.role == Role.ADMIN, User.is_active.is_(True))
+    ).scalar_one()
+    if existing:
+        return None
+
+    email = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
+    password = os.environ.get("ADMIN_INITIAL_PASSWORD") or ""
+
+    if not email or not password:
+        # Not fatal: a fresh checkout should be able to boot and show a clear message
+        # rather than crash. But it is loud, because nobody can sign in until it is
+        # fixed, and a PHI application with no way in is not a working application.
+        logger.error(
+            "No administrator exists and ADMIN_EMAIL / ADMIN_INITIAL_PASSWORD are not "
+            "set. Nobody can sign in. Set both in Replit Secrets and restart."
+        )
+        return None
+
+    if "@" not in email:
+        raise ConfigError(f"ADMIN_EMAIL is not a valid email address: {email!r}")
+
+    try:
+        validate_password(password, email=email)
+    except PasswordPolicyError as exc:
+        raise ConfigError(
+            f"ADMIN_INITIAL_PASSWORD does not meet the password policy: {exc} "
+            f"(minimum {MIN_PASSWORD_LENGTH} characters, not a common password)."
+        ) from exc
+
+    admin = User(
+        email=email,
+        display_name="Administrator",
+        role=Role.ADMIN,
+        password_hash=hash_password(password),
+        # Forced change on first login. The value in the environment is a bootstrap
+        # credential, not a permanent one.
+        must_change_password=True,
+        is_active=True,
+    )
+    db.add(admin)
+    db.flush()
+
+    # The seed admin gets every module explicitly, so their normal work does not show
+    # up in the log as emergency access.
+    for module in Module:
+        db.add(ModuleGrant(user_id=admin.id, module=module, granted_by_id=admin.id))
+
+    audit.record(
+        db,
+        action=AuditAction.USER_CREATED,
+        actor=admin,
+        target_type="user",
+        target_id=admin.id,
+        detail={"seeded_from_environment": True, "role": Role.ADMIN.value},
+    )
+
+    logger.info("Seeded initial administrator. Password change is forced on first login.")
+    return admin

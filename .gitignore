@@ -1,23 +1,40 @@
-# === PHI HARD CONSTRAINT ===
-# Valant exports contain PHI. Nothing at patient grain may ever be committed.
-# data/raw/ is where raw exports land locally; it must NEVER be tracked.
-data/raw/*
-!data/raw/.gitkeep
+# === PHI AND SECRETS: nothing below may ever be committed ===
 
-# Any stray raw-export patterns, defense in depth
-data/**/*.csv
-data/**/*.xlsx
-data/**/*.xls
-!tests/fixtures/**
+# Secrets
+.env
+.env.*
+!.env.example
+*service-account*.json
+*credentials*.json
+*.pem
+*.key
+
+# The database holds PHI, encrypted or not.
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Raw exports from Valant or Google Sheets. These carry DOB, email, and phone.
+*.xlsx
+*.xls
+*.csv
+!tests/fixtures/*_SYNTHETIC.csv
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
 venv/
 .pytest_cache/
+.ruff_cache/
 .mypy_cache/
+*.egg-info/
 
-# Scratch / local
+# Local
 *.log
 .DS_Store
+.idea/
+.vscode/

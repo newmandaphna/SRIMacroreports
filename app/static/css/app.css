@@ -1,0 +1,592 @@
+/* Application styles. Depends on tokens.css for every colour, space, and size. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  line-height: var(--leading-tight);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-size: var(--text-xl);
+}
+h2 {
+  font-size: var(--text-lg);
+}
+
+a {
+  color: var(--color-primary);
+}
+
+/* Layout */
+
+.app-shell {
+  max-width: var(--layout-max);
+  margin: 0 auto;
+  padding: 0 var(--space-4) var(--space-7);
+}
+
+.app-header {
+  border-bottom: var(--border-hairline);
+  background: var(--color-surface);
+}
+
+.app-header__inner {
+  max-width: var(--layout-max);
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.app-header__mark {
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.app-header__nav {
+  display: flex;
+  gap: var(--space-3);
+  margin-left: auto;
+  font-size: var(--text-sm);
+}
+
+.app-header__nav a {
+  color: var(--color-ink-muted);
+  text-decoration: none;
+  padding: var(--space-1) 0;
+  border-bottom: 2px solid transparent;
+}
+
+.app-header__nav a:hover,
+.app-header__nav a[aria-current="page"] {
+  color: var(--color-ink);
+  border-bottom-color: var(--color-primary);
+}
+
+.page-head {
+  padding: var(--space-5) 0 var(--space-4);
+}
+
+.page-head__sub {
+  margin: var(--space-1) 0 0;
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+
+/* Cards */
+
+.card {
+  background: var(--color-surface);
+  border: var(--border-hairline);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}
+
+.card__title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-ink-muted);
+  margin: 0 0 var(--space-2);
+}
+
+.card-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+/* KPI cards. Every one states its question, its number, and its delta. */
+
+.kpi-value {
+  font-size: var(--text-3xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.kpi-delta {
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
+.kpi-delta--up {
+  color: var(--color-positive);
+}
+.kpi-delta--down {
+  color: var(--color-warning);
+}
+
+/* Status pills. Alert red is reserved for below threshold and overdue. */
+
+.pill {
+  display: inline-block;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.pill--ok {
+  background: var(--color-positive-soft);
+  color: var(--color-positive);
+}
+.pill--watch {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+.pill--below {
+  background: var(--color-alert-soft);
+  color: var(--color-alert);
+}
+.pill--neutral {
+  background: var(--color-surface-sunken);
+  color: var(--color-ink-muted);
+}
+
+/* Tables */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.data-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-ink-muted);
+  border-bottom: 1px solid var(--color-border-strong);
+  padding: var(--space-2);
+}
+
+.data-table td {
+  border-bottom: var(--border-hairline);
+  padding: var(--space-2);
+}
+
+.data-table .numeric,
+.data-table th.numeric {
+  text-align: right;
+}
+
+/* Empty, loading, and error states are designed, not defaulted. */
+
+.state {
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--color-ink-muted);
+  background: var(--color-surface);
+}
+
+.state__title {
+  color: var(--color-ink);
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+}
+
+.state--error {
+  border-color: var(--color-alert);
+  color: var(--color-alert);
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-sunken) 25%,
+    var(--color-border) 37%,
+    var(--color-surface-sunken) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+  border-radius: var(--radius-sm);
+  height: 1em;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
+/* Charts sit in a fixed height box so Chart.js does not fight the layout. */
+
+.chart-frame {
+  position: relative;
+  height: 300px;
+}
+
+/* Tablet */
+
+@media (max-width: 900px) {
+  .app-shell {
+    padding: 0 var(--space-3) var(--space-6);
+  }
+  .card-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+  .kpi-value {
+    font-size: var(--text-2xl);
+  }
+}
+
+/* Print: the overview page is handed to the practice owner on paper. */
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+  .app-header__nav,
+  .no-print {
+    display: none !important;
+  }
+  .card {
+    break-inside: avoid;
+    border-color: #999;
+  }
+  .chart-frame {
+    height: 220px;
+  }
+  a[href]::after {
+    content: "";
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Phase 1: authentication, forms, admin tables
+   --------------------------------------------------------------------------- */
+
+.app-header__mark {
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-header__user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.app-header__who {
+  color: var(--color-ink-muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.text-muted {
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+
+.row--muted td {
+  opacity: 0.6;
+}
+
+/* Buttons */
+
+.button {
+  display: inline-block;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button:hover {
+  border-color: var(--color-ink-subtle);
+}
+
+.button--primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-primary-ink);
+  font-weight: 600;
+}
+
+.button--primary:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.button--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-ink-muted);
+  padding: var(--space-1) var(--space-2);
+}
+
+.button--quiet:hover {
+  color: var(--color-ink);
+  border-color: var(--color-border);
+}
+
+.inline-form {
+  display: inline;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.table-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* Forms */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.field {
+  display: block;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.field__label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-ink-muted);
+  margin-bottom: var(--space-1);
+}
+
+.field__input {
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--text-base);
+}
+
+.field__input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.field__hint,
+.choice__hint {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  margin-top: var(--space-1);
+}
+
+.field__static {
+  margin: 0;
+}
+
+.field--inline {
+  display: inline-block;
+  min-width: 180px;
+}
+
+.choice {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-hairline);
+  font-size: var(--text-sm);
+}
+
+.choice:last-child {
+  border-bottom: 0;
+}
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+/* Alerts */
+
+.alert {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-3);
+}
+
+.alert p {
+  margin: 0 0 var(--space-2);
+}
+
+.alert p:last-child {
+  margin-bottom: 0;
+}
+
+.alert--error {
+  background: var(--color-alert-soft);
+  border-color: var(--color-alert);
+  color: var(--color-alert);
+}
+
+.alert--warning {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+/* Auth pages */
+
+.auth-panel {
+  max-width: 420px;
+  margin: var(--space-7) auto;
+  background: var(--color-surface);
+  border: var(--border-hairline);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+
+.auth-panel__note {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: var(--border-hairline);
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+
+.auth-panel__note ul {
+  margin: var(--space-1) 0;
+  padding-left: var(--space-3);
+}
+
+.temp-password {
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  letter-spacing: 0.04em;
+  background: var(--color-surface-sunken);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin: 0 0 var(--space-3);
+  word-break: break-all;
+}
+
+.page-head--with-action {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.detail-cell {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  max-width: 380px;
+  overflow-wrap: anywhere;
+}
+
+.pager {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+/* Session warning. Fixed so it is visible wherever the user has scrolled to. */
+
+.session-warning {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 100;
+  max-width: 340px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-warning);
+  border-left-width: 4px;
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  box-shadow: var(--shadow-raised);
+}
+
+.session-warning__title {
+  margin: 0 0 var(--space-1);
+  font-weight: 600;
+}
+
+.session-warning__body {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
+/* Tables scroll inside their card rather than pushing the page sideways. */
+
+.card > .data-table {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .page-head--with-action {
+    flex-direction: column;
+  }
+  .app-header__inner {
+    flex-wrap: wrap;
+  }
+}

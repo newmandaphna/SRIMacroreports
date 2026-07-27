@@ -1,0 +1,94 @@
+/* Design tokens. Defined once, used everywhere, including by the Chart.js helper,
+   which reads them off the document so charts and page chrome cannot drift apart.
+
+   Rules this file encodes:
+   - off white background, never pure white
+   - one primary accent, one warning amber, one alert red
+   - alert red is reserved for below threshold and overdue states, nothing else
+   - 8px spacing grid
+   - subtle borders instead of heavy shadows
+   - tabular numerals on every figure
+*/
+
+:root {
+  /* Surfaces and ink */
+  --color-canvas: #f7f6f3;
+  --color-surface: #fdfcfa;
+  --color-surface-sunken: #f1efea;
+  --color-ink: #1a1d21;
+  --color-ink-muted: #5c6470;
+  --color-ink-subtle: #8b939f;
+  --color-border: #e2ded6;
+  --color-border-strong: #cdc7bc;
+
+  /* Accent: deep teal. One primary, used for the main series and interactive chrome. */
+  --color-primary: #0f5c5c;
+  --color-primary-hover: #0b4747;
+  --color-primary-soft: #d7e6e5;
+  --color-primary-ink: #ffffff;
+
+  /* Status. Amber warns, red alerts. Red is only for below threshold and overdue. */
+  --color-warning: #b57314;
+  --color-warning-soft: #fbf0dc;
+  --color-alert: #a52a1f;
+  --color-alert-soft: #fbe4e1;
+  --color-positive: #2f6b3f;
+  --color-positive-soft: #e2efe4;
+
+  /* Chart series. Read by charts.js. Ordered for categorical use. */
+  --chart-1: #0f5c5c;
+  --chart-2: #4a7fa5;
+  --chart-3: #8a6fa8;
+  --chart-4: #b57314;
+  --chart-5: #6b7f4a;
+  --chart-6: #a06070;
+  --chart-grid: rgba(26, 29, 33, 0.1);
+  --chart-axis-ink: #5c6470;
+
+  /* Spacing, on an 8px grid */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 32px;
+  --space-6: 48px;
+  --space-7: 64px;
+
+  /* Typography */
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --text-3xl: 2.5rem;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.55;
+
+  /* Shape */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --border-hairline: 1px solid var(--color-border);
+
+  /* Deliberately restrained. Cards get borders, not drop shadows. */
+  --shadow-raised: 0 1px 2px rgba(26, 29, 33, 0.05);
+
+  --layout-max: 1280px;
+}
+
+/* Every figure in the application uses tabular numerals so columns of numbers
+   line up and a changing value does not shift its neighbours. */
+.figure,
+.kpi-value,
+td.numeric,
+th.numeric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}

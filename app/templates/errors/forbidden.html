@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="state state--error">
+  <p class="state__title">Access denied</p>
+  <p>{{ message }}</p>
+  <p class="text-muted">This attempt has been recorded in the audit log.</p>
+  <p><a href="/" class="button">Back to overview</a></p>
+</div>
+{% endblock %}

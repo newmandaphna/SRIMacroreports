@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>{% block title %}{{ page_title }}{% endblock %} - SRI Practice Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/tokens.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}" />
+    {% block head %}{% endblock %}
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="app-header__inner">
+        <a class="app-header__mark" href="/">SRI Practice Dashboard</a>
+        {% if environment != "production" %}
+        <span class="pill pill--neutral">{{ environment }}</span>
+        {% endif %}
+
+        {% if auth %}
+        <nav class="app-header__nav" aria-label="Modules">
+          {% for module in nav_modules %}
+          <a href="/reports/{{ module.value }}">{{ module.label }}</a>
+          {% endfor %}
+          {% if auth.role.is_admin %}
+          <a href="/admin/users" {% if current_path.startswith('/admin/users') %}aria-current="page"{% endif %}>Users</a>
+          <a href="/admin/audit" {% if current_path.startswith('/admin/audit') %}aria-current="page"{% endif %}>Audit log</a>
+          {% endif %}
+        </nav>
+
+        <div class="app-header__user">
+          <span class="app-header__who">{{ auth.user.display_name }}</span>
+          <span class="pill pill--neutral">{{ auth.role.label }}</span>
+          <form method="post" action="/logout" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button type="submit" class="button button--quiet">Sign out</button>
+          </form>
+        </div>
+        {% endif %}
+      </div>
+    </header>
+
+    <main class="app-shell">{% block content %}{% endblock %}</main>
+
+    {% if auth %}
+    <div
+      id="session-warning"
+      class="session-warning"
+      hidden
+      role="alertdialog"
+      aria-labelledby="session-warning-title"
+    >
+      <p id="session-warning-title" class="session-warning__title">
+        You will be signed out shortly
+      </p>
+      <p class="session-warning__body">
+        For patient privacy this session ends after
+        {{ session_timeout_minutes }} minutes of inactivity.
+        Signing out in <span id="session-warning-countdown">soon</span>.
+      </p>
+      <button id="session-warning-extend" class="button">Stay signed in</button>
+    </div>
+    <script
+      src="{{ url_for('static', path='js/session-timeout.js') }}"
+      data-csrf-token="{{ csrf_token }}"
+      defer
+    ></script>
+    {% endif %} {% block scripts %}{% endblock %}
+  </body>
+</html>

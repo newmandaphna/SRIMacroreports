@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>Users</h1>
+    <p class="page-head__sub">
+      Role controls what someone can do. Grants control what they can see. Accounts are
+      deactivated, never deleted, so the audit log always resolves to a real person.
+    </p>
+  </div>
+  <a href="/admin/users/new" class="button button--primary">Add user</a>
+</div>
+
+{% if error %}
+<div class="alert alert--error" role="alert">{{ error }}</div>
+{% endif %}
+
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Role</th>
+        <th>Modules</th>
+        <th>Status</th>
+        <th>Last sign in</th>
+        <th><span class="visually-hidden">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr class="{% if not u.is_active %}row--muted{% endif %}">
+        <td>
+          <a href="/admin/users/{{ u.id }}">{{ u.display_name }}</a>
+          {% if u.must_change_password %}
+          <span class="pill pill--watch">password change due</span>
+          {% endif %}
+        </td>
+        <td>{{ u.email }}</td>
+        <td>{{ u.role_enum.label }}</td>
+        <td>
+          {% if u.granted_modules %}
+            {% for m in u.granted_modules|sort(attribute='value') %}
+            <span class="pill pill--neutral">{{ m.label }}</span>
+            {% endfor %}
+          {% else %}
+          <span class="text-muted">none</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if u.is_active %}
+            {% if u.is_locked %}
+            <span class="pill pill--below">locked</span>
+            {% else %}
+            <span class="pill pill--ok">active</span>
+            {% endif %}
+            {% set live = live_counts.get(u.id, 0) %}
+            {% if live %}
+            <span class="text-muted">{{ live }} signed in</span>
+            {% endif %}
+          {% else %}
+          <span class="pill pill--neutral">deactivated</span>
+          {% endif %}
+        </td>
+        <td class="numeric">{{ u.last_login_at|datetime }}</td>
+        <td class="table-actions">
+          <form method="post" action="/admin/users/{{ u.id }}/reset-password" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button type="submit" class="button button--quiet">Reset password</button>
+          </form>
+          {% if u.is_active %}
+          <form method="post" action="/admin/users/{{ u.id }}/deactivate" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button type="submit" class="button button--quiet">Deactivate</button>
+          </form>
+          {% else %}
+          <form method="post" action="/admin/users/{{ u.id }}/reactivate" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button type="submit" class="button button--quiet">Reactivate</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

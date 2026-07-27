@@ -1,113 +1,211 @@
-# SRI Practice Health Analytics
+# SRI Practice Dashboard
 
-A self-contained, PHI-safe analytics pipeline over Valant practice exports. It
-measures **practice health** -- session volume, expected vs. collected revenue,
-claim-lag maturity, and year-over-year volume/rate/mix -- from raw Valant reports,
-without ever letting patient-grain data enter version control.
+Internal practice management reporting for SRI Psychological Services: financial
+performance, therapist utilization, room utilization, and (later, gated) a patient level
+funnel, all derived from one imported dataset of session level rows synced from the
+quarterly Q sheet.
 
-> **This repository is PUBLIC.** The one inviolable rule: **nothing at patient
-> grain is ever committed.** Raw exports live in `data/raw/`, which is gitignored
-> and verified so. Every committed artifact is aggregate.
+**This application holds PHI.** Read [SECURITY.md](SECURITY.md) before changing anything
+that touches data, logging, or access control. Read [ASSUMPTIONS.md](ASSUMPTIONS.md) for
+every definitional choice, including the places where observed data forced a deviation
+from the build specification.
 
-## Status
+Current state: **Phase 1 complete.** Authentication, roles, module grants, user
+administration, the append only audit log, session timeout, and admin seeding are in
+place and tested. The reporting modules arrive from Phase 3.
 
-| Phase | What it does | State |
-|---|---|---|
-| **A** | Discover & profile raw exports; emit data dictionary or export request | **implemented** (this repo) |
-| **B** | Session ledger (4 grains, derived add-ons, group dual-view, voids, dedupe, appts-vs-charges gap) | **implemented** (`src/sessions.py`) |
-| C | Dollar ladder (billed / expected / collected) + claim-lag maturity | designed, not yet built |
-| D | Calendar normalization + volume/rate/mix decomposition + YoY windows | designed, not yet built |
-| E | Reconciliation harness (every headline from >=2 sources) | designed, not yet built |
-| F | Reporting | designed, not yet built |
+---
 
-Phase A is runnable today. Phases B-F have their definitions frozen in
-`ASSUMPTIONS.md` and build on the Phase A loaders.
-
-## Two things must be settled before any headline number is trusted
-
-1. **Real data.** `data/raw/` is empty. The pipeline does **not** fabricate data.
-   `docs/export-request.md` is the exact pull list (four Valant reports, date
-   basis = **date of service**, range 2024-01-01 -> 2026-07-31). Drop the files
-   in `data/raw/` and re-run Phase A.
-2. **RULES.md reconciliation.** Provider roster, period naming, and CPT/HCPCS
-   handling are meant to *reuse* the compensation engine's settled `RULES.md`
-   rather than reinvent them. That file was not reachable when this was built, so
-   those definitions currently use **documented defaults** flagged `[RULES.md]`
-   in `ASSUMPTIONS.md`, and `config.rules_md_reconciled` is `False`. Numbers stay
-   provisional until it is reconciled.
-
-## Layout
-
-```
-src/
-  config.py       # machine-readable form of ASSUMPTIONS.md defaults
-  money.py        # Decimal money parsing; missing != zero; fails loudly
-  periods.py      # half-open [start, next) period boundaries; prior-year mapping
-  loaders.py      # Valant loaders: programmatic header detection, no pandas
-  profile_raw.py  # Phase A profiler (aggregate-only; PHI never emitted)
-docs/
-  export-request.md      # what to pull when data/raw is empty
-  data-dictionary.md     # expected schema + profiler-regenerated observed inventory
-data/raw/         # raw Valant exports land here -- GITIGNORED, never committed
-tests/            # pytest suite + synthetic (non-PHI) fixtures
-ASSUMPTIONS.md    # every definitional default, why, and what must reconcile to RULES.md
-```
-
-## Run it
+## Quick start
 
 ```bash
-# Profile whatever is in data/raw/ and (re)write the data dictionary's Part 1.
-python -m src.profile_raw            # or: python src/profile_raw.py
-python -m src.profile_raw --no-write # profile without touching docs
-python -m src.profile_raw --json     # deterministic, aggregate-only JSON (for CI/tools)
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
-# With data/raw/ empty, it stops cleanly and points you at docs/export-request.md.
+cp .env.example .env
+# Fill in SESSION_SECRET_KEY and DATABASE_ENCRYPTION_KEY. Both are required.
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # for each
+# Also set ADMIN_EMAIL and ADMIN_INITIAL_PASSWORD, or nobody can sign in.
+
+alembic upgrade head
+uvicorn app.main:create_app --factory --reload
 ```
 
-## CI & the PHI pre-commit hook
+Then:
 
-- **CI** (`.github/workflows/ci.yml`) runs the suite on push and PR across a matrix
-  of Python 3.11/3.12 × {stdlib-only, openpyxl}, so **both loader branches** (the
-  CSV/stdlib path and the optional `.xlsx` path) are exercised.
-- **Pre-commit PHI hook.** Enable it once per clone so a patient-grain leak can
-  never be committed (this repo is public — a bad commit is a PHI incident):
+- `http://127.0.0.1:8000/` the application, which redirects to sign in
+- `http://127.0.0.1:8000/healthz` liveness
+- `http://127.0.0.1:8000/readyz` readiness, which proves the encrypted database opens
 
-  ```bash
-  git config core.hooksPath .githooks       # plain git, no dependencies
-  # — or, with the pre-commit framework:
-  pip install pre-commit && pre-commit install
-  ```
+Sign in as `ADMIN_EMAIL`. You will be required to choose a new password before anything
+else is reachable. From there, `/admin/users` manages people and `/admin/audit` shows
+the log.
 
-  The hook runs `tests/test_phi_guard.py` and **blocks the commit on failure**
-  (it fails closed).
-
-## License
-
-Proprietary — see [`LICENSE`](LICENSE). All rights reserved; no reuse license is
-granted. (Placed as the conservative default for an internal, health-adjacent
-tool; swap for MIT/Apache-2.0 if open licensing is intended.)
-
-## Test it
+Tests and lint:
 
 ```bash
-pip install pytest        # openpyxl too, only if you need the .xlsx path
-pytest                    # stdlib-only core; fixtures are synthetic, never real PHI
+pytest
+ruff check . && ruff format --check .
 ```
 
-Tests cover: Decimal money (missing != zero, loud failure on garbage), half-open
-period boundaries (no datetime in two periods), Valant preamble/header detection
-(content-based, not `skiprows=3`), loud failure on blank/duplicate/missing
-columns, the empty-`data/raw` stop path, and a guarantee that **no synthetic
-patient token ever appears** in a profiler-produced artifact.
+Migrations:
 
-## Design commitments (from `ASSUMPTIONS.md`)
+```bash
+alembic upgrade head                                  # apply
+alembic revision --autogenerate -m "description"      # create after a model change
+```
 
-- **PHI never committed.** Patient keys live in memory only; only counts are
-  emitted. `data/raw/` is gitignored and proven so.
-- **Money is `Decimal`, never float.** Rounding only at presentation.
-- **No silent fallbacks.** A missing column, unparseable date, off-roster
-  provider, or unrecognized code fails loudly or lands in a counted exceptions
-  bucket -- a bad row never becomes a silent zero.
-- **Deterministic.** Same inputs -> byte-identical outputs. No wall-clock or
-  randomness in the analysis path; any random data is synthetic, seeded, and
-  test-only.
+Note that `alembic.ini` deliberately carries no `sqlalchemy.url`. The database is
+encrypted and needs its key applied as a `PRAGMA` before any other statement, so
+`migrations/env.py` builds the engine from application settings instead. A URL in the
+ini file could not carry the key without committing the key.
+
+---
+
+## Configuration
+
+All configuration comes from the environment. In Replit these belong in **Secrets**, not
+in a file. `.env` is gitignored and `.env.example` never holds a real value.
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `SESSION_SECRET_KEY` | yes | Minimum 32 characters. Signs session cookies. |
+| `DATABASE_ENCRYPTION_KEY` | yes | SQLCipher key. **Losing it means losing the database.** |
+| `DATABASE_PATH` | no | Defaults to `data/sri_dashboard.db`. |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | for sync | Full service account JSON, one line. |
+| `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD` | to sign in | Seeds one admin on first start. Password change forced on first login. Must meet the password policy or startup fails. |
+| `ENVIRONMENT` | no | `development`, `test`, or `production`. |
+| `DEBUG` | no | Refused in production. Debug output can carry PHI. |
+| `SESSION_TIMEOUT_MINUTES` | no | Default 15, idle, enforced server side. |
+| `SESSION_WARNING_MINUTES` | no | Default 13. Must be less than the timeout. |
+| `BENEFITS_SESSION_THRESHOLD` | no | Default 25 sessions per week. Editable by an admin later. |
+| `CPT_EXCLUSIONS` | no | Comma separated. Defaults to `99998,99999,QBCHK,FORM,PRO BONO`. Governs session counts only, not revenue. |
+| `WEEK_START_DAY` | no | `monday` (default) or `sunday`. |
+| `APP_TIMEZONE` | no | Default `America/New_York`. |
+| `FEATURE_ROOM_UTILIZATION` | no | Default off, per the build specification. |
+| `FEATURE_PATIENT_FUNNEL` | no | Default off. Phase 6, gated on your confirmation. |
+
+A missing required secret is a startup failure with a named error. There is no fallback,
+and in particular there is no fallback to an unencrypted database.
+
+### Rotating the database encryption key
+
+SQLCipher supports rekeying in place. Do it with the service stopped and a verified
+backup in hand, and update the secret before restarting.
+
+```bash
+# service stopped, backup taken
+python - <<'PY'
+import sqlcipher3
+conn = sqlcipher3.connect("data/sri_dashboard.db")
+conn.execute("PRAGMA key = 'OLD_KEY'")
+conn.execute("PRAGMA rekey = 'NEW_KEY'")
+conn.close()
+PY
+# then set DATABASE_ENCRYPTION_KEY to the new value and restart
+```
+
+Backups of the encrypted file are worthless without the key, so the key must be escrowed
+separately from the backups, by the practice, outside this system.
+
+---
+
+## Google service account setup
+
+The app reads the quarterly Q sheet through a Google service account with read only
+access to a single Drive folder. Sharing the **folder** rather than each sheet is what
+makes quarterly rotation zero touch: next quarter's sheet inherits access automatically.
+
+1. **Create a Google Cloud project.** In the Google Cloud Console, create a project, for
+   example `sri-dashboard`.
+
+2. **Enable two APIs** in that project: the **Google Sheets API** and the **Google Drive
+   API**. Drive is needed to list the sheets in the folder; Sheets is needed to read them.
+
+3. **Create a service account**, for example `sri-dashboard-reader`. Google gives it an
+   address that looks like
+   `sri-dashboard-reader@sri-dashboard.iam.gserviceaccount.com`.
+
+4. **Create a JSON key** for that service account and download it. This file is a
+   credential. Do not put it in the repository, do not email it, do not paste it into a
+   chat.
+
+5. **Put the JSON into Replit Secrets** as `GOOGLE_SERVICE_ACCOUNT_JSON`, the whole file
+   contents as the value.
+
+6. **Create a Drive folder**, for example `SRI Q Sheets`, and share **the folder** with
+   the service account address as **Viewer**. Viewer, not Editor: the app must never be
+   able to write to a Q sheet.
+
+7. **Keep every quarter's sheet in that folder.** Q3 2026, Q4 2026, and so on. Each new
+   sheet inherits the share, so adding a quarter in the app is just pasting its URL on
+   the Data Sources page and picking a tab. No re-share, no downtime.
+
+8. The app extracts the spreadsheet ID from the URL you paste and reads by ID.
+
+### What the app is allowed to read
+
+Only 18 columns, enforced server side (see SECURITY.md section 6). The `RAW_*` tabs in
+the source workbook carry patient dates of birth, home and work emails, phone numbers,
+and ZIP codes. The app blocks those tabs outright and never imports any of it.
+
+---
+
+## Architecture
+
+```
+app/
+  config.py          environment configuration, fails loud on missing secrets
+  db.py              SQLCipher engine, key application, encryption verification
+  logging_setup.py   PHI scrubbing log filter and formatter
+  middleware.py      security headers, CSP, safe error responses
+  main.py            application factory, health endpoints, routes
+  models/            SQLAlchemy models: users, grants, sessions, audit log
+  routers/           auth, admin user management, audit log viewer
+  security/          passwords, sessions, CSRF, audit writer, route dependencies
+  seed.py            first administrator, from the environment, once
+  templating.py      one render() that supplies CSRF, user, and navigation everywhere
+  templates/         Jinja2 server rendered pages
+  static/css/        tokens.css defines every colour, space, and size; app.css uses them
+  static/js/         charts.js, the one Chart.js wrapper every chart goes through,
+                     plus the idle session warning
+migrations/          Alembic, engine built from settings so the key stays out of the repo
+tests/
+```
+
+- Python, FastAPI, Jinja2, htmx. No SPA framework.
+- SQLAlchemy with Alembic from day one. SQLite with SQLCipher now, structured so
+  PostgreSQL later is a configuration change.
+- Chart.js 4 from CDN, wrapped in `static/js/charts.js`, which reads the design tokens
+  off the document so charts and page chrome cannot drift apart.
+- The Content Security Policy allows exactly one off origin source, the Chart.js CDN.
+
+---
+
+## Build phases
+
+| Phase | Scope | Status |
+| --- | --- | --- |
+| 0 | Scaffold, dependencies, README, SECURITY.md, ASSUMPTIONS.md | **done** |
+| 1 | Auth, roles, module grants, user administration, audit log, session timeout, seeding | **done** |
+| 2 | Data model, Data Sources registry, sync engine with dry run and import errors | next |
+| 3 | Financial module and the Reports overview dashboard | |
+| 4 | Therapist utilization: threshold config, status board, drill in, notes | |
+| 5 | Room utilization behind its flag, manual upload path | |
+| 6 | Patient funnel: AR aging, new patient volume, no show patterns. Gated. | |
+
+Each phase stops for review before the next one starts.
+
+---
+
+## Conventions
+
+- No em dashes anywhere: code, comments, UI copy, or documents. Commas, colons,
+  parentheses, and hyphens instead.
+- Small commits, one concern each.
+- Every definitional choice goes into ASSUMPTIONS.md the moment it is made.
+- Every Security Rule control goes into SECURITY.md with its implementation status.
+- Never fabricate realistic looking patient data. Synthetic test patients are obviously
+  fake: `Patient AA`, `Patient AB`, codes `PATAA`, `PATAB`.
+- Where the build specification and the requirements document disagree, the build
+  specification wins, and the conflict gets logged in ASSUMPTIONS.md section 6.

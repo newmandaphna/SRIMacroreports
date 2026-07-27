@@ -1,5 +1,26 @@
+[project]
+name = "sri-practice-dashboard"
+version = "0.1.0"
+description = "Internal practice management dashboard for SRI Psychological Services"
+requires-python = ">=3.11"
+
 [tool.pytest.ini_options]
-# Make `import src...` resolve from the repo root without an install step.
-pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S"]
+ignore = [
+  # Assert is used in tests and as a type narrowing aid after an explicit check.
+  "S101",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test fixtures set obviously fake credentials.
+"tests/*" = ["S105", "S106"]
+# Alembic writes these files. Their line lengths are not ours to police.
+"migrations/versions/*" = ["E501"]
