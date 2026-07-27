@@ -122,8 +122,15 @@ deliberately overlapping pair of sheets, one visit appearing on both produced 4 
 3 visits occurred, and revenue of $600.00 where $450.00 was collected.
 
 **Decision:** identity is `(therapist_id, patient_name_normalized, dos, cpt)`. One visit is one
-row whichever sheet delivered it. `source_id` is still stored, and is now provenance rather than
-identity: which sheet supplied the row.
+row whichever sheet delivered it.
+
+`source_id` and `source_row_ref` are still stored, and together mean "the sheet and the row this
+visit was first seen on". They are written at insert and never rewritten. This also matters:
+`source_row_ref` used to be part of the change comparison, so on overlapping sheets it was
+overwritten while `source_id` was not, leaving the pair pointing at row 2 of the Q2 sheet for a
+visit that is row 2 of the *Q3* sheet, which is a different visit. Rewriting the pointer also made
+every sync of either sheet report the shared row as updated, forever, since the two sheets number
+it differently. Provenance now moves together or not at all.
 
 Consequences, each verified:
 
@@ -131,8 +138,8 @@ Consequences, each verified:
   older sheet contains are not touched by a newer sheet's sync.
 - A row present on both sheets is updated in place rather than inserted again, so the session count
   and every money figure stay correct across a quarter boundary.
-- Nothing in the reporting layer reads `source_id`, so provenance can change without moving a
-  figure.
+- Re-syncing a sheet that shares rows with another reports them as unchanged, not updated, so the
+  "unchanged" count stays a usable signal that a sync was clean.
 - The sync loads existing rows by the date span of the incoming sheet rather than by source, so a
   sheet covering one quarter still does not read the whole table.
 - Migration `33b222d203da` collapses any duplicates an earlier database already holds, keeping the

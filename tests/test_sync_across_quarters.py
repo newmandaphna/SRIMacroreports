@@ -191,6 +191,43 @@ def test_the_shared_visit_keeps_one_row_whichever_order_the_sheets_arrive(client
     assert summary(client, date(2026, 1, 1), date(2026, 12, 31)).sessions == 3
 
 
+def test_re_syncing_either_quarter_changes_nothing(client, quarters):
+    sync(client, quarters["Q2 2026"])
+    sync(client, quarters["Q3 2026"])
+
+    for label in ("Q2 2026", "Q3 2026"):
+        again = sync(client, quarters[label])
+        assert again.rows_inserted == 0
+        assert again.rows_updated == 0
+
+    assert len(stored(client)) == 3
+
+
+def test_provenance_records_where_a_visit_was_first_seen(client, quarters):
+    """source_id and source_row_ref are the sheet and row a visit arrived on, and they
+    stay that way. Reporting never reads either (A-022)."""
+    sync(client, quarters["Q2 2026"])
+
+    shared = next(v for v in stored(client) if v.dos == date(2026, 6, 30))
+    assert shared.source_id == quarters["Q2 2026"]
+    assert shared.source_row_ref == "3", "30 June is the second data row of the Q2 sheet"
+
+    # 30 June is row 2 of the Q3 sheet. Neither half of the pointer may move to it,
+    # because row 2 of the Q2 sheet is a different visit.
+    sync(client, quarters["Q3 2026"])
+    shared = next(v for v in stored(client) if v.dos == date(2026, 6, 30))
+    assert (shared.source_id, shared.source_row_ref) == (quarters["Q2 2026"], "3")
+
+
+def test_an_overlapping_sheet_does_not_report_a_phantom_update(client, quarters):
+    """The same visit at a different row number is not a changed visit."""
+    sync(client, quarters["Q2 2026"])
+    second = sync(client, quarters["Q3 2026"])
+
+    assert second.rows_updated == 0
+    assert second.rows_unchanged == 1
+
+
 # ------------------------------------------------------ the sync reads only its span
 
 
