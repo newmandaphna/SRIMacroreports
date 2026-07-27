@@ -10,10 +10,9 @@ that touches data, logging, or access control. Read [ASSUMPTIONS.md](ASSUMPTIONS
 every definitional choice, including the places where observed data forced a deviation
 from the build specification.
 
-Current state: **Phase 2 complete.** Authentication and administration (Phase 1) plus
-the data model, the Data Sources registry, and the sync engine with dry run and import
-error review. A synthetic demo source lets you exercise the whole import path without
-credentials. The reporting modules arrive from Phase 3.
+Current state: **Phase 3 complete.** Authentication and administration, the import
+pipeline, and the Financial module with the Reports overview dashboard. A synthetic
+demo source lets you exercise the whole path without credentials.
 
 ---
 
@@ -39,8 +38,22 @@ Then:
 - `http://127.0.0.1:8000/readyz` readiness, which proves the encrypted database opens
 
 Sign in as `ADMIN_EMAIL`. You will be required to choose a new password before anything
-else is reachable. From there, `/admin/users` manages people, `/admin/sources` manages
-the quarterly sheets, and `/admin/audit` shows the log.
+else is reachable. Then:
+
+| Where | What |
+| --- | --- |
+| `/reports` | The overview dashboard |
+| `/reports/financial` | Sessions, revenue, outstanding, and the breakdowns |
+| `/admin/sources` | The quarterly Q sheets and the sync |
+| `/admin/therapists` | Therapists, their aliases, and their employment type |
+| `/admin/config` | Benefits threshold, CPT exclusions, week start, session timeout |
+| `/admin/users` | People and their access |
+| `/admin/audit` | The append only log |
+
+**Set up therapists before the first sync.** The importer never creates one, because a
+wrong merge between two people is invisible once it happens. An unrecognized name
+rejects to the import errors queue with a suggestion, and you resolve it by adding the
+therapist and its aliases, then syncing again.
 
 ### Trying the import without credentials
 
@@ -257,9 +270,11 @@ app/
   main.py            application factory, health endpoints, routes
   models/            SQLAlchemy models: users, grants, therapists, visits,
                      data sources, sync runs, import errors, audit log
-  routers/           auth, user management, audit viewer, data sources
+  routers/           auth, users, audit, data sources, therapists, settings, reports
   security/          passwords, sessions, CSRF, audit writer, route dependencies
   sync/              normalization, Sheets clients, the import engine, demo data
+  reporting/         period maths, aggregate queries, KPI construction
+  config_store.py    admin editable settings, seeded from the environment
   seed.py            first administrator, from the environment, once
   templating.py      one render() that supplies CSRF, user, and navigation everywhere
   templates/         Jinja2 server rendered pages
@@ -286,8 +301,8 @@ tests/
 | 0 | Scaffold, dependencies, README, SECURITY.md, ASSUMPTIONS.md | **done** |
 | 1 | Auth, roles, module grants, user administration, audit log, session timeout, seeding | **done** |
 | 2 | Data model, Data Sources registry, sync engine with dry run and import errors | **done** |
-| 3 | Financial module and the Reports overview dashboard | next |
-| 4 | Therapist utilization: threshold config, status board, drill in, notes | |
+| 3 | Financial module and the Reports overview dashboard | **done** |
+| 4 | Therapist utilization: threshold config, status board, drill in, notes | next |
 | 5 | Room utilization behind its flag, manual upload path | |
 | 6 | Patient funnel: AR aging, new patient volume, no show patterns. Gated. | |
 

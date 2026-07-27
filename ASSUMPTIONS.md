@@ -4,7 +4,7 @@ Every definitional choice made while building the SRI Practice Dashboard, record
 moment it was made. Read this after every phase. Anything marked **NEEDS CONFIRMATION** is a
 default I picked to keep moving, not a decision I am confident in.
 
-Last updated: Phase 2 complete.
+Last updated: Phase 3 complete.
 
 ---
 
@@ -259,15 +259,51 @@ sync summary names the count.
 **TO RAISE WITH THE PRACTICE**: 11 rows carrying 424.55 in collected revenue are missing a date of
 service. Adding the dates in the Q sheet and re-syncing brings them in, and nothing else is needed.
 
-**A-039a. The benefits session threshold defaults to 25 per week, and that number is a placeholder.**
-Utilization status is derived by comparing a therapist's weekly session count against
-`benefits_session_threshold`: at or above it is fine, moderately below it is watch, well below it
-is the alert state. The 25 is my invention, not the practice's number, and it drives every status
-flag on the utilization board. It is config, editable by an admin, so correcting it is a form
-field rather than a code change.
-**TO CONFIRM WITH THE PRACTICE**: the real threshold, and whether it is uniform or varies by
-employment type. The data model already separates `salaried_benefits` from `percentage_legacy`,
-so a per type threshold is a small change if that is how the practice actually works.
+**A-039a. The benefits session threshold defaults to 25 per week, and 25 is demonstrably wrong.**
+Utilization status compares a therapist's weekly session average against
+`benefits_session_threshold`: at or above is fine, within 20 percent below is watch, further below
+is the alert state. It is config, editable by an admin at `/admin/config`, so correcting it is a
+form field rather than a code change.
+
+Running the finished reporting layer over the real Q2 data shows the placeholder is not merely
+unconfirmed, it is wrong. Sessions per week across the 42 therapists with activity in Q2:
+
+| | Sessions per week |
+| --- | --- |
+| Minimum | 0.0 |
+| 25th percentile | 5.7 |
+| **Median** | **16.9** |
+| 75th percentile | 22.3 |
+| Maximum | 40.2 |
+| Mean | 15.5 |
+
+At a threshold of 25, **30 of 42 therapists land in the alert state**. A dashboard that opens with
+71 percent of the practice flagged red is not reporting a problem, it is reporting a bad threshold,
+and it teaches everyone to ignore the colour.
+
+What each candidate threshold would produce:
+
+| Threshold | Below | Watch | At or above |
+| --- | --- | --- | --- |
+| 10 per week | 12 | 3 | 27 |
+| 15 per week | 16 | 2 | 24 |
+| 18 per week | 18 | 4 | 20 |
+| 20 per week | 20 | 10 | 12 |
+| 25 per week (current default) | 30 | 5 | 7 |
+
+**TO CONFIRM WITH THE PRACTICE**: the real threshold. Somewhere around 18 to 20 would put roughly
+half the practice above it, which is what a threshold usually means, but that is arithmetic and not
+a policy, and the practice's actual benefits agreement is the only thing that settles it.
+
+**A-039b. The 42 therapist figure includes everyone with any Q2 activity, at any employment type.**
+The distribution above treats all 42 as salaried, which they are not. Only therapists marked
+`salaried_benefits` are measured against the threshold at all; percentage based therapists have no
+session minimum and carry no status, since flagging them below a target they were never given
+would be a false alarm about a real person's work.
+
+Employment type is set per therapist at `/admin/therapists` and defaults to `other`, which is also
+unmeasured. So the number of therapists actually shown in the alert state depends on two things the
+practice has not yet supplied: the threshold, and who is salaried.
 
 ---
 
@@ -488,6 +524,55 @@ An unrecognized therapist rejects the row and offers ranked suggestions to an ad
 column is globally unique, so two therapists cannot both claim one alias and a silent merge is
 impossible at the database level, not merely by convention. This is the PAVLOVA and ROSENFELD
 lesson from A-040a expressed as a constraint.
+
+---
+
+## 5b. Reporting decisions (Phase 3)
+
+**A-070. Aggregate queries never select a patient column, enforced against the SQL.**
+Every builder in `app/reporting/queries.py` is aggregate or therapist grain. A test executes all
+of them, captures the SQL actually emitted, and fails if `patient_name`, `patient_code`, or
+`patient_name_normalized` appears anywhere in it. The test enumerates the module rather than a
+fixed list, so a builder added later is covered without anyone remembering to add it.
+
+**A-071. A period with no activity is a zero, not a missing point.**
+A gap in a trend series lets the line close over it, which reads as though nothing happened rather
+than as though nothing was done. Every series is continuous across the selected range.
+
+**A-072. Deltas compare equal length windows, not calendar periods.**
+The comparison for "quarter to date" three days in is the previous three days, not the previous
+full quarter. Comparing a partial period against a whole one would show a collapse that is only
+the calendar.
+
+**A-073. Colour follows meaning, not direction.**
+Outstanding balances falling is good and rising is bad, which is the opposite of collections. The
+KPI cards carry an explicit `lower_is_better` flag and colour the change by what it means. Alert
+red remains reserved for below threshold, and appears nowhere else.
+
+**A-074. The default range is the last 4 weeks, and an empty result explains itself.**
+Two different empty states, because they need different actions: nothing has ever been synced (go
+to Data Sources) versus nothing in this range (here is the range you do have, one click to see it).
+
+**A-075. Bucket size is chosen from the range length unless overridden.**
+Up to 120 days is weekly, up to 800 days monthly, beyond that quarterly, so a chart never has two
+bars or four hundred. An admin can override it in the filter bar.
+
+**A-076. Exported CSVs carry a provenance line.**
+Filename, date range, and export timestamp above the header row. Without it an exported table is a
+set of numbers with no context, which is how a quarter to date figure gets forwarded and read as a
+full quarter.
+
+**A-077. Cancellation rate is shown practice wide only.**
+Per therapist rates are deliberately absent from the overview. See A-032b: the recorded rates span
+0.5 to 39.1 percent, which is far likelier to be inconsistent recording than real patient behaviour,
+and the number names a real person.
+
+**A-078. Therapist administration exists because the importer will not create therapists.**
+The sync rejects an unrecognized therapist rather than inventing one, which means that without an
+admin page to create therapists and their aliases, a first sync against a real sheet would reject
+every single row with nowhere to fix it. That page was missing after Phase 2 and is added here. It
+enforces the same alias uniqueness the database does, so a conflict is reported at the point of
+configuration rather than discovered later.
 
 ---
 

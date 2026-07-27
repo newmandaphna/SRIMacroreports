@@ -5,7 +5,7 @@ This document is written to be handed to an auditor. It is kept current as each 
 every control below is marked with its implementation status so nobody mistakes an intention for a
 control.
 
-Last updated: Phase 2.
+Last updated: Phase 3.
 Status key: **IMPLEMENTED** / **PARTIAL** / **PLANNED (phase N)**.
 
 ---
@@ -129,12 +129,13 @@ Logged events:
 | Authorization | access denied (role, grant, or CSRF), emergency access by an admin | live |
 | User administration | user created, updated, role changed, grant added or removed, deactivated or reactivated, password reset | live |
 | Audit | every view of the audit log itself | live |
-| **Export** | every CSV export, with row count and filters | live |
+| **Export** | every CSV export, with the table, row count, date range, and filters | live |
+| Configuration | benefits threshold, CPT exclusions, week start, session timeout, with before and after values | live |
+| Therapists | created, edited, alias added or removed, alias conflict refused | live |
 | **PHI read** | every load of a patient level view, with the filter parameters used | live, exercised from Phase 6 |
-| Configuration | any change to benefits threshold, CPT exclusions, week start, session timeout | Phase 2 |
-| Data sources | source created, edited, activated, deactivated, mapping changed | Phase 2 |
-| Sync | every run, dry run and live, with rows read, upserted, rejected, and by whom | Phase 2 |
-| Manual data entry | utilization notes, room utilization uploads, any manual edit | Phase 4 |
+| Data sources | source created, edited, activated, deactivated, mapping changed | live |
+| Sync | every run, dry run and live, with rows read, upserted, rejected, and by whom | live |
+| Manual data entry | utilization notes, room utilization uploads | Phase 4 |
 
 The action types for the later rows exist in the enum now, so adding the feature does not also
 require remembering to add its audit call.
@@ -261,16 +262,25 @@ the row count and never the rows; and only the offending cell is stored, not the
 
 ### 6.3 Aggregate views carry no identity
 
-**PLANNED (Phase 3), with the first reporting query.**
+**IMPLEMENTED (Phase 3), verified by test.**
 
-Financial, therapist utilization, and room utilization queries will not select `patient_name` or
-`patient_code`. This will be a property of the query builders, not of the templates. Patient
-identity appears only inside the Phase 6 patient funnel module, behind the `patient_funnel` grant,
-and every read of it is audit logged.
+Financial and therapist utilization queries do not select `patient_name` or `patient_code`. This
+is a property of the query builders in `app/reporting/queries.py`, not of the templates: a
+template that forgot to omit a column would leak, whereas a column that is never selected cannot.
 
-As of Phase 2 there are no reporting queries yet, so there is nothing here to enforce. The two
-places patient identity is currently reachable are the import error review pages (6.2a), both
-admin only and both audit logged.
+The test that enforces it does not read the source and hope. It executes every public builder in
+the module, captures the SQL actually sent to the database, and fails if any patient column
+appears in it. The list of builders is enumerated from the module rather than hardcoded, so a
+query added in a later phase is covered without anyone remembering to add it, and a companion test
+proves the assertion is not vacuous by showing what a leaking statement looks like.
+
+Two further consequences, also tested: no report page renders a patient name, and no CSV export
+contains one.
+
+Because these views hold no identity, they are deliberately **not** logged as PHI reads. Logging
+them would bury the genuine PHI reads in noise, which is the same failure as not logging at all.
+Patient identity appears only inside the Phase 6 patient funnel, behind its own grant, and in the
+import error review pages (6.2a), which are admin only and are logged as PHI views.
 
 ### 6.4 PHI never reaches logs
 
