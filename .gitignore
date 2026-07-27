@@ -1,0 +1,40 @@
+# === PHI AND SECRETS: nothing below may ever be committed ===
+
+# Secrets
+.env
+.env.*
+!.env.example
+*service-account*.json
+*credentials*.json
+*.pem
+*.key
+
+# The database holds PHI, encrypted or not.
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Raw exports from Valant or Google Sheets. These carry DOB, email, and phone.
+*.xlsx
+*.xls
+*.csv
+!tests/fixtures/*_SYNTHETIC.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Local
+*.log
+.DS_Store
+.idea/
+.vscode/
