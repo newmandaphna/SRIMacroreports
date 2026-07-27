@@ -763,3 +763,23 @@ a {
     display: none;
   }
 }
+
+/* Utilization notes: an inline field so context is one click, not one page away. */
+
+.note-cell {
+  max-width: 320px;
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+
+.note-form {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.note-form .field__input {
+  font-size: var(--text-sm);
+  padding: var(--space-1) var(--space-2);
+  min-width: 180px;
+}

@@ -23,6 +23,8 @@
           {% for module in nav_modules %}
           {% if module.value == 'financial' %}
           <a href="/reports/financial" {% if current_path.startswith('/reports/financial') %}aria-current="page"{% endif %}>{{ module.label }}</a>
+          {% elif module.value == 'therapist_utilization' %}
+          <a href="/reports/therapist-utilization" {% if current_path.startswith('/reports/therapist-utilization') %}aria-current="page"{% endif %}>Utilization</a>
           {% endif %}
           {% endfor %}
           {% if auth.role.is_admin %}

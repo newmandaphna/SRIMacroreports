@@ -29,6 +29,7 @@ from app.routers import (
     admin_users,
     auth,
     reports,
+    utilization,
 )
 from app.security.csrf import CSRFMiddleware
 from app.security.deps import AccessDenied, OptionalUser, RedirectRequired
@@ -72,7 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="SRI Practice Dashboard",
         description="Internal practice management reporting for SRI Psychological Services.",
-        version="0.4.0",
+        version="0.5.0",
         lifespan=lifespan,
         # No public API docs on a PHI application.
         docs_url=None,
@@ -95,6 +96,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_config.router)
     app.include_router(admin_therapists.router)
     app.include_router(reports.router)
+    app.include_router(utilization.router)
 
     register_error_handlers(app)
     register_routes(app)

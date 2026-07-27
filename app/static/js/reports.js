@@ -45,6 +45,55 @@
     });
   }
 
+  function drawUtilizationBars() {
+    var data = readJson("utilization-data");
+    if (!data || !window.SRICharts) {
+      return;
+    }
+    var datasets = [{ label: "Sessions per week", data: data.perWeek }];
+    if (data.threshold) {
+      datasets.push({
+        label: "Threshold",
+        data: data.labels.map(function () {
+          return data.threshold;
+        }),
+        reference: true,
+      });
+    }
+    SRICharts.render("utilization-bars", {
+      type: "bar",
+      horizontal: true,
+      labels: data.labels,
+      valueFormat: "count",
+      forceLegend: true,
+      datasets: datasets,
+    });
+  }
+
+  function drawTherapistHistory() {
+    var data = readJson("therapist-history-data");
+    if (!data || !window.SRICharts) {
+      return;
+    }
+    var datasets = [{ label: "Sessions", data: data.sessions }];
+    if (data.threshold) {
+      datasets.push({
+        label: "Threshold",
+        data: data.labels.map(function () {
+          return data.threshold;
+        }),
+        reference: true,
+      });
+    }
+    SRICharts.render("therapist-history", {
+      type: "bar",
+      labels: data.labels,
+      valueFormat: "count",
+      forceLegend: data.threshold > 0,
+      datasets: datasets,
+    });
+  }
+
   function drawSparklines() {
     if (!window.SRICharts) {
       return;
@@ -68,6 +117,8 @@
 
   function draw() {
     drawTrend();
+    drawUtilizationBars();
+    drawTherapistHistory();
     drawSparklines();
   }
 
