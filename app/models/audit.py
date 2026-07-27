@@ -17,7 +17,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.db import Base
 from app.models.enums import AuditAction, AuditResult
-from app.models.types import UTCDateTime, utcnow
+from app.models.types import UTCDateTime, enum_column, utcnow
 
 
 class AuditLogImmutableError(RuntimeError):
@@ -43,8 +43,10 @@ class AuditLog(Base):
     )
     actor_label: Mapped[str] = mapped_column(String(320), nullable=False)
 
-    action: Mapped[AuditAction] = mapped_column(String(40), nullable=False, index=True)
-    result: Mapped[AuditResult] = mapped_column(String(10), nullable=False)
+    action: Mapped[AuditAction] = mapped_column(
+        enum_column(AuditAction), nullable=False, index=True
+    )
+    result: Mapped[AuditResult] = mapped_column(enum_column(AuditResult, length=10), nullable=False)
 
     target_type: Mapped[str | None] = mapped_column(String(60), nullable=True)
     target_id: Mapped[str | None] = mapped_column(String(60), nullable=True)
