@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 
 import pytest
+
 from tests.conftest import (
     ProductionDatabaseError,
     _assert_not_production,
@@ -20,7 +21,6 @@ from tests.conftest import (
     _reset_schema,
     _resolve_test_database_url,
 )
-
 
 # ---------------------------------------------------------------------------
 # _assert_not_production
