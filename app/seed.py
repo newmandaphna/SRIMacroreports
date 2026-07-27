@@ -38,14 +38,15 @@ def seed_admin(db: Session, settings: Settings) -> User | None:
         return None
 
     email = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
-    password = os.environ.get("ADMIN_INITIAL_PASSWORD") or ""
+    # Accept either name; ADMIN_PASSWORD is the current name in Replit Secrets.
+    password = os.environ.get("ADMIN_PASSWORD") or os.environ.get("ADMIN_INITIAL_PASSWORD") or ""
 
     if not email or not password:
         # Not fatal: a fresh checkout should be able to boot and show a clear message
         # rather than crash. But it is loud, because nobody can sign in until it is
         # fixed, and a PHI application with no way in is not a working application.
         logger.error(
-            "No administrator exists and ADMIN_EMAIL / ADMIN_INITIAL_PASSWORD are not "
+            "No administrator exists and ADMIN_EMAIL / ADMIN_PASSWORD are not "
             "set. Nobody can sign in. Set both in Replit Secrets and restart."
         )
         return None
@@ -57,7 +58,7 @@ def seed_admin(db: Session, settings: Settings) -> User | None:
         validate_password(password, email=email)
     except PasswordPolicyError as exc:
         raise ConfigError(
-            f"ADMIN_INITIAL_PASSWORD does not meet the password policy: {exc} "
+            f"ADMIN_PASSWORD does not meet the password policy: {exc} "
             f"(minimum {MIN_PASSWORD_LENGTH} characters, not a common password)."
         ) from exc
 

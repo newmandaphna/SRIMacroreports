@@ -23,7 +23,7 @@ REQUIRED_SECRETS = ("SESSION_SECRET_KEY",)
 
 # Required only once auth exists (Phase 1). Listed here so the seeding code has one
 # place to look, and so README and .env.example stay in sync with the code.
-SEED_ADMIN_VARS = ("ADMIN_EMAIL", "ADMIN_INITIAL_PASSWORD")
+SEED_ADMIN_VARS = ("ADMIN_EMAIL", "ADMIN_PASSWORD")
 
 MIN_SESSION_SECRET_BYTES = 32
 
