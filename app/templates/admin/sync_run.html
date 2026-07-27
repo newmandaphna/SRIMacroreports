@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>
+      {% if run.mode.value == "dry_run" %}Dry run{% else %}Sync{% endif %} of
+      {{ source.label }}
+    </h1>
+    <p class="page-head__sub">
+      {{ run.started_at|datetime("%Y-%m-%d %H:%M:%S") }} UTC{% if run.duration_seconds is not none %},
+      took {{ "%.1f"|format(run.duration_seconds) }} seconds{% endif %}.
+    </p>
+  </div>
+  <a href="/admin/sources/{{ source.id }}" class="button button--quiet">Back to source</a>
+</div>
+
+{% if run.mode.value == "dry_run" %}
+<div class="alert alert--warning">
+  <p>
+    <strong>Nothing was written.</strong> This was a preview: the sheet was read,
+    mapped, and validated in full, but no session rows were added or changed.
+  </p>
+</div>
+{% endif %}
+
+{% if run.error_message %}
+<div class="alert alert--error" role="alert">
+  <p><strong>The run failed.</strong> {{ run.error_message }}</p>
+</div>
+{% endif %}
+
+<div class="card-grid">
+  <div class="card">
+    <p class="card__title">Rows read</p>
+    <p class="kpi-value">{{ run.rows_read|count }}</p>
+  </div>
+  <div class="card">
+    <p class="card__title">{% if run.mode.value == "dry_run" %}Would add{% else %}Added{% endif %}</p>
+    <p class="kpi-value">{{ run.rows_inserted|count }}</p>
+  </div>
+  {% if run.mode.value != "dry_run" %}
+  <div class="card">
+    <p class="card__title">Changed</p>
+    <p class="kpi-value">{{ run.rows_updated|count }}</p>
+  </div>
+  <div class="card">
+    <p class="card__title">Unchanged</p>
+    <p class="kpi-value">{{ run.rows_unchanged|count }}</p>
+    <p class="kpi-delta">already identical, left alone</p>
+  </div>
+  {% endif %}
+  <div class="card">
+    <p class="card__title">Rejected</p>
+    <p class="kpi-value">{{ run.rows_rejected|count }}</p>
+    {% if run.rows_rejected %}
+    <p class="kpi-delta">never silently dropped, listed below</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card-grid" style="margin-top: var(--space-3)">
+  <div class="card">
+    <p class="card__title">Date range in this sheet</p>
+    <p>
+      {% if run.date_min %}{{ run.date_min }} to {{ run.date_max }}
+      {% else %}<span class="text-muted">no dated rows</span>{% endif %}
+    </p>
+  </div>
+  <div class="card">
+    <p class="card__title">Columns not mapped</p>
+    {% if run.unmapped_columns %}
+    <p>
+      {% for c in run.unmapped_columns %}<span class="pill pill--neutral">{{ c }}</span>
+      {% endfor %}
+    </p>
+    <p class="kpi-delta">
+      Present in the sheet, read by nothing. A new one appearing is how a quarter's
+      layout drift announces itself.
+    </p>
+    {% else %}
+    <p class="text-muted">Every column in the sheet is accounted for.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% if rejections %}
+<h2 style="margin-top: var(--space-5)">Rejected rows</h2>
+<p class="text-muted">
+  These rows were not imported. Fix them in the sheet and sync again, or mark one
+  reviewed if it is expected.
+</p>
+
+<div class="card" style="margin-top: var(--space-2)">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th class="numeric">Sheet row</th>
+        <th>Why</th>
+        <th>Field</th>
+        <th>Value</th>
+        <th>Detail</th>
+        <th>Row</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rejections %}
+      <tr class="{% if r.is_resolved %}row--muted{% endif %}">
+        <td class="numeric">{{ r.source_row_ref or "-" }}</td>
+        <td><span class="pill pill--below">{{ reasons.get(r.reason.value, r.reason.value) }}</span></td>
+        <td><code>{{ r.field or "-" }}</code></td>
+        <td class="detail-cell">{{ r.raw_value or "" }}</td>
+        <td class="detail-cell">{{ r.detail or "" }}</td>
+        <td class="text-muted">
+          {{ r.therapist_hint or "" }}{% if r.patient_hint %} / {{ r.patient_hint }}{% endif %}
+        </td>
+        <td class="table-actions">
+          {% if r.is_resolved %}
+          <span class="pill pill--neutral">reviewed</span>
+          {% else %}
+          <form
+            method="post"
+            action="/admin/sources/{{ source.id }}/errors/{{ r.id }}/resolve"
+            class="inline-form"
+          >
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button type="submit" class="button button--quiet">Mark reviewed</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% elif not run.error_message %}
+<div class="state" style="margin-top: var(--space-4)">
+  <p class="state__title">Every row was accepted</p>
+  <p>Nothing was rejected in this run.</p>
+</div>
+{% endif %}
+{% endblock %}

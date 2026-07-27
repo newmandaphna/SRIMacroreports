@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>Import errors</h1>
+    <p class="page-head__sub">
+      {{ source.label }}. Rejected rows are never silently dropped, so this list is the
+      full account of what did not make it in.
+    </p>
+  </div>
+  <a href="/admin/sources/{{ source.id }}" class="button button--quiet">Back to source</a>
+</div>
+
+<div class="filter-bar card">
+  <a
+    href="/admin/sources/{{ source.id }}/errors?show=open"
+    class="button {% if show == 'open' %}button--primary{% endif %}"
+    >Needs review</a
+  >
+  <a
+    href="/admin/sources/{{ source.id }}/errors?show=all"
+    class="button {% if show != 'open' %}button--primary{% endif %}"
+    >All</a
+  >
+</div>
+
+{% if rejections %}
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th class="numeric">Sheet row</th>
+        <th>Why</th>
+        <th>Field</th>
+        <th>Value</th>
+        <th>Row</th>
+        <th>When</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rejections %}
+      <tr class="{% if r.is_resolved %}row--muted{% endif %}">
+        <td class="numeric">{{ r.source_row_ref or "-" }}</td>
+        <td><span class="pill pill--below">{{ r.reason.label }}</span></td>
+        <td><code>{{ r.field or "-" }}</code></td>
+        <td class="detail-cell">{{ r.raw_value or "" }}</td>
+        <td class="text-muted">
+          {{ r.therapist_hint or "" }}{% if r.patient_hint %} / {{ r.patient_hint }}{% endif %}
+        </td>
+        <td class="numeric">{{ r.created_at|datetime }}</td>
+        <td class="table-actions">
+          {% if r.is_resolved %}
+          <span class="pill pill--neutral">reviewed</span>
+          {% else %}
+          <form
+            method="post"
+            action="/admin/sources/{{ source.id }}/errors/{{ r.id }}/resolve"
+            class="inline-form"
+          >
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button type="submit" class="button button--quiet">Mark reviewed</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="state">
+  <p class="state__title">
+    {% if show == "open" %}Nothing needs review{% else %}No import errors{% endif %}
+  </p>
+  <p>Every row from this source was accepted.</p>
+</div>
+{% endif %}
+{% endblock %}

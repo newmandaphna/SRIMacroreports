@@ -23,6 +23,7 @@
           <a href="/reports/{{ module.value }}">{{ module.label }}</a>
           {% endfor %}
           {% if auth.role.is_admin %}
+          <a href="/admin/sources" {% if current_path.startswith('/admin/sources') %}aria-current="page"{% endif %}>Data sources</a>
           <a href="/admin/users" {% if current_path.startswith('/admin/users') %}aria-current="page"{% endif %}>Users</a>
           <a href="/admin/audit" {% if current_path.startswith('/admin/audit') %}aria-current="page"{% endif %}>Audit log</a>
           {% endif %}
