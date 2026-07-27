@@ -64,11 +64,22 @@ def settings(env) -> Settings:
 
 
 def _reset_schema(settings: Settings) -> None:
-    """Drop and recreate all tables for a clean test slate."""
+    """Drop all tables (including alembic_version) for a clean test slate.
+
+    Base.metadata.drop_all() removes application tables but leaves alembic_version
+    intact because Alembic manages that table outside of SQLAlchemy metadata. If we
+    only drop application tables, alembic upgrade head sees the version already at
+    head and skips every migration, leaving the tables missing for the next boot.
+    Dropping alembic_version forces a full re-run of all migrations.
+    """
+    from sqlalchemy import text
+
     from app.db import Base, create_db_engine
 
     engine = create_db_engine(settings)
     Base.metadata.drop_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
     engine.dispose()
 
 

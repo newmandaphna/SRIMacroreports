@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 import app.models  # noqa: F401  registers every model on Base.metadata
 from app.config import Settings, get_settings
-from app.db import Base, DatabaseHandle
+from app.db import DatabaseHandle
 from app.logging_setup import configure_logging
 from app.middleware import install_middleware
 from app.models.enums import Module
@@ -41,18 +41,46 @@ APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 
 
+def _run_migrations() -> None:
+    """Run `alembic upgrade head` programmatically.
+
+    Called once at startup, before any request is served. Alembic tracks which
+    migrations have already been applied, so this is idempotent: on a cold start
+    with a fresh database it creates every table; on subsequent boots it is a
+    no-op that takes a few milliseconds.
+
+    Running migrations here rather than in a separate pre-deploy script means
+    the app and its schema are always in sync: a new deployment cannot serve
+    requests against a schema that hasn't been migrated yet.
+    """
+    from pathlib import Path as _Path
+
+    from alembic import command as _cmd
+    from alembic.config import Config as _Config
+
+    # Locate alembic.ini relative to this file's project root.
+    ini_path = _Path(__file__).resolve().parent.parent / "alembic.ini"
+    cfg = _Config(str(ini_path))
+    # script_location must be absolute so Alembic finds the versions folder
+    # regardless of the working directory the server was started from.
+    cfg.set_main_option(
+        "script_location", str(_Path(__file__).resolve().parent.parent / "migrations")
+    )
+    _cmd.upgrade(cfg, "head")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Open the encrypted database, run migrations metadata, seed the admin."""
+    """Run migrations, open the database, seed the admin."""
     settings: Settings = app.state.settings
     logger.info("Starting SRI Practice Dashboard (environment=%s)", settings.environment)
 
-    app.state.db = DatabaseHandle(settings)
+    # Alembic upgrade head runs on every boot. It is idempotent, schema-versioned,
+    # and the only place that creates or alters tables. Base.metadata.create_all is
+    # not called here: Alembic is the single source of truth for the schema.
+    _run_migrations()
 
-    # Alembic owns the schema in a real deployment. This creates any table that a
-    # migration has not yet produced, which keeps development and tests runnable
-    # without a migration step for every model change.
-    Base.metadata.create_all(app.state.db.engine)
+    app.state.db = DatabaseHandle(settings)
 
     with app.state.db.session() as db:
         seed_admin(db, settings)
