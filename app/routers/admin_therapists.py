@@ -62,11 +62,14 @@ async def list_therapists(
     db: DbSession,
     auth: AdminUser,
     prefill: str = Query(default=""),
+    deleted: str = Query(default=""),
 ) -> Response:
     """List therapists. `?prefill=RAW+NAME` pre-fills the alias field on the add form.
 
     Used by the sync run page to send admins directly here after an unrecognized
     therapist rejection, with the raw name already in the alias box.
+
+    `?deleted=<id>` shows a one-time success banner after a therapist is deleted.
     """
     return render(
         request,
@@ -75,6 +78,7 @@ async def list_therapists(
             "page_title": "Therapists",
             "auth": auth,
             "prefill_alias": prefill.strip(),
+            "just_deleted": bool(deleted),
             **_list_context(db),
         },
     )
@@ -330,6 +334,62 @@ async def add_alias(
         detail={"alias_added": normalized},
     )
     return RedirectResponse(f"/admin/therapists/{therapist.id}", status_code=303)
+
+
+@router.post("/{therapist_id}/delete")
+async def delete_therapist(
+    request: Request,
+    db: DbSession,
+    auth: AdminUser,
+    therapist_id: int,
+) -> Response:
+    """Delete a therapist record and all its aliases.
+
+    Blocked when the therapist has any linked visits (the FK is RESTRICT).  The
+    UI already hides the button in that case, but we enforce the guard here too
+    so a direct POST cannot bypass it.
+    """
+    therapist = db.get(Therapist, therapist_id)
+    if therapist is None:
+        return RedirectResponse("/admin/therapists", status_code=303)
+
+    visit_count = db.execute(
+        select(func.count(Visit.id)).where(Visit.therapist_id == therapist_id)
+    ).scalar_one()
+
+    if visit_count > 0:
+        return render(
+            request,
+            "admin/therapist_detail.html",
+            {
+                "page_title": therapist.display_name,
+                "auth": auth,
+                "therapist": therapist,
+                "visit_count": visit_count,
+                "employment_types": list(EmploymentType),
+                "error": (
+                    f"Cannot delete {therapist.display_name!r}: "
+                    f"{visit_count} imported row(s) are linked to this record. "
+                    "Remove or reassign those visits first."
+                ),
+            },
+            status_code=409,
+        )
+
+    name = therapist.display_name
+    audit.record(
+        db,
+        action=AuditAction.MANUAL_EDIT,
+        actor=auth.user,
+        target_type="therapist",
+        target_id=therapist_id,
+        request=request,
+        detail={"deleted": name},
+    )
+    db.delete(therapist)
+    db.flush()
+    logger.info("Deleted therapist %d (%s)", therapist_id, name)
+    return RedirectResponse("/admin/therapists?deleted=" + str(therapist_id), status_code=303)
 
 
 @router.post("/{therapist_id}/aliases/{alias_id}/remove")

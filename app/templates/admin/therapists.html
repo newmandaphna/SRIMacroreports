@@ -9,6 +9,10 @@
   </p>
 </div>
 
+{% if just_deleted %}
+<div class="alert alert--ok" role="alert">Therapist deleted successfully.</div>
+{% endif %}
+
 {% if error %}
 <div class="alert alert--error" role="alert">{{ error }}</div>
 {% endif %}

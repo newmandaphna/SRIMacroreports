@@ -128,4 +128,25 @@
     <button type="submit" class="button">Add</button>
   </form>
 </div>
+
+<div class="card card--danger" style="margin-top: var(--space-4)">
+  <p class="card__title">Delete therapist</p>
+  {% if visit_count > 0 %}
+  <p class="text-muted">
+    This record has {{ visit_count|count }} imported session row(s) linked to it and cannot be
+    deleted. Remove or reassign those visits first, or mark the therapist inactive instead.
+  </p>
+  <button type="button" class="button button--danger" disabled>Delete</button>
+  {% else %}
+  <p class="text-muted">
+    Permanently removes this record and all its aliases. This cannot be undone.
+    Only possible while zero sessions are linked.
+  </p>
+  <form method="post" action="/admin/therapists/{{ therapist.id }}/delete"
+        onsubmit="return confirm('Delete {{ therapist.display_name }}? This cannot be undone.')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button type="submit" class="button button--danger">Delete therapist</button>
+  </form>
+  {% endif %}
+</div>
 {% endblock %}
