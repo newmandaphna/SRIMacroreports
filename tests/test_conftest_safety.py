@@ -13,7 +13,6 @@ from __future__ import annotations
 import os
 
 import pytest
-
 from tests.conftest import (
     ProductionDatabaseError,
     _assert_not_production,
@@ -179,7 +178,7 @@ def test_reset_schema_raises_when_test_url_absent(monkeypatch):
 
 
 def test_reset_schema_raises_in_production_even_with_test_url(monkeypatch):
-    """_reset_schema must refuse when REPLIT_DEPLOYMENT is set, even if TEST_DATABASE_URL is present.
+    """_reset_schema must refuse when REPLIT_DEPLOYMENT is set, even if TEST_DATABASE_URL is set.
 
     Prevents the case where someone accidentally sets TEST_DATABASE_URL in a production
     environment: the REPLIT_DEPLOYMENT guard fires before any DROP is issued.
@@ -195,7 +194,7 @@ def test_reset_schema_raises_in_production_even_with_test_url(monkeypatch):
 
 
 def test_reset_schema_raises_in_production_env_even_with_test_url(monkeypatch):
-    """_reset_schema must refuse when ENVIRONMENT=production, even if TEST_DATABASE_URL is present."""
+    """_reset_schema must refuse when ENVIRONMENT=production, even if TEST_DATABASE_URL is set."""
     monkeypatch.setenv("TEST_DATABASE_URL", "postgresql://test-host/testdb")
     monkeypatch.delenv("REPLIT_DEPLOYMENT", raising=False)
     monkeypatch.setenv("ENVIRONMENT", "production")
