@@ -211,9 +211,16 @@ def _friendly_api_error(exc: Exception) -> str:  # pragma: no cover - network pa
             "is in the Drive folder shared with the service account."
         )
     if "403" in text:
+        if "SERVICE_DISABLED" in text or "has not been used" in text:
+            return (
+                "The Google Sheets API is not enabled in the service account's Cloud "
+                "project. Visit the Google Cloud Console → APIs & Services → Enable "
+                "APIs and enable 'Google Sheets API' (and 'Google Drive API') for that "
+                "project, then try again."
+            )
         return (
-            "Access denied by Google. Share the Drive folder containing the sheet "
-            "with the service account address as Viewer."
+            "Access denied by Google. Make sure the spreadsheet (or its containing "
+            "Drive folder) is shared with the service account address as Viewer."
         )
     if "429" in text or "quota" in text.lower():
         return "Google rate limited the request. Wait a minute and try again."
