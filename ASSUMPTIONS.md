@@ -4,7 +4,7 @@ Every definitional choice made while building the SRI Practice Dashboard, record
 moment it was made. Read this after every phase. Anything marked **NEEDS CONFIRMATION** is a
 default I picked to keep moving, not a decision I am confident in.
 
-Last updated: Phase 0, revised after the first round of answers.
+Last updated: Phase 0 review complete, all Phase 0 questions answered.
 
 ---
 
@@ -139,16 +139,57 @@ counts, collected revenue would be understated by over 21,000. So: the exclusion
 Excluding a code from counting is a statement about what a session is, not a statement that the
 money is not real.
 
-**A-032. What 99998 and 99999 mean is still open.**
-Flagged 2026-07-27 as pending; the practice is finding out. Until then both stay on the exclusion
-list and both stay in the database, so no data is lost either way and the answer can be applied
-later by editing config rather than by re-importing.
+**A-032. 99998 and 99999 are both cancellations. RESOLVED 2026-07-27.**
 
-Evidence so far: the `RAW_Unrecorded` tab shows CPT 99998 alongside a "do not bill" billing
-comment, which supports reading 99998 as an internal no show or non billable placeholder. 99999
-carrying 17,674.46 in real payments does not fit that reading, so the two codes probably do not
-mean the same thing. If 99999 turns out to be a billable visit type, it belongs back in the
-session count and the headline session number rises by 264.
+- **99998**: the patient cancelled and **no fee** was charged. 648 rows.
+- **99999**: the patient cancelled and a **no show fee was charged**. 264 rows.
+
+Both stay excluded from session counts, which is now a definitional statement rather than a
+guess: no clinical service was delivered, so neither is a session. Both remain fully imported.
+
+The data agrees with the answer on every point:
+
+| | 99998, no fee | 99999, fee charged |
+| --- | --- | --- |
+| Rows | 648 | 264 |
+| Total paid | 243.50 | 17,674.46 |
+| Total balance | 440.00 | 1,521.77 |
+| Rows with a patient charge of exactly 75.00 | 8 | 252 |
+| Rows with any insurance payment | 1 | 0 |
+
+Two things follow.
+
+**The standard no show fee is 75.00**, on 252 of 264 rows, and insurance never pays it. The
+remaining 12 rows carry other amounts, which is presumably discretion applied case by case.
+
+**No show fee income is real revenue but it is not clinical revenue.** It stays inside
+`revenue_collected` (it is money in the door) and the financial module additionally breaks it out
+as a named subtotal, because 17,674.46 in a quarter is worth seeing on its own rather than
+blended into therapy income. This is the concrete instance of the rule in A-031.
+
+**A-032a. Cancellation metrics are now well defined, for Phase 6.**
+- `cancellations` = rows with base CPT `99998` or `99999`.
+- `cancellations_billed` = rows with `99999`. `cancellations_unbilled` = rows with `99998`.
+- `cancellation_rate` = cancellations divided by (cancellations + sessions).
+- `no_show_fee_revenue` = `sum(total_paid)` over `99999` rows.
+- `no_show_fee_uncollected` = `sum(total_balance)` over `99999` rows.
+
+On the Q2 data the practice wide cancellation rate is **9.7 percent** (912 of 9,366).
+
+**A-032b. Per therapist cancellation rates are not trustworthy yet. Do not ship them without a caveat.**
+Across therapists with 150 or more rows, the cancellation rate ranges from **0.5 percent to 39.1
+percent**. A 78 fold spread in patient behaviour between colleagues in one practice is not
+credible. The far likelier explanation is inconsistent recording: some therapists log cancellations
+in Valant and some do not, so a low rate may mean a disciplined caseload or may mean nobody is
+entering the cancellations.
+
+This matters because the number names a real person. A dashboard that reports "39 percent
+cancellation rate" next to a therapist's name, when the true driver is that their colleagues are
+not recording theirs, is a damaging misread of someone's work. So when Phase 6 surfaces this:
+the practice wide rate is shown without qualification, and the per therapist breakdown carries an
+explicit note that it measures recorded cancellations and is only comparable between therapists
+once recording practice is known to be consistent.
+**TO RAISE WITH THE PRACTICE**: is cancellation recording in Valant consistent across therapists?
 
 **A-033. CPT normalizes to a base code, and the base code is what gets compared.**
 Two steps:
@@ -199,6 +240,16 @@ A row with no date of service cannot be placed in any period, so it cannot be co
 are rejected to `import_errors` for admin review rather than imported and quietly excluded from
 every report.
 
+**A-039a. The benefits session threshold defaults to 25 per week, and that number is a placeholder.**
+Utilization status is derived by comparing a therapist's weekly session count against
+`benefits_session_threshold`: at or above it is fine, moderately below it is watch, well below it
+is the alert state. The 25 is my invention, not the practice's number, and it drives every status
+flag on the utilization board. It is config, editable by an admin, so correcting it is a form
+field rather than a code change.
+**TO CONFIRM WITH THE PRACTICE**: the real threshold, and whether it is uniform or varies by
+employment type. The data model already separates `salaried_benefits` from `percentage_legacy`,
+so a per type threshold is a small change if that is how the practice actually works.
+
 ---
 
 ## 4. Therapists, locations, insurance
@@ -223,11 +274,23 @@ has already decided `Pavlova-Rosenfeld` maps to `PAVLOVA`, while the Q sheet sep
 therapist token `ROSENFELD` with 121 sessions. Those may or may not be the same person. They are
 **not** auto merged. An admin gets a fuzzy match suggestion and decides.
 
-**OPEN**: are `PAVLOVA` and `ROSENFELD` the same therapist? Flagged 2026-07-27 as pending; the
-practice is finding out. Until answered they remain two therapist records. If they turn out to be
-one person, merging them is an admin action in the UI and it re-derives every affected utilization
-figure, so waiting costs nothing. Merging them wrongly would understate one therapist's sessions
-and overstate the other's, which is why this is not guessed.
+**RESOLVED 2026-07-27**: `PAVLOVA` and `ROSENFELD` are **different people**. They stay two
+therapist records and must never be merged. `PAVLOVA` has 35 rows in the Q2 data and `ROSENFELD`
+has 121.
+
+**A-040a. Alias rules are matched on the whole normalized name, never on a substring.**
+This is the direct consequence of A-040, and it is a real trap rather than a theoretical one. The
+practice's own `Config` tab uses "Raw Text Contains" semantics, and one of its rules maps
+`Inna Pavlova-Rosenfeld` to `PAVLOVA`. That rule is written out in full, so it is safe. A rule
+written as just `Rosenfeld` would not be: it would match Inna Pavlova-Rosenfeld and the unrelated
+therapist `ROSENFELD` alike, silently folding two different people into one record and corrupting
+both of their utilization figures with no error anywhere.
+
+So the app does not implement "contains". It matches an alias against the fully normalized
+therapist string. In addition, when aliases are imported or edited the app checks for ambiguity,
+where one alias pattern is a substring of another or two patterns both resolve the same raw name,
+and refuses the change with the collision named. A wrong merge is invisible once it has happened,
+so it has to be caught at the point of configuration.
 
 **A-041. Alias matching is exact first, fuzzy only as a suggestion.**
 Exact match on a known alias resolves silently. No exact match produces a rejected row plus a ranked
@@ -327,13 +390,18 @@ One place to see what is still unanswered. Nothing here blocks the current phase
 
 | # | Question | Status | If the answer changes things |
 | --- | --- | --- | --- |
-| 1 | What do CPT `99998` and `99999` mean? | practice is finding out | If 99999 is a billable visit, session counts rise by 264. Config edit, no re-import. See A-032. |
-| 2 | Are `PAVLOVA` and `ROSENFELD` the same therapist? | practice is finding out | Admin merge in the UI, re-derives utilization. See A-040. |
-| 3 | Can Patient Code be filled in on the Q sheet going forward? | not yet asked | Would let the upsert key drop patient name, which is the cleaner design. See A-020. |
-| 4 | Which visit level tab exists in the live Q2 workbook? | blocked until credentials | Answered by the mapping UI in Phase 2. Nothing hardcoded. See A-004. |
+| 1 | Can Patient Code be filled in on the Q sheet going forward? | not yet asked | Would let the upsert key drop patient name, which is the cleaner design. See A-020. |
+| 2 | Is cancellation recording in Valant consistent across therapists? | not yet asked | Decides whether per therapist cancellation rates can be compared at all. See A-032b. |
+| 3 | Which visit level tab exists in the live Q2 workbook? | blocked until credentials | Answered by the mapping UI in Phase 2. Nothing hardcoded. See A-004. |
+| 4 | Is the 25 session benefits threshold correct? | not yet asked | Drives every utilization status flag. Placeholder default. See A-039a. |
 
-Answered so far:
+Answered:
 
-- CPT exclusion list extended to `QBCHK`, `FORM`, `PRO BONO` (2026-07-27). See A-030.
-- No separate requirements doc exists (2026-07-27). See A-001.
-- Q2 spreadsheet ID supplied (2026-07-27). See A-004.
+| Question | Answer | Date | Entry |
+| --- | --- | --- | --- |
+| Is there a separate requirements doc? | No, the build prompt is the whole scope | 2026-07-27 | A-001 |
+| Which Google Sheet is the real Q2 sheet? | ID `1Pft...rBHY` supplied | 2026-07-27 | A-004 |
+| Do `QBCHK`, `FORM`, `pro bono` count as sessions? | No | 2026-07-27 | A-030 |
+| What is CPT `99998`? | Patient cancelled, no fee charged | 2026-07-27 | A-032 |
+| What is CPT `99999`? | Patient cancelled, no show fee charged | 2026-07-27 | A-032 |
+| Are `PAVLOVA` and `ROSENFELD` the same therapist? | No, different people, never merge | 2026-07-27 | A-040 |
