@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>{{ therapist.display_name }}</h1>
+    <p class="page-head__sub">
+      {{ therapist.employment_type.label }}.
+      {% if not measured %}
+      No session threshold applies, so no status is shown for any period.
+      {% endif %}
+      {{ range.start }} to {{ range.end }}.
+    </p>
+  </div>
+  <a
+    href="/reports/therapist-utilization?{{ query_string }}"
+    class="button button--quiet no-print"
+    >Status board</a
+  >
+</div>
+
+{% if therapist.notes %}
+<div class="alert alert--warning">
+  <p><strong>Standing context.</strong> {{ therapist.notes }}</p>
+</div>
+{% endif %}
+
+{% include "reports/_filters.html" %}
+
+<div class="card-grid">
+  <div class="card">
+    <p class="kpi-question">How much work in this range?</p>
+    <p class="kpi-value">{{ totals.sessions|count }}</p>
+    <p class="kpi-delta">sessions</p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">What did it bring in?</p>
+    <p class="kpi-value">{{ totals.collected|currency }}</p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">How many cancellations?</p>
+    <p class="kpi-value">{{ totals.cancellations|count }}</p>
+    <p class="kpi-note">
+      {{ totals.cancellations_with_fee|count }} with a fee charged. Not comparable
+      between therapists until recording practice is confirmed.
+    </p>
+  </div>
+</div>
+
+{% if history|length > 1 %}
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="section-head">
+    <div>
+      <h2>Is this a trend or a bad week?</h2>
+      <p class="page-head__sub">
+        Sessions per {{ granularity.value }}{% if measured %}, against the threshold of
+        {{ config.benefits_session_threshold }}{% endif %}.
+      </p>
+    </div>
+  </div>
+  <div class="chart-frame">
+    <canvas id="therapist-history"></canvas>
+  </div>
+  <script type="application/json" id="therapist-history-data">
+    {
+      "labels": {{ history | map(attribute=0) | map(attribute="label") | list | tojson }},
+      "sessions": {{ history | map(attribute=0) | map(attribute="sessions") | list | tojson }},
+      "threshold": {{ config.benefits_session_threshold if measured else 0 }}
+    }
+  </script>
+</div>
+{% endif %}
+
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="section-head">
+    <div>
+      <h2>Period by period</h2>
+      <p class="page-head__sub">
+        {% if can_write %}
+        Add the context that should travel with a number: a referral shortage, leave, a
+        part time agreement.
+        {% else %}
+        Notes are entered by managers and administrators.
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Period</th>
+        <th class="numeric">Sessions</th>
+        <th class="numeric">Collected</th>
+        <th class="numeric">Cancellations</th>
+        <th>Status</th>
+        <th>Context</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for point, status in history %}
+      <tr>
+        <td>{{ point.label }}</td>
+        <td class="numeric">{{ point.sessions|count }}</td>
+        <td class="numeric">{{ point.collected|currency }}</td>
+        <td class="numeric">{{ point.cancellations|count }}</td>
+        <td>
+          {% if status == "below" %}
+          <span class="pill pill--below">below</span>
+          {% elif status == "watch" %}
+          <span class="pill pill--watch">watch</span>
+          {% elif status == "ok" %}
+          <span class="pill pill--ok">at threshold</span>
+          {% else %}
+          <span class="text-muted">-</span>
+          {% endif %}
+        </td>
+        <td class="note-cell">
+          {% if can_write %}
+          <form
+            method="post"
+            action="/reports/therapist-utilization/{{ therapist.id }}/notes?{{ query_string }}"
+            class="note-form"
+          >
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <input type="hidden" name="period" value="{{ point.start }}" />
+            <input
+              type="text"
+              name="body"
+              class="field__input"
+              value="{{ point.note or '' }}"
+              placeholder="Add context"
+              aria-label="Note for {{ point.label }}"
+            />
+            <button type="submit" class="button button--quiet">Save</button>
+          </form>
+          {% else %}
+          {{ point.note or "" }}
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if can_write %}
+  <p class="text-muted" style="margin-top: var(--space-3)">
+    Clearing a note and saving removes it. Every change is recorded in the audit log
+    with its previous text.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', path='js/charts.js') }}"></script>
+<script src="{{ url_for('static', path='js/reports.js') }}"></script>
+{% endblock %}
