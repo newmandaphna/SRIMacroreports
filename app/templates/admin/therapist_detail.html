@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>{{ therapist.display_name }}</h1>
+    <p class="page-head__sub">{{ visit_count|count }} rows imported for this therapist.</p>
+  </div>
+  <a href="/admin/therapists" class="button button--quiet">All therapists</a>
+</div>
+
+{% if error %}
+<div class="alert alert--error" role="alert">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="/admin/therapists/{{ therapist.id }}" class="card stack">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+  <label class="field">
+    <span class="field__label">Name</span>
+    <input
+      type="text"
+      name="display_name"
+      class="field__input"
+      value="{{ therapist.display_name }}"
+    />
+  </label>
+
+  <fieldset class="field">
+    <legend class="field__label">Employment type</legend>
+    {% for e in employment_types %}
+    <label class="choice">
+      <input
+        type="radio"
+        name="employment_type"
+        value="{{ e.value }}"
+        {% if therapist.employment_type == e %}checked{% endif %}
+      />
+      <span>
+        <strong>{{ e.label }}</strong>
+        <span class="choice__hint">
+          {% if e.counts_against_threshold %}
+          Measured against the weekly session threshold.
+          {% else %}
+          No session threshold, so no below threshold status is ever shown.
+          {% endif %}
+        </span>
+      </span>
+    </label>
+    {% endfor %}
+  </fieldset>
+
+  <label class="field">
+    <span class="field__label">Notes</span>
+    <textarea name="notes" class="field__input" rows="3">{{ therapist.notes or "" }}</textarea>
+    <span class="field__hint">
+      Context that should travel with the numbers, such as a part time schedule or a
+      referral shortage.
+    </span>
+  </label>
+
+  <label class="choice">
+    <input type="checkbox" name="active" value="1" {% if therapist.active %}checked{% endif %} />
+    <span>
+      <strong>Active</strong>
+      <span class="choice__hint">
+        Inactive therapists keep every row they already have. Nothing is deleted.
+      </span>
+    </span>
+  </label>
+
+  <div class="form-actions">
+    <button type="submit" class="button button--primary">Save</button>
+  </div>
+</form>
+
+<div class="card" style="margin-top: var(--space-4)">
+  <p class="card__title">Aliases</p>
+  <p class="text-muted">
+    Every spelling that should resolve to this therapist. Matched on the whole
+    normalized name, never on a substring, and unique across the practice so two people
+    can never be folded into one record.
+  </p>
+
+  {% if therapist.aliases %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Alias</th>
+        <th>Added from</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in therapist.aliases %}
+      <tr>
+        <td><code>{{ a.alias }}</code></td>
+        <td class="text-muted">{{ a.source.value.replace("_", " ") }}</td>
+        <td class="table-actions">
+          <form
+            method="post"
+            action="/admin/therapists/{{ therapist.id }}/aliases/{{ a.id }}/remove"
+            class="inline-form"
+          >
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button type="submit" class="button button--quiet">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">No aliases. Rows for this therapist will reject at import.</p>
+  {% endif %}
+
+  <form
+    method="post"
+    action="/admin/therapists/{{ therapist.id }}/aliases"
+    class="filter-bar"
+    style="margin-top: var(--space-3); border: 0; padding: 0"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label class="field field--inline">
+      <span class="field__label">Add an alias</span>
+      <input type="text" name="alias" class="field__input" required />
+    </label>
+    <button type="submit" class="button">Add</button>
+  </form>
+</div>
+{% endblock %}
