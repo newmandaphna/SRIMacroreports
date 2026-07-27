@@ -31,11 +31,18 @@ from app.models.types import Money, UTCDateTime, utcnow
 class Visit(Base):
     __tablename__ = "sessions"
     __table_args__ = (
-        # The upsert key. Patient name rather than patient code, because Patient Code
-        # is blank on 41 percent of the real sheet and the specified key collides on
-        # 2,467 rows there. See ASSUMPTIONS.md A-020 for the measurement.
+        # The upsert key. Two deliberate choices in it.
+        #
+        # Patient name rather than patient code, because Patient Code is blank on 41
+        # percent of the real sheet and the specified key collides on 2,467 rows
+        # there. See ASSUMPTIONS.md A-020 for the measurement.
+        #
+        # And NOT source_id. A visit is the same visit whichever quarterly sheet it
+        # arrives on, so identity is global. With source_id in the key, a visit
+        # appearing in both the Q2 and Q3 sheets, which the practice's own rolling
+        # export window makes likely at a quarter boundary, stored twice and was
+        # counted twice in every figure. See ASSUMPTIONS.md A-022.
         UniqueConstraint(
-            "source_id",
             "therapist_id",
             "patient_name_normalized",
             "dos",
@@ -49,6 +56,8 @@ class Visit(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
+    # Which source supplied this row. Informational rather than part of identity,
+    # since identity is global (A-022).
     source_id: Mapped[int] = mapped_column(
         ForeignKey("data_sources.id", ondelete="CASCADE"), nullable=False, index=True
     )

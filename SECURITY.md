@@ -206,10 +206,12 @@ not a rewrite. Nothing in the model layer depends on SQLite.
 
 **IMPLEMENTED (Phase 2).**
 Imports are idempotent through the upsert key (see ASSUMPTIONS.md A-020, which documents a
-deviation from the originally specified key and the measurement that forced it). Rows that fail
-validation are never silently dropped; they land in `import_errors` with the reason and the
-offending raw value, for admin review. Every sync run writes a summary record, dry runs included,
-and every run is separately audit logged with its counts and the user who ran it.
+deviation from the originally specified key and the measurement that forced it). Identity is global
+rather than per source sheet (A-022), so a visit exported on two overlapping quarterly sheets is
+one row and is counted once. Rows that fail validation are never silently dropped; they land in
+`import_errors` with the reason and the offending raw value, for admin review. Every sync run
+writes a summary record, dry runs included, and every run is separately audit logged with its
+counts and the user who ran it.
 
 Money is stored as integer cents and handled as Decimal, so totals over thousands of rows are
 exact rather than approximately right (ASSUMPTIONS.md A-060). An amount that cannot be parsed

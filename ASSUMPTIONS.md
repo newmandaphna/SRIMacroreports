@@ -88,9 +88,10 @@ The same key with patient name substituted for patient code collides on **zero r
 `(source_id, patient_name, dos, cpt, therapist_id)` is unique across all 9,389 rows.
 
 **Decision (default, reversible):** the upsert key is
-`(source_id, therapist_id, patient_name_normalized, dos, cpt)`, using the normalized `cpt` from
+`(therapist_id, patient_name_normalized, dos, cpt)`, using the normalized `cpt` from
 A-033 rather than the derived `cpt_base`, so that two genuinely different sheet entries do not
-collapse into one row just because they share a base code.
+collapse into one row just because they share a base code. `source_id` was in this key originally
+and has been removed, for the reason in A-022.
 `patient_name_normalized` is uppercased and whitespace collapsed. `patient_code` is imported and
 stored when present, and is used as the preferred join key for the Phase 6 patient funnel, but it
 does not participate in identity for the import.
@@ -108,6 +109,39 @@ not a code fix, and it is the better long term answer if the practice is willing
 Per the build prompt, if two rows collide on the upsert key the importer keeps both and writes an
 `import_errors` entry for admin review. It does not silently overwrite. With the key in A-020 this
 currently never fires on the Q2 data.
+
+**A-022. A visit is identified globally, not per source sheet.**
+`source_id` is deliberately *not* part of the upsert key. It was, in the first build, and that was
+a defect: the same visit arriving on two quarterly sheets was stored twice and counted twice in
+every figure on every page.
+
+This is not hypothetical. The Instructions tab of the Q sheet specifies the export window as
+"Appointment Date: 04/27/2026 through yesterday", so the window is rolling rather than snapped to
+quarter boundaries, and consecutive quarterly exports are expected to overlap. Measured on a
+deliberately overlapping pair of sheets, one visit appearing on both produced 4 stored rows where
+3 visits occurred, and revenue of $600.00 where $450.00 was collected.
+
+**Decision:** identity is `(therapist_id, patient_name_normalized, dos, cpt)`. One visit is one
+row whichever sheet delivered it. `source_id` is still stored, and is now provenance rather than
+identity: which sheet supplied the row.
+
+Consequences, each verified:
+
+- Adding a new quarter never removes or rewrites an earlier quarter's rows. Rows that only the
+  older sheet contains are not touched by a newer sheet's sync.
+- A row present on both sheets is updated in place rather than inserted again, so the session count
+  and every money figure stay correct across a quarter boundary.
+- Nothing in the reporting layer reads `source_id`, so provenance can change without moving a
+  figure.
+- The sync loads existing rows by the date span of the incoming sheet rather than by source, so a
+  sheet covering one quarter still does not read the whole table.
+- Migration `33b222d203da` collapses any duplicates an earlier database already holds, keeping the
+  most recently imported copy of each visit, and logs how many it removed. Figures move when it
+  runs, downward, toward the correct number.
+
+Note that A-021 (keep both true duplicates and flag them) applies to two rows colliding *within
+one sheet*. A row that matches an existing row from a *different* sheet is the same visit seen
+twice, not a duplicate to flag, so it is updated silently.
 
 ---
 
