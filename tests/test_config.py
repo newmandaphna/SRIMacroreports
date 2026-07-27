@@ -1,0 +1,58 @@
+"""Configuration must fail loudly. These tests are the proof."""
+
+from __future__ import annotations
+
+import pytest
+
+from app.config import ConfigError, load_settings
+
+
+@pytest.mark.parametrize("missing", ["SESSION_SECRET_KEY", "DATABASE_ENCRYPTION_KEY"])
+def test_missing_required_secret_raises(env, monkeypatch, missing):
+    monkeypatch.delenv(missing, raising=False)
+    with pytest.raises(ConfigError) as exc:
+        load_settings()
+    assert missing in str(exc.value)
+
+
+def test_blank_secret_counts_as_missing(env, monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET_KEY", "   ")
+    with pytest.raises(ConfigError):
+        load_settings()
+
+
+def test_short_session_secret_rejected(env, monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET_KEY", "tooshort")
+    with pytest.raises(ConfigError, match="at least 32"):
+        load_settings()
+
+
+def test_debug_forbidden_in_production(env, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("DEBUG", "true")
+    with pytest.raises(ConfigError, match="DEBUG"):
+        load_settings()
+
+
+def test_warning_must_precede_timeout(env, monkeypatch):
+    monkeypatch.setenv("SESSION_TIMEOUT_MINUTES", "15")
+    monkeypatch.setenv("SESSION_WARNING_MINUTES", "15")
+    with pytest.raises(ConfigError, match="SESSION_WARNING_MINUTES"):
+        load_settings()
+
+
+def test_defaults(settings):
+    assert settings.session_timeout_minutes == 15
+    assert settings.session_warning_minutes == 13
+    assert settings.week_start_day == "monday"
+    assert settings.timezone == "America/New_York"
+    # Both gated modules default to off, per the build prompt.
+    assert settings.room_utilization_enabled is False
+    assert settings.patient_funnel_enabled is False
+
+
+def test_repr_never_leaks_secrets(settings):
+    rendered = repr(settings)
+    assert settings.session_secret_key not in rendered
+    assert settings.database_encryption_key not in rendered
+    assert "REDACTED" in rendered
