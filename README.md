@@ -73,6 +73,7 @@ in a file. `.env` is gitignored and `.env.example` never holds a real value.
 | `SESSION_TIMEOUT_MINUTES` | no | Default 15, idle, enforced server side. |
 | `SESSION_WARNING_MINUTES` | no | Default 13. Must be less than the timeout. |
 | `BENEFITS_SESSION_THRESHOLD` | no | Default 25 sessions per week. Editable by an admin later. |
+| `CPT_EXCLUSIONS` | no | Comma separated. Defaults to `99998,99999,QBCHK,FORM,PRO BONO`. Governs session counts only, not revenue. |
 | `WEEK_START_DAY` | no | `monday` (default) or `sunday`. |
 | `APP_TIMEZONE` | no | Default `America/New_York`. |
 | `FEATURE_ROOM_UTILIZATION` | no | Default off, per the build specification. |

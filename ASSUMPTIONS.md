@@ -4,19 +4,16 @@ Every definitional choice made while building the SRI Practice Dashboard, record
 moment it was made. Read this after every phase. Anything marked **NEEDS CONFIRMATION** is a
 default I picked to keep moving, not a decision I am confident in.
 
-Last updated: Phase 0.
+Last updated: Phase 0, revised after the first round of answers.
 
 ---
 
 ## 0. Scope and source of truth
 
-**A-001. The requirements doc is missing.**
-The build prompt says to read "SRI Practice Dashboard Requirements.md" in the repo root before
-writing any code. That file is not in the repository and was not supplied. I am proceeding with
-the build prompt alone, which the prompt itself designates as the source of truth for
-architecture, security, data design, and sequencing. Scope items that live only in the
-requirements doc are therefore unknown to me.
-**NEEDS CONFIRMATION**: send the requirements doc, or confirm the build prompt is the whole scope.
+**A-001. There is no separate requirements doc. RESOLVED.**
+The build prompt refers to "SRI Practice Dashboard Requirements.md" in the repo root. That file
+does not exist and, confirmed on 2026-07-27, is not expected to. The build prompt is the whole
+scope, and it is the source of truth for architecture, security, data design, and sequencing.
 
 **A-002. The prior project in this repository was deleted, not migrated.**
 The repository previously held a different project (a CSV based Phase A analytics package under
@@ -30,10 +27,20 @@ Only" opens the actual Q2 workbook and writes the current Q2 visit data into the
 as static values. So "Q2 Snapshot" is a point in time copy of the real Q sheet, and the real Q
 sheet is a separate Google Sheet.
 This matches the note in the build prompt about a "Q2 Visits" tab that does not exist in the xlsx.
-Consequence: the tab list the app must show in the Data Sources mapping UI is the tab list of the
-**live Q workbook**, which I have never seen. I will not hardcode any tab name.
-**NEEDS CONFIRMATION**: the URL of the actual Q2 Google Sheet, so the mapping UI can list its
-real tabs.
+
+**A-004. The real Q2 sheet has been identified. PARTIALLY RESOLVED.**
+Spreadsheet ID `1Pft_PfZtdnU2d_Lhtc89U-323M8k3Z6m-f44s78rBHY`, supplied 2026-07-27. This is
+seeded as the first Data Sources entry, labelled "Q2 2026".
+
+Its tab list is still unverified: the build environment's network policy blocks Google Docs, so
+the sheet could not be read during Phase 0. This changes nothing in the design, because the
+mapping UI was always specified to enumerate tabs from the Sheets API rather than from a
+hardcoded list. It does mean the first thing to check in Phase 2, once the service account
+credential exists, is which visit level tab actually exists in this workbook ("Q2 Visits",
+"Q2 Snapshot", or something else). No tab name is hardcoded anywhere.
+
+The 9,389 row profile in section 1 below is therefore taken from the Live Review workbook's
+static copy. It should be representative, but it is a snapshot, not the live sheet.
 
 ---
 
@@ -51,7 +58,7 @@ here because several of them contradict the build prompt.
 | Distinct therapist tokens | 42 |
 | Distinct patient names | 2,252 |
 | Distinct patient codes | 1,627 |
-| Sessions after excluding CPT 99998 and 99999 | 8,477 |
+| Sessions after the CPT exclusion list (A-030) | 8,454 |
 | Sum of Total paid | 926,412.60 |
 | Sum of Total balance | 198,520.62 |
 
@@ -81,7 +88,9 @@ The same key with patient name substituted for patient code collides on **zero r
 `(source_id, patient_name, dos, cpt, therapist_id)` is unique across all 9,389 rows.
 
 **Decision (default, reversible):** the upsert key is
-`(source_id, therapist_id, patient_name_normalized, dos, cpt_normalized)`.
+`(source_id, therapist_id, patient_name_normalized, dos, cpt)`, using the normalized `cpt` from
+A-033 rather than the derived `cpt_base`, so that two genuinely different sheet entries do not
+collapse into one row just because they share a base code.
 `patient_name_normalized` is uppercased and whitespace collapsed. `patient_code` is imported and
 stored when present, and is used as the preferred join key for the Phase 6 patient funnel, but it
 does not participate in identity for the import.
@@ -104,36 +113,65 @@ currently never fires on the Q2 data.
 
 ## 3. Session, revenue, and period definitions
 
-**A-030. A session is one imported row whose normalized CPT is not on the exclusion list.**
-Default exclusion list: `99998`, `99999`. On the Q2 data that is 648 rows of 99998 and 264 rows of
-99999, giving 8,477 sessions out of 9,389 rows.
+**A-030. A session is one imported row whose base CPT is not on the exclusion list.**
+Exclusion list, confirmed 2026-07-27: `99998`, `99999`, `QBCHK`, `FORM`, `PRO BONO`.
+
+On the Q2 data:
+
+| Excluded code | Rows |
+| --- | --- |
+| 99998 | 648 |
+| 99999 | 264 |
+| QBCHK | 19 |
+| PRO BONO | 3 |
+| FORM | 1 |
+| **total excluded** | **935** |
+
+That gives **8,454 sessions out of 9,389 rows**. The exclusion list is stored in the config table
+and is editable by an admin, so this is a starting value, not a constant in code.
 
 **A-031. Excluded CPTs are excluded from session counts but NOT from revenue.**
 This is a distinction the build prompt does not make, and it matters. The 264 rows coded 99999
-carry **17,674.46 in Total paid**. If 99999 rows were dropped from revenue as well as from session
-counts, collected revenue would be understated by that amount. So: the exclusion list governs
+carry **17,674.46 in Total paid**, and the newly excluded `QBCHK`, `FORM`, and `PRO BONO` rows
+carry a further **3,345.00**. If excluded rows were dropped from revenue as well as from session
+counts, collected revenue would be understated by over 21,000. So: the exclusion list governs
 `session_count` only. `revenue_collected` and `revenue_outstanding` sum over every imported row.
-**NEEDS CONFIRMATION**, since it changes headline revenue by about 2 percent.
+Excluding a code from counting is a statement about what a session is, not a statement that the
+money is not real.
 
-**A-032. What 99998 and 99999 mean is still unknown.**
-The `RAW_Unrecorded` tab shows CPT 99998 alongside a "do not bill" billing comment, which supports
-reading 99998 as an internal no show or non billable placeholder. 99999 carrying real payments
-does not fit that reading, so the two codes probably do not mean the same thing. Both are retained
-in the database for later no show analysis in Phase 6.
-**NEEDS CONFIRMATION**: what each code means. This is the single most useful answer you can give me.
+**A-032. What 99998 and 99999 mean is still open.**
+Flagged 2026-07-27 as pending; the practice is finding out. Until then both stay on the exclusion
+list and both stay in the database, so no data is lost either way and the answer can be applied
+later by editing config rather than by re-importing.
 
-**A-033. CPT is a normalized string, not a number.**
-Excel has stored the numeric codes as floats (`90837.0`). The sheet also contains 53 rows whose
-CPT is not a code at all: `QBCHK` (19), `90791-ADHD` (18), `ADHD` (6), `ADHD2` (4), `pro bono` (3),
-`90837 - ADHD` (2), `FORM` (1).
-Normalization rule: trim, uppercase, and drop a trailing `.0` from float valued codes, so `90837.0`
-becomes `90837`. Everything else is stored verbatim as an uppercase string. Non numeric CPTs are
-imported and counted as sessions by default, because `90791-ADHD` and `90837 - ADHD` are clearly
-real clinical visits.
-**NEEDS CONFIRMATION**: whether `QBCHK`, `FORM`, and `pro bono` should count as sessions. My
-default counts all three. Nineteen `QBCHK` rows is not nothing.
+Evidence so far: the `RAW_Unrecorded` tab shows CPT 99998 alongside a "do not bill" billing
+comment, which supports reading 99998 as an internal no show or non billable placeholder. 99999
+carrying 17,674.46 in real payments does not fit that reading, so the two codes probably do not
+mean the same thing. If 99999 turns out to be a billable visit type, it belongs back in the
+session count and the headline session number rises by 264.
 
-**A-034. Revenue collected is `sum(total_paid)`. Revenue outstanding is `sum(total_balance)`.**
+**A-033. CPT normalizes to a base code, and the base code is what gets compared.**
+Two steps:
+
+1. **Normalize.** Trim, collapse internal whitespace, uppercase, and drop a trailing `.0` left by
+   Excel's float storage, so `90837.0` becomes `90837` and `pro bono` becomes `PRO BONO`. The
+   normalized value is stored as `cpt`.
+2. **Derive a base.** If the normalized value starts with a 4 or 5 digit numeric code, take that
+   code as `cpt_base`. Otherwise `cpt_base` equals `cpt`.
+
+`cpt_base` is what the exclusion list is compared against and what reports group by. This matters
+because the sheet writes the same procedure several ways: `90791-ADHD` (18 rows) and
+`90837 - ADHD` (2 rows) fold into `90791` and `90837`, where they belong, instead of splintering
+into their own report lines. Both raw and normalized values are retained, so the ADHD annotation
+is not lost.
+
+**A-034. Bare `ADHD` and `ADHD2` count as sessions, provisionally.**
+Ten rows: `ADHD` (6) and `ADHD2` (4). Unlike the suffixed forms in A-033 these carry no numeric
+code at all, so there is nothing to fold them into. They are not on the exclusion list, so they
+count. Ten rows out of 9,389 will not move a dashboard, and this is a config edit if wrong.
+Noted rather than asked, since the answer changes almost nothing.
+
+**A-035. Revenue collected is `sum(total_paid)`. Revenue outstanding is `sum(total_balance)`.**
 The patient side and insurance side split uses `pt_amount_due` and `ins_balance`.
 Note that these do not reconcile exactly: on the Q2 data, `sum(pt_amount_due) + sum(ins_balance)`
 is 198,328.86 against a `sum(total_balance)` of 198,520.62, a gap of 191.76 (one visit's worth).
@@ -141,22 +179,22 @@ The dashboard shows `total_balance` as the outstanding headline and shows the sp
 labelled as a split rather than as components that must add up. The gap is surfaced in the import
 summary rather than hidden.
 
-**A-035. Weeks start Monday. Week labels are the Monday date.**
+**A-036. Weeks start Monday. Week labels are the Monday date.**
 Configurable via `week_start_day`, default Monday. Quarters are calendar quarters. This matches the
 Q sheet, whose Q2 runs 2026-04-01 to 2026-06-30.
 
-**A-036. Timezone is America/New_York, and DOS is a date with no time.**
+**A-037. Timezone is America/New_York, and DOS is a date with no time.**
 The practice is in Pennsylvania (Jenkintown, Revere Commons). All dates of service in the sheet
 carry a midnight time component, which is an Excel artifact, so DOS is stored as a `DATE`.
 Timestamps that are genuinely moments in time (audit log, sync runs, imported_at) are stored as UTC
 and rendered in America/New_York.
 
-**A-037. Blank money is 0. Unparseable money is a rejected row.**
+**A-038. Blank money is 0. Unparseable money is a rejected row.**
 Per the build prompt: a blank money cell reads as 0. A money cell that will not parse does not read
 as 0, it sends the row to `import_errors` with the raw string preserved, so nobody silently loses a
 payment to a typo.
 
-**A-038. Eleven rows have a blank DOS.**
+**A-039. Eleven rows have a blank DOS.**
 A row with no date of service cannot be placed in any period, so it cannot be counted. Those rows
 are rejected to `import_errors` for admin review rather than imported and quietly excluded from
 every report.
@@ -184,7 +222,12 @@ The app imports this as the initial alias set rather than inventing its own. Not
 has already decided `Pavlova-Rosenfeld` maps to `PAVLOVA`, while the Q sheet separately contains a
 therapist token `ROSENFELD` with 121 sessions. Those may or may not be the same person. They are
 **not** auto merged. An admin gets a fuzzy match suggestion and decides.
-**NEEDS CONFIRMATION**: are `PAVLOVA` and `ROSENFELD` the same therapist?
+
+**OPEN**: are `PAVLOVA` and `ROSENFELD` the same therapist? Flagged 2026-07-27 as pending; the
+practice is finding out. Until answered they remain two therapist records. If they turn out to be
+one person, merging them is an admin action in the UI and it re-derives every affected utilization
+figure, so waiting costs nothing. Merging them wrongly would understate one therapist's sessions
+and overstate the other's, which is why this is not guessed.
 
 **A-041. Alias matching is exact first, fuzzy only as a suggestion.**
 Exact match on a known alias resolves silently. No exact match produces a rejected row plus a ranked
@@ -269,8 +312,28 @@ Logged per the rule that the prompt wins but conflicts get flagged.
 2. **"Q2 Snapshot is the canonical tab."** The prompt says to confirm before hardcoding, and A-003
    shows why: the snapshot tab is a static copy inside a *different* workbook. Nothing is hardcoded.
 3. **Excluded CPTs and revenue.** The prompt defines the exclusion list without saying whether it
-   applies to revenue. It cannot apply to revenue without losing 17,674.46. See A-031.
+   applies to revenue. It cannot apply to revenue without losing over 21,000. See A-031.
 4. **Patient Code column position.** The prompt's allowlist lists Patient Code in header order after
    the money columns. In the actual sheet it is column S, after Total balance, with `Recorded` in T.
    The mapping is by header text, not position, so this is handled, but it confirms that positional
    mapping would be wrong.
+5. **Requirements doc.** The prompt says to read one. There is not one. See A-001. Resolved.
+
+---
+
+## 7. Open questions
+
+One place to see what is still unanswered. Nothing here blocks the current phase.
+
+| # | Question | Status | If the answer changes things |
+| --- | --- | --- | --- |
+| 1 | What do CPT `99998` and `99999` mean? | practice is finding out | If 99999 is a billable visit, session counts rise by 264. Config edit, no re-import. See A-032. |
+| 2 | Are `PAVLOVA` and `ROSENFELD` the same therapist? | practice is finding out | Admin merge in the UI, re-derives utilization. See A-040. |
+| 3 | Can Patient Code be filled in on the Q sheet going forward? | not yet asked | Would let the upsert key drop patient name, which is the cleaner design. See A-020. |
+| 4 | Which visit level tab exists in the live Q2 workbook? | blocked until credentials | Answered by the mapping UI in Phase 2. Nothing hardcoded. See A-004. |
+
+Answered so far:
+
+- CPT exclusion list extended to `QBCHK`, `FORM`, `PRO BONO` (2026-07-27). See A-030.
+- No separate requirements doc exists (2026-07-27). See A-001.
+- Q2 spreadsheet ID supplied (2026-07-27). See A-004.

@@ -30,6 +30,15 @@ SEED_ADMIN_VARS = ("ADMIN_EMAIL", "ADMIN_INITIAL_PASSWORD")
 
 MIN_SESSION_SECRET_BYTES = 32
 
+# Base CPT codes that do not count as a session. Confirmed with the practice on
+# 2026-07-27; see ASSUMPTIONS.md A-030. This seeds the config table in Phase 2 and is
+# editable by an admin thereafter, so it is a starting value, not a constant.
+#
+# These codes are excluded from session COUNTS only. The rows are still imported and
+# their money still counts toward revenue: on the Q2 data they carry over 21,000 in
+# payments. See ASSUMPTIONS.md A-031.
+DEFAULT_CPT_EXCLUSIONS = ("99998", "99999", "QBCHK", "FORM", "PRO BONO")
+
 
 def _env(name: str, default: str | None = None) -> str | None:
     value = os.environ.get(name, default)
@@ -46,6 +55,14 @@ def _env_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError as exc:
         raise ConfigError(f"{name} must be an integer, got {raw!r}") from exc
+
+
+def _env_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Comma separated list, normalized the same way CPT values are (see A-033)."""
+    raw = _env(name)
+    if raw is None:
+        return default
+    return tuple(part.strip().upper() for part in raw.split(",") if part.strip())
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -78,6 +95,7 @@ class Settings:
     session_timeout_minutes: int
     session_warning_minutes: int
     benefits_session_threshold: int
+    cpt_exclusions: tuple[str, ...]
     week_start_day: str
     timezone: str
 
@@ -167,6 +185,7 @@ def load_settings() -> Settings:
         session_timeout_minutes=timeout,
         session_warning_minutes=warning,
         benefits_session_threshold=_env_int("BENEFITS_SESSION_THRESHOLD", 25),
+        cpt_exclusions=_env_csv("CPT_EXCLUSIONS", DEFAULT_CPT_EXCLUSIONS),
         week_start_day=week_start_day,
         timezone=_env("APP_TIMEZONE") or "America/New_York",
         room_utilization_enabled=_env_bool("FEATURE_ROOM_UTILIZATION", default=False),

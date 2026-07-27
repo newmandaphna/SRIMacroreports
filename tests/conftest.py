@@ -29,7 +29,9 @@ def env(tmp_path, monkeypatch) -> Iterator[dict[str, str]]:
         "DATABASE_PATH": str(tmp_path / "test.db"),
     }
     for key in list(os.environ):
-        if key.startswith(("ADMIN_", "FEATURE_", "GOOGLE_", "SESSION_", "WEEK_")):
+        if key.startswith(
+            ("ADMIN_", "APP_", "BENEFITS_", "CPT_", "FEATURE_", "GOOGLE_", "SESSION_", "WEEK_")
+        ):
             monkeypatch.delenv(key, raising=False)
     for key, value in values.items():
         monkeypatch.setenv(key, value)

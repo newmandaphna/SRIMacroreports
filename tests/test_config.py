@@ -51,6 +51,16 @@ def test_defaults(settings):
     assert settings.patient_funnel_enabled is False
 
 
+def test_default_cpt_exclusions(settings):
+    """Confirmed with the practice on 2026-07-27. See ASSUMPTIONS.md A-030."""
+    assert settings.cpt_exclusions == ("99998", "99999", "QBCHK", "FORM", "PRO BONO")
+
+
+def test_cpt_exclusions_override_is_normalized(env, monkeypatch):
+    monkeypatch.setenv("CPT_EXCLUSIONS", " 99998 ,qbchk,, pro bono ")
+    assert load_settings().cpt_exclusions == ("99998", "QBCHK", "PRO BONO")
+
+
 def test_repr_never_leaks_secrets(settings):
     rendered = repr(settings)
     assert settings.session_secret_key not in rendered
