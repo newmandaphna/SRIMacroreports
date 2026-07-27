@@ -40,7 +40,7 @@ from app.security.deps import (
     OptionalUser,
     RedirectRequired,
 )
-from app.seed import seed_admin
+from app.seed import seed_admin, sync_admin_password
 from app.templating import render
 
 logger = logging.getLogger(__name__)
@@ -91,6 +91,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db = DatabaseHandle(settings)
 
     with app.state.db.session() as db:
+        sync_admin_password(db)
         seed_admin(db, settings)
 
     try:

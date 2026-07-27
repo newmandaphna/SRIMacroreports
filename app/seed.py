@@ -3,6 +3,10 @@
 Runs at startup, once. If an active admin already exists it does nothing, so a restart
 never resurrects or overwrites an account.
 
+Also syncs the seeded admin's password hash if ADMIN_PASSWORD is set and the stored
+hash no longer matches — this covers the common case where the secret value changes
+(or the secret was renamed) between deployments and the database hash falls out of sync.
+
 The seeded password must be changed on first login before any other route is reachable
 (SECURITY.md section 3.2).
 """
@@ -24,9 +28,49 @@ from app.security.passwords import (
     PasswordPolicyError,
     hash_password,
     validate_password,
+    verify_password,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def sync_admin_password(db: Session) -> None:
+    """Re-hash the seeded admin's password if ADMIN_PASSWORD has changed.
+
+    This is a startup self-heal: if the secret value is updated (or the secret
+    was renamed from ADMIN_INITIAL_PASSWORD to ADMIN_PASSWORD) the stored hash
+    falls out of sync and every login attempt returns 401.  Running this at boot
+    keeps the hash current without requiring a manual database edit.
+
+    Only touches the account that matches ADMIN_EMAIL.  Does nothing if
+    ADMIN_PASSWORD is unset, if the hash already matches, or if the account
+    has ever had a successful login (must_change_password == False means the
+    user set their own password and we must not overwrite it).
+    """
+    password = os.environ.get("ADMIN_PASSWORD") or os.environ.get("ADMIN_INITIAL_PASSWORD") or ""
+    email = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
+    if not password or not email:
+        return
+
+    admin = db.execute(
+        select(User).where(User.email == email, User.role == Role.ADMIN)
+    ).scalar_one_or_none()
+    if admin is None:
+        return
+
+    # Never overwrite a password the user chose for themselves.
+    if not admin.must_change_password:
+        return
+
+    if verify_password(password, admin.password_hash):
+        return  # already in sync
+
+    admin.password_hash = hash_password(password)
+    logger.warning(
+        "ADMIN_PASSWORD does not match stored hash for %s — hash updated at startup. "
+        "This is expected after a secret rename or value change.",
+        email,
+    )
 
 
 def seed_admin(db: Session, settings: Settings) -> User | None:
