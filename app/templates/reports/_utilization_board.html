@@ -17,11 +17,9 @@
         {% endif %}
       </p>
     </div>
-    {% if show_export %}
-    <a
-      class="button button--quiet no-print"
-      href="/reports/financial/export.csv?table=therapists&{{ query_string }}"
-      >Export CSV</a
+    {% if show_export and can_see_utilization %}
+    <a class="button button--quiet no-print" href="/reports/therapist-utilization?{{ query_string }}"
+      >Full utilization board</a
     >
     {% endif %}
   </div>
@@ -42,9 +40,13 @@
       {% for row, status in therapist_rows %}
       <tr>
         <td>
-          <a href="/reports/financial?therapist={{ row.therapist_id }}&{{ query_string }}"
+          {# Only a link when the reader can reach the module. A link that 403s is
+             worse than plain text. #}
+          {% if can_see_utilization %}
+          <a href="/reports/therapist-utilization/{{ row.therapist_id }}?{{ query_string }}"
             >{{ row.display_name }}</a
           >
+          {% else %}{{ row.display_name }}{% endif %}
         </td>
         <td class="numeric">{{ row.sessions|count }}</td>
         <td class="numeric">{{ row.sessions_per_week }}</td>
@@ -68,7 +70,11 @@
 
   <p class="text-muted" style="margin-top: var(--space-3)">
     A low session count can mean a referral shortage, leave, or a part time schedule as
-    easily as it means anything else. Notes travel with the number from Phase 4.
+    easily as it means anything else.
+    {% if can_see_utilization %}
+    <a href="/reports/therapist-utilization?{{ query_string }}">The utilization board</a>
+    carries the context that goes with each number.
+    {% endif %}
   </p>
   {% else %}
   <p class="text-muted">No therapist activity in this range.</p>

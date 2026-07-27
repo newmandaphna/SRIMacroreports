@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Rooms</h1>
+  <p class="page-head__sub">
+    Room usage has no automated source, so it is added here by hand. Nothing in the Q
+    sheet feeds this module.
+  </p>
+</div>
+
+{% if error %}
+<div class="alert alert--error" role="alert">{{ error }}</div>
+{% endif %}
+
+{% if outcome %}
+<div class="alert {% if outcome.rejected %}alert--warning{% else %}alert--ok{% endif %}">
+  <p>
+    <strong>Upload finished.</strong>
+    {{ outcome.rows_read }} row{{ "" if outcome.rows_read == 1 else "s" }} read,
+    {{ outcome.inserted }} added, {{ outcome.updated }} updated,
+    {{ outcome.rejected|length }} rejected.
+  </p>
+  {% if outcome.rejected %}
+  <p>Rejected rows are listed below and were not imported.</p>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th class="numeric">Line</th>
+        <th>Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line, reason in outcome.rejected %}
+      <tr>
+        <td class="numeric">{{ line if line else "-" }}</td>
+        <td>{{ reason }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if rooms %}
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Room</th>
+        <th>Location</th>
+        <th class="numeric">Slots per day</th>
+        <th class="numeric">Days recorded</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for room in rooms %}
+      <tr class="{% if not room.active %}row--muted{% endif %}">
+        <td>{{ room.name }}</td>
+        <td>{{ room.location_short or "-" }}</td>
+        <td class="numeric">{{ room.default_slots_per_day }}</td>
+        <td class="numeric">{{ day_counts.get(room.id, 0)|count }}</td>
+        <td>
+          {% if room.active %}
+          <span class="pill pill--ok">active</span>
+          {% else %}
+          <span class="pill pill--neutral">inactive</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="state">
+  <p class="state__title">No rooms yet</p>
+  <p>Add one for each bookable room, then upload usage against them.</p>
+</div>
+{% endif %}
+
+<div class="card-grid" style="margin-top: var(--space-4)">
+  <form method="post" action="/admin/rooms/new" class="card stack">
+    <p class="card__title">Add a room</p>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+    <label class="field">
+      <span class="field__label">Name</span>
+      <input type="text" name="name" required class="field__input" placeholder="Jenkintown 1" />
+    </label>
+
+    <label class="field">
+      <span class="field__label">Location code</span>
+      <input type="text" name="location_short" class="field__input" placeholder="1" />
+      <span class="field__hint">
+        The same short code the sessions use: 1 for Jenkintown, 2 for Revere Commons.
+      </span>
+    </label>
+
+    <label class="field">
+      <span class="field__label">Bookable slots on a normal day</span>
+      <input
+        type="number"
+        name="default_slots_per_day"
+        min="0"
+        class="field__input"
+        value="8"
+      />
+      <span class="field__hint">
+        Used as the denominator when an uploaded row does not carry its own.
+      </span>
+    </label>
+
+    <button type="submit" class="button button--primary">Add room</button>
+  </form>
+
+  <form
+    method="post"
+    action="/admin/rooms/upload"
+    enctype="multipart/form-data"
+    class="card stack"
+  >
+    <p class="card__title">Upload usage</p>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+    <p class="text-muted">
+      A CSV with one row per room per day. Re-uploading the same day replaces it, so a
+      corrected file can simply be uploaded again.
+    </p>
+
+    <pre class="code-sample">room,date,slots used,slots available,note
+Jenkintown 1,2026-04-06,7,8,
+Jenkintown 1,2026-04-07,5,8,two cancellations
+Revere Commons 2,2026-04-06,8,8,</pre>
+
+    <p class="text-muted">
+      Column names are matched loosely, and slots available falls back to the room's
+      normal figure when the column is missing. A row that cannot be read is rejected
+      with its line number rather than counted as zero.
+    </p>
+
+    <label class="field">
+      <span class="field__label">CSV file</span>
+      <input type="file" name="file" accept=".csv,text/csv" required class="field__input" />
+    </label>
+
+    <button type="submit" class="button button--primary">Upload</button>
+  </form>
+</div>
+{% endblock %}

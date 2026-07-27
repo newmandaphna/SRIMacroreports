@@ -23,16 +23,35 @@
           {% for module in nav_modules %}
           {% if module.value == 'financial' %}
           <a href="/reports/financial" {% if current_path.startswith('/reports/financial') %}aria-current="page"{% endif %}>{{ module.label }}</a>
+          {% elif module.value == 'therapist_utilization' %}
+          <a href="/reports/therapist-utilization" {% if current_path.startswith('/reports/therapist-utilization') %}aria-current="page"{% endif %}>Utilization</a>
+          {% elif module.value == 'room_utilization' and settings.room_utilization_enabled %}
+          <a href="/reports/room-utilization" {% if current_path.startswith('/reports/room-utilization') %}aria-current="page"{% endif %}>Rooms</a>
           {% endif %}
           {% endfor %}
           {% if auth.role.is_admin %}
           <a href="/admin/sources" {% if current_path.startswith('/admin/sources') %}aria-current="page"{% endif %}>Data sources</a>
           <a href="/admin/therapists" {% if current_path.startswith('/admin/therapists') %}aria-current="page"{% endif %}>Therapists</a>
+          {% if settings.room_utilization_enabled %}
+          <a href="/admin/rooms" {% if current_path.startswith('/admin/rooms') %}aria-current="page"{% endif %}>Rooms</a>
+          {% endif %}
           <a href="/admin/config" {% if current_path.startswith('/admin/config') %}aria-current="page"{% endif %}>Settings</a>
           <a href="/admin/users" {% if current_path.startswith('/admin/users') %}aria-current="page"{% endif %}>Users</a>
           <a href="/admin/audit" {% if current_path.startswith('/admin/audit') %}aria-current="page"{% endif %}>Audit log</a>
           {% endif %}
         </nav>
+
+        {# A plain link rather than a badge with a count: a count would mean running
+           the status queries on every page render, for a number the page itself
+           shows anyway. #}
+        <a
+          class="app-header__status"
+          href="/status"
+          {% if current_path == '/status' %}aria-current="page"{% endif %}
+          title="What is still undecided, and what qualifies these numbers"
+        >
+          In development
+        </a>
 
         <div class="app-header__user">
           <span class="app-header__who">{{ auth.user.display_name }}</span>

@@ -4,7 +4,7 @@ Every definitional choice made while building the SRI Practice Dashboard, record
 moment it was made. Read this after every phase. Anything marked **NEEDS CONFIRMATION** is a
 default I picked to keep moving, not a decision I am confident in.
 
-Last updated: Phase 3 complete.
+Last updated: Phase 5 complete. Phase 6 not started, still gated.
 
 ---
 
@@ -88,9 +88,10 @@ The same key with patient name substituted for patient code collides on **zero r
 `(source_id, patient_name, dos, cpt, therapist_id)` is unique across all 9,389 rows.
 
 **Decision (default, reversible):** the upsert key is
-`(source_id, therapist_id, patient_name_normalized, dos, cpt)`, using the normalized `cpt` from
+`(therapist_id, patient_name_normalized, dos, cpt)`, using the normalized `cpt` from
 A-033 rather than the derived `cpt_base`, so that two genuinely different sheet entries do not
-collapse into one row just because they share a base code.
+collapse into one row just because they share a base code. `source_id` was in this key originally
+and has been removed, for the reason in A-022.
 `patient_name_normalized` is uppercased and whitespace collapsed. `patient_code` is imported and
 stored when present, and is used as the preferred join key for the Phase 6 patient funnel, but it
 does not participate in identity for the import.
@@ -108,6 +109,46 @@ not a code fix, and it is the better long term answer if the practice is willing
 Per the build prompt, if two rows collide on the upsert key the importer keeps both and writes an
 `import_errors` entry for admin review. It does not silently overwrite. With the key in A-020 this
 currently never fires on the Q2 data.
+
+**A-022. A visit is identified globally, not per source sheet.**
+`source_id` is deliberately *not* part of the upsert key. It was, in the first build, and that was
+a defect: the same visit arriving on two quarterly sheets was stored twice and counted twice in
+every figure on every page.
+
+This is not hypothetical. The Instructions tab of the Q sheet specifies the export window as
+"Appointment Date: 04/27/2026 through yesterday", so the window is rolling rather than snapped to
+quarter boundaries, and consecutive quarterly exports are expected to overlap. Measured on a
+deliberately overlapping pair of sheets, one visit appearing on both produced 4 stored rows where
+3 visits occurred, and revenue of $600.00 where $450.00 was collected.
+
+**Decision:** identity is `(therapist_id, patient_name_normalized, dos, cpt)`. One visit is one
+row whichever sheet delivered it.
+
+`source_id` and `source_row_ref` are still stored, and together mean "the sheet and the row this
+visit was first seen on". They are written at insert and never rewritten. This also matters:
+`source_row_ref` used to be part of the change comparison, so on overlapping sheets it was
+overwritten while `source_id` was not, leaving the pair pointing at row 2 of the Q2 sheet for a
+visit that is row 2 of the *Q3* sheet, which is a different visit. Rewriting the pointer also made
+every sync of either sheet report the shared row as updated, forever, since the two sheets number
+it differently. Provenance now moves together or not at all.
+
+Consequences, each verified:
+
+- Adding a new quarter never removes or rewrites an earlier quarter's rows. Rows that only the
+  older sheet contains are not touched by a newer sheet's sync.
+- A row present on both sheets is updated in place rather than inserted again, so the session count
+  and every money figure stay correct across a quarter boundary.
+- Re-syncing a sheet that shares rows with another reports them as unchanged, not updated, so the
+  "unchanged" count stays a usable signal that a sync was clean.
+- The sync loads existing rows by the date span of the incoming sheet rather than by source, so a
+  sheet covering one quarter still does not read the whole table.
+- Migration `33b222d203da` collapses any duplicates an earlier database already holds, keeping the
+  most recently imported copy of each visit, and logs how many it removed. Figures move when it
+  runs, downward, toward the correct number.
+
+Note that A-021 (keep both true duplicates and flag them) applies to two rows colliding *within
+one sheet*. A row that matches an existing row from a *different* sheet is the same visit seen
+twice, not a duplicate to flag, so it is updated silently.
 
 ---
 
@@ -446,10 +487,31 @@ round trip and hands back a naive value. A custom `UTCDateTime` column type make
 explicit. Under PostgreSQL it becomes a no op, so the models port unchanged. Display conversion to
 America/New_York happens at the template layer, never in storage.
 
-**A-054. Database encryption at rest uses SQLCipher, and the app fails loudly without a key.**
-Details and the operational caveats are in SECURITY.md. If the SQLCipher driver is unavailable in
-the deployment environment, the app refuses to start rather than silently falling back to an
-unencrypted SQLite file.
+**A-054. SUPERSEDED 2026-07-27. Encryption at rest is no longer implemented.**
+This originally read: "Database encryption at rest uses SQLCipher, and the app fails loudly without
+a key." That held while the database was a SQLCipher encrypted SQLite file keyed from
+`DATABASE_ENCRYPTION_KEY`.
+
+The deployment then moved to Replit's managed PostgreSQL. SQLCipher, the key, and the tests that
+proved a canary value was unreadable in the file's bytes all went with it. **Nothing in the
+application encrypts data at rest now.** The decision recorded here is to state that plainly rather
+than to leave a document claiming a control the code does not implement, and to surface it on the In
+development page inside the application so it is visible where the numbers are read.
+
+SECURITY.md section 5.2 carries the full account, including the three ways to close the gap and the
+question of whether the existing Replit BAA reaches the managed database service. This is the
+largest open security item in the project.
+
+**A-054a. On PostgreSQL the test suite needs its own database, and a missing one must fail loudly.**
+The suite drops every table and re runs the migrations before each test, which under the old design
+was free: each test got its own SQLite file in a temp directory. On one shared PostgreSQL database
+it is not free, and tests that build their own app rather than using the `client` fixture were
+inheriting the previous test's users, rooms, and audit rows. The reset therefore happens in the
+`env` fixture, which everything that reaches the database depends on, rather than in `client`.
+
+The suite skips rather than fails when `TEST_DATABASE_URL` is unset, which is right on a laptop and
+dangerous in CI: a run that asserted nothing is indistinguishable from a run that passed. CI now
+provisions a PostgreSQL service and proves it is reachable in a separate step before pytest runs.
 
 **A-055. Audit log retention is 6 years, and there is no delete path in code.**
 No ORM delete, no update, no admin UI affordance. Retention is enforced by not deleting.
@@ -576,6 +638,107 @@ configuration rather than discovered later.
 
 ---
 
+## 5c. Utilization decisions (Phase 4)
+
+**A-080. A therapist with no session minimum carries no status, not a passing one.**
+Only `salaried_benefits` therapists are compared against the threshold. Everyone else shows
+"not measured". A green tick would imply a target they were never given, and a red one would be
+a false alarm about a real person's work. The board reports the unmeasured count openly rather
+than quietly omitting those rows, so nobody reads a short list as the whole practice.
+
+**A-081. The weekly average is compared as a decimal, not truncated to a whole number.**
+Truncating first would put a therapist at 19.9 sessions in the same bucket as one at 19.0. That
+is a rounding artifact, not a judgement anyone intended to make.
+
+**A-082. Status bands: at or above the threshold is fine, within 20 percent below is watch,
+further below is the alert state.**
+The 20 percent band is my choice, not the practice's. It exists so that "slightly short this
+week" and "systematically short" are not the same colour. Alert red appears here and nowhere
+else in the application.
+**TO CONFIRM WITH THE PRACTICE**: whether a watch band is wanted at all, and how wide.
+
+**A-083. One note per therapist per period, editable, with the history in the audit log.**
+The build specification asks for "a notes field so context like referral shortage travels with
+the number". A single editable field matches that, and the audit entry records the previous text
+on every change, so an edited explanation is still recoverable. The alternative, an append only
+thread, is more faithful to a conversation but heavier than what was asked for.
+
+**A-084. The note appears on the status board, not only on the drill in page.**
+Context that lives one click away from the number is context most readers never see. The board
+shows each therapist's most recent note in its own column, and for anyone flagged below threshold
+without a note it shows an "add context" prompt to whoever can write one.
+
+**A-085. A note is snapped to its period boundary.**
+Whatever date the form submits, the note attaches to the start of the period the reports actually
+render, so a note can never end up on a period that no view displays.
+
+**A-086. Note text is recorded in the audit log, before and after.**
+It is staff written context about a colleague's workload, not patient information. The point of
+auditing it is that an edit to someone's explanation of their own numbers should be recoverable.
+
+**A-087. Notes are writable by managers and admins, never by viewers.**
+Enforced by the same role dependency as everywhere else, so a viewer posting the form directly
+gets a 403 and an audit entry rather than a silent no-op. The form is simply not rendered for
+them, which is a courtesy and not the control.
+
+**A-088. A drill in link is only rendered to someone who can follow it.**
+The overview is gated on the financial grant, and the therapist drill in on the utilization
+grant, so a reader can hold one without the other. Where they cannot follow the link, the
+therapist's name renders as plain text: a link that 403s is worse than no link.
+
+---
+
+## 5d. Room utilization decisions (Phase 5)
+
+**A-090. The module ships inert, and a disabled module answers 404 rather than 403.**
+`FEATURE_ROOM_UTILIZATION` defaults off. With it off, every route in the module answers 404,
+the module is absent from navigation, and nothing about it appears anywhere else. A 403 would
+confirm to a prober that the feature exists and is merely switched off; a 404 is both truer to
+the state of the world and less informative.
+
+The flag is checked at the router, before the authentication dependencies run. Checked after
+them, an anonymous visitor would get a login redirect, which tells them the path exists.
+
+**A-091. The flag lives in the environment, not on the settings page.**
+Turning it on is a deployment decision that depends on a real data source existing, not a
+preference an administrator should be able to toggle on a whim. The settings page shows its
+state so nobody has to guess, and says why it is not editable there.
+
+**A-092. There is no automated source, and none is invented.**
+The practice has schedules but nothing that records which rooms were actually used. Deriving
+usage from appointment schedules would produce a confident number for something nobody
+measured, so the only ingestion path is a manual CSV upload, and the report says plainly on
+every view that the figures are uploaded rather than observed.
+
+**A-093. Usage is counted in slots, not hours.**
+"How many of the bookable slots in this room on this day were used" is the question the
+practice asked. Slot length varies by appointment type, so an hours figure would be quietly
+wrong in a way nobody would notice.
+
+**A-094. A room with no available slots reports no rate, not zero percent.**
+A closed room had no utilization to report. Showing 0 percent would read as a room sitting
+empty all day, which is a different and worse fact.
+
+**A-095. A period with nothing recorded is blank, not zero.**
+Same reasoning one level up: an unrecorded week is not an empty week, and a heat grid that
+paints them identically would invite a conclusion the data does not support.
+
+**A-096. The heat grid uses a single hue ramp, deliberately not the status colours.**
+A busy room is not good news and an empty one is not an alert: they are different numbers, not
+different verdicts. Alert red stays reserved for below threshold and overdue, as it has been
+since Phase 0.
+
+**A-097. Re-uploading a day replaces it.**
+The upload is keyed on room and date, so a corrected file can simply be uploaded again rather
+than requiring anyone to find and delete the wrong rows first.
+
+**A-098. Upload rejections behave like sheet import rejections.**
+A row that cannot be read is rejected with its line number and reason, never coerced into a
+zero. An unknown room is rejected rather than created, for the same reason the sheet importer
+never creates a therapist.
+
+---
+
 ## 6. Conflicts between the build prompt and observed reality
 
 Logged per the rule that the prompt wins but conflicts get flagged.
@@ -599,12 +762,19 @@ Logged per the rule that the prompt wins but conflicts get flagged.
 
 One place to see what is still unanswered. Nothing here blocks the current phase.
 
+**These are also surfaced inside the application, at `/status`.** That page is generated
+from the current state of the database rather than from this list, so an item disappears
+when it is genuinely resolved and nobody has to remember to edit a document. This section
+remains the fuller record, with the measurements behind each item; the page is where the
+people reading the numbers will actually see the caveats.
+
 | # | Question | Status | If the answer changes things |
 | --- | --- | --- | --- |
 | 1 | Can Patient Code be filled in on the Q sheet going forward? | not yet asked | Would let the upsert key drop patient name, which is the cleaner design. See A-020. |
 | 2 | Is cancellation recording in Valant consistent across therapists? | not yet asked | Decides whether per therapist cancellation rates can be compared at all. See A-032b. |
 | 3 | Which visit level tab exists in the live Q2 workbook? | blocked until credentials | Answered by the mapping UI in Phase 2. Nothing hardcoded. See A-004. |
-| 4 | Is the 25 session benefits threshold correct? | not yet asked | Drives every utilization status flag. Placeholder default. See A-039a. |
+| 4 | Is the 25 session benefits threshold correct? | **asked, still open** | Drives every status flag on the utilization board, which is now built. At 25, 30 of 42 therapists show red. See A-039a. |
+| 5 | Which therapists are salaried rather than percentage based? | not yet asked | Decides who is measured at all. Everyone currently defaults to unmeasured. See A-039b. |
 
 Answered:
 

@@ -20,8 +20,8 @@
         type="submit"
         name="preset"
         value="{{ p.value }}"
-        class="segmented__item {% if range.preset == p %}segmented__item--on{% endif %}"
-        {% if range.preset == p %}aria-current="true"{% endif %}
+        class="segmented__item {% if date_range.preset == p %}segmented__item--on{% endif %}"
+        {% if date_range.preset == p %}aria-current="true"{% endif %}
       >
         {{ p.label }}
       </button>
@@ -29,16 +29,16 @@
     </div>
   </div>
 
-  <details class="filter-bar__more" {% if range.preset.value == 'custom' or selected_therapists or selected_locations %}open{% endif %}>
+  <details class="filter-bar__more" {% if date_range.preset.value == 'custom' or selected_therapists or selected_locations %}open{% endif %}>
     <summary>More filters</summary>
     <div class="filter-bar__panel">
       <label class="field field--inline">
         <span class="field__label">From</span>
-        <input type="date" name="start" class="field__input" value="{{ range.start }}" />
+        <input type="date" name="start" class="field__input" value="{{ date_range.start }}" />
       </label>
       <label class="field field--inline">
         <span class="field__label">To</span>
-        <input type="date" name="end" class="field__input" value="{{ range.end }}" />
+        <input type="date" name="end" class="field__input" value="{{ date_range.end }}" />
       </label>
       <input type="hidden" name="preset" value="custom" />
 
@@ -85,7 +85,7 @@
   </details>
 
   <p class="filter-bar__summary">
-    Showing <strong>{{ range.start }}</strong> to <strong>{{ range.end }}</strong>
-    ({{ range.days }} days){% if selected_therapists or selected_locations %}, filtered{% endif %}.
+    Showing <strong>{{ date_range.start }}</strong> to <strong>{{ date_range.end }}</strong>
+    ({{ date_range.days }} days){% if selected_therapists or selected_locations %}, filtered{% endif %}.
   </p>
 </form>

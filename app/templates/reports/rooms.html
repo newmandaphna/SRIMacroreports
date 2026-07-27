@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>Room utilization</h1>
+    <p class="page-head__sub">{{ date_range.label }}, {{ date_range.start }} to {{ date_range.end }}.</p>
+  </div>
+  {% if recorded_days %}
+  <a
+    class="button button--quiet no-print"
+    href="/reports/room-utilization/export.csv?{{ query_string }}"
+    >Export CSV</a
+  >
+  {% endif %}
+</div>
+
+<div class="alert alert--warning">
+  <p>
+    <strong>This is uploaded, not measured.</strong> The practice has schedules but no
+    system that records which rooms were actually used, so every figure here comes from
+    a file somebody filled in by hand. Treat it as the practice's own count, not as an
+    independent observation.
+  </p>
+</div>
+
+{% include "reports/_filters.html" %}
+
+{% if not grid %}
+<div class="state">
+  <p class="state__title">No rooms yet</p>
+  <p>
+    An administrator adds rooms and uploads usage on the Rooms page. Nothing here
+    reads from the Q sheet, because room usage is not in it.
+  </p>
+  {% if auth.role.is_admin %}
+  <p><a href="/admin/rooms" class="button button--primary">Go to Rooms</a></p>
+  {% endif %}
+</div>
+{% elif not recorded_days %}
+<div class="state">
+  <p class="state__title">No usage recorded yet</p>
+  <p>{{ grid|length }} room{{ "" if grid|length == 1 else "s" }} exist, but no usage has been
+    uploaded for any of them.</p>
+  {% if auth.role.is_admin %}
+  <p><a href="/admin/rooms" class="button button--primary">Upload usage</a></p>
+  {% endif %}
+</div>
+{% else %}
+
+<div class="card">
+  <div class="section-head">
+    <div>
+      <h2>Which rooms are sitting empty?</h2>
+      <p class="page-head__sub">
+        Slots used as a share of slots available, by {{ granularity.value }}. A blank
+        cell means nothing was recorded, which is not the same as a room being empty.
+      </p>
+    </div>
+  </div>
+
+  <div class="heat-scroll">
+    <table class="data-table heat-grid">
+      <thead>
+        <tr>
+          <th>Room</th>
+          {% for label in labels %}<th class="numeric">{{ label }}</th>{% endfor %}
+          <th class="numeric">Overall</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in grid %}
+        <tr>
+          <td>
+            {{ row.room.name }}
+            {% if row.room.location_short %}
+            <span class="pill pill--neutral">{{ row.room.location_short }}</span>
+            {% endif %}
+          </td>
+          {% for cell in row.cells %}
+          <td
+            class="numeric heat-cell{% if cell.rate is not none %} heat-cell--l{{ (cell.rate / 20)|round(0, 'floor')|int }}{% endif %}"
+            {% if cell.rate is not none %}
+            title="{{ cell.used }} of {{ cell.available }} slots"
+            {% else %}
+            title="nothing recorded"
+            {% endif %}
+          >
+            {% if cell.rate is not none %}{{ cell.rate }}%{% else %}<span class="heat-blank">-</span>{% endif %}
+          </td>
+          {% endfor %}
+          <td class="numeric">
+            {% if row.rate is not none %}<strong>{{ row.rate }}%</strong>{% else %}-{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="heat-legend">
+    <span class="text-muted">Lower</span>
+    {% for level in range(5) %}
+    <span class="heat-swatch heat-cell--l{{ level }}"></span>
+    {% endfor %}
+    <span class="text-muted">Higher</span>
+    <span class="text-muted heat-legend__note">
+      A single hue ramp, deliberately not the status colours: a busy room is not good
+      news and an empty one is not an alert, they are just different numbers.
+    </span>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

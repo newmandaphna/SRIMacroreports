@@ -31,11 +31,18 @@ from app.models.types import Money, UTCDateTime, utcnow
 class Visit(Base):
     __tablename__ = "sessions"
     __table_args__ = (
-        # The upsert key. Patient name rather than patient code, because Patient Code
-        # is blank on 41 percent of the real sheet and the specified key collides on
-        # 2,467 rows there. See ASSUMPTIONS.md A-020 for the measurement.
+        # The upsert key. Two deliberate choices in it.
+        #
+        # Patient name rather than patient code, because Patient Code is blank on 41
+        # percent of the real sheet and the specified key collides on 2,467 rows
+        # there. See ASSUMPTIONS.md A-020 for the measurement.
+        #
+        # And NOT source_id. A visit is the same visit whichever quarterly sheet it
+        # arrives on, so identity is global. With source_id in the key, a visit
+        # appearing in both the Q2 and Q3 sheets, which the practice's own rolling
+        # export window makes likely at a quarter boundary, stored twice and was
+        # counted twice in every figure. See ASSUMPTIONS.md A-022.
         UniqueConstraint(
-            "source_id",
             "therapist_id",
             "patient_name_normalized",
             "dos",
@@ -49,10 +56,15 @@ class Visit(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
+    # Where this visit was first seen: which sheet, and which row of it. Provenance
+    # rather than identity, since identity is global (A-022), and deliberately never
+    # rewritten afterwards. The two have to move together or not at all: a visit on two
+    # overlapping sheets sits at a different row number in each, so taking the source
+    # from one and the row number from the other points at a real row holding a
+    # different visit.
     source_id: Mapped[int] = mapped_column(
         ForeignKey("data_sources.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    # Sheet row number, so a row can be found again in the source.
     source_row_ref: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     therapist_id: Mapped[int] = mapped_column(
@@ -104,6 +116,11 @@ class Visit(Base):
 
     # The comparable payload, used to decide insert vs update vs unchanged so that a
     # re-sync of identical data does not churn updated_at on nine thousand rows.
+    #
+    # Provenance is not in here. source_row_ref was, and that made two overlapping
+    # sheets fight over the same row on every sync: the visit is row 3 of one sheet and
+    # row 2 of the other, so each sync saw a change, rewrote the pointer, and reported
+    # an update. Nothing about the visit had changed.
     COMPARED_FIELDS = (
         "patient_code",
         "cpt_base",
@@ -120,7 +137,6 @@ class Visit(Base):
         "total_due",
         "total_paid",
         "total_balance",
-        "source_row_ref",
     )
 
     def differs_from(self, values: dict[str, object]) -> bool:

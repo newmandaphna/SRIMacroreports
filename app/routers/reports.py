@@ -98,7 +98,9 @@ class ReportContext:
 
     def as_template_context(self) -> dict:
         return {
-            "range": self.range,
+            # Deliberately not "range": that name shadows Jinja's range() builtin,
+            # and a template loop then fails with "DateRange object is not callable".
+            "date_range": self.range,
             "granularity": self.granularity,
             "granularities": list(Granularity),
             "presets": PICKER_PRESETS,
@@ -234,7 +236,7 @@ def below_threshold_count(db: DbSession, ctx: ReportContext) -> int:
         1
         for r in rows
         if r.measured_against_threshold
-        and ctx.config.utilization_status(int(r.sessions_per_week)) == "below"
+        and ctx.config.utilization_status(r.sessions_per_week) == "below"
     )
 
 
@@ -261,6 +263,7 @@ async def overview(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUse
             "kpis": build_kpis(db, ctx, current),
             "trend": trend,
             "therapist_rows": _ranked_for_board(therapist_rows, ctx.config),
+            "can_see_utilization": auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
             **ctx.as_template_context(),
         },
     )
@@ -278,7 +281,7 @@ def _ranked_for_board(
     decorated = [
         (
             row,
-            config.utilization_status(int(row.sessions_per_week))
+            config.utilization_status(row.sessions_per_week)
             if row.measured_against_threshold
             else "",
         )
@@ -318,6 +321,7 @@ async def financial(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUs
             "insurance_rows": queries.by_insurance(db, ctx.filters),
             "location_rows": queries.by_location(db, ctx.filters),
             "cpt_rows": queries.by_cpt(db, ctx.filters),
+            "can_see_utilization": auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
             **ctx.as_template_context(),
         },
     )

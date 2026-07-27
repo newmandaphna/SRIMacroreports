@@ -163,6 +163,19 @@ def env(monkeypatch) -> Iterator[dict[str, str]]:
             monkeypatch.delenv(key, raising=False)
     for key, value in values.items():
         monkeypatch.setenv(key, value)
+
+    # Every test starts from an empty schema. This is done here, in the root fixture,
+    # rather than in `client`, because it has to hold for tests that build their own
+    # app: the room utilization tests construct a TestClient directly so they can set
+    # the feature flag, and under a single shared PostgreSQL database they would
+    # otherwise inherit the previous test's users, rooms, and audit rows. Under the
+    # old per test SQLite file this isolation was free; on PostgreSQL it is not.
+    #
+    # Hanging it off `env` rather than making it autouse also makes the ordering a
+    # dependency rather than a convention: everything that reaches the database goes
+    # through `env`, so the reset is guaranteed to run before any app is created.
+    _reset_schema(load_settings())
+
     yield values
 
 
@@ -223,7 +236,7 @@ def _reset_schema(settings: Settings) -> None:
 
 @pytest.fixture
 def client(settings) -> Iterator[TestClient]:
-    _reset_schema(settings)
+    # The schema was already reset by `env`, which `settings` depends on.
     from app.main import create_app
 
     with TestClient(create_app(settings)) as test_client:
@@ -233,12 +246,9 @@ def client(settings) -> Iterator[TestClient]:
 @pytest.fixture
 def seeded_client(seeded_env) -> Iterator[TestClient]:
     """A client whose app seeded the initial administrator at startup."""
-    from app.config import load_settings
     from app.main import create_app
 
-    s = load_settings()
-    _reset_schema(s)
-    with TestClient(create_app(s)) as test_client:
+    with TestClient(create_app(load_settings())) as test_client:
         yield test_client
 
 

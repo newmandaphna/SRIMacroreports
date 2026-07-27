@@ -22,7 +22,7 @@
     ({{ (kpi.delta_percent if kpi.delta_percent > 0 else -kpi.delta_percent) }}%)
     {% endif %}
     {% endif %}
-    <span class="kpi-delta__basis">vs previous {{ range.days }} days</span>
+    <span class="kpi-delta__basis">vs previous {{ date_range.days }} days</span>
   </p>
   {% else %}
   <p class="kpi-delta kpi-delta--neutral">{{ kpi.label }}</p>

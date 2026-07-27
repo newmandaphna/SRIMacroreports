@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -42,13 +43,21 @@ class PracticeConfig:
     session_timeout_minutes: int
     timezone: str
 
-    def utilization_status(self, sessions: int) -> str:
-        """One of ok, watch, below. Alert red is reserved for `below`."""
+    def utilization_status(self, sessions_per_period: Decimal | float | int) -> str:
+        """One of ok, watch, below. Alert red is reserved for `below`.
+
+        Compares the weekly average as given, without truncating it to a whole
+        number first. Truncating would push a therapist at 19.9 sessions into the
+        same bucket as one at 19.0, which is a rounding artifact rather than a
+        judgement anyone intended to make.
+        """
         if self.benefits_session_threshold <= 0:
             return "ok"
-        if sessions >= self.benefits_session_threshold:
+        value = Decimal(str(sessions_per_period))
+        threshold = Decimal(self.benefits_session_threshold)
+        if value >= threshold:
             return "ok"
-        if sessions >= self.benefits_session_threshold * WATCH_BAND:
+        if value >= threshold * Decimal(str(WATCH_BAND)):
             return "watch"
         return "below"
 

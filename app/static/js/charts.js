@@ -131,6 +131,21 @@
         borderColor: color,
         backgroundColor: color,
       };
+      if (ds.reference) {
+        // A threshold line: dashed, flat, no points, and deliberately quieter than
+        // the series it is there to judge.
+        return Object.assign(common, {
+          type: "line",
+          borderWidth: 1.5,
+          borderDash: [5, 4],
+          borderColor: token("--color-ink-subtle", "#8b939f"),
+          backgroundColor: "transparent",
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          fill: false,
+          order: 0,
+        });
+      }
       if (type === "line") {
         return Object.assign(common, {
           borderWidth: 2,

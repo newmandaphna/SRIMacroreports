@@ -94,4 +94,44 @@
     <button type="submit" class="button button--primary">Save settings</button>
   </div>
 </form>
+
+<div class="card" style="margin-top: var(--space-4)">
+  <p class="card__title">Feature flags</p>
+  <p class="text-muted">
+    Set in the environment rather than here, because turning one on is a deployment
+    decision that depends on a data source existing.
+  </p>
+  <table class="data-table">
+    <tbody>
+      <tr>
+        <td>
+          Room utilization
+          <span class="field__hint">
+            No automated source of actual room usage. With the flag on, rooms and a
+            manual upload path appear; with it off the module is absent entirely.
+          </span>
+        </td>
+        <td>
+          {% if settings.room_utilization_enabled %}
+          <span class="pill pill--ok">on</span>
+          {% else %}<span class="pill pill--neutral">off</span>{% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>
+          Patient funnel
+          <span class="field__hint">
+            The only module that shows patient identity. Gated on the practice owner
+            confirming scope.
+          </span>
+        </td>
+        <td>
+          {% if settings.patient_funnel_enabled %}
+          <span class="pill pill--ok">on</span>
+          {% else %}<span class="pill pill--neutral">off</span>{% endif %}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 {% endblock %}

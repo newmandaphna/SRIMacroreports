@@ -382,7 +382,11 @@ def _execute(
         )
 
     resolver = AliasResolver(db)
-    existing = _load_existing(db, source.id) if not dry_run else {}
+
+    # Pre-pass for the date span of the incoming sheet, so the existing rows can be
+    # loaded for exactly that window. Cheap: the rows are already in memory.
+    incoming_dates = _incoming_date_span(data, positions)
+    existing = _load_existing(db, *incoming_dates) if not dry_run else {}
     seen_keys: set[tuple] = set()
 
     for row, row_number in zip(data.rows, data.row_numbers, strict=True):
@@ -456,19 +460,57 @@ def _execute(
         _upsert(db, source, run, existing, key, values, therapist_id, result)
 
 
+def _incoming_date_span(
+    data: SheetData, positions: dict[str, int]
+) -> tuple[date | None, date | None]:
+    """The earliest and latest readable date in the sheet, for scoping the preload."""
+    index = positions.get("dos")
+    if index is None:
+        return (None, None)
+
+    earliest: date | None = None
+    latest: date | None = None
+    for row in data.rows:
+        if _row_is_empty(row, positions):
+            break
+        try:
+            parsed = normalize.parse_date(row[index])
+        except normalize.ParseError:
+            continue
+        if parsed is None:
+            continue
+        earliest = parsed if earliest is None else min(earliest, parsed)
+        latest = parsed if latest is None else max(latest, parsed)
+    return (earliest, latest)
+
+
 def _track_dates(result: SyncResult, dos: date) -> None:
     result.date_min = dos if result.date_min is None else min(result.date_min, dos)
     result.date_max = dos if result.date_max is None else max(result.date_max, dos)
 
 
-def _load_existing(db: Session, source_id: int) -> dict[tuple, Visit]:
-    """Every visit already imported from this source, keyed by identity.
+def _load_existing(db: Session, earliest: date | None, latest: date | None) -> dict[tuple, Visit]:
+    """Every visit already stored in the incoming date range, keyed by identity.
+
+    Deliberately NOT scoped to one source. A visit is the same visit whichever sheet
+    it arrives on, so a row already imported from last quarter's sheet has to be found
+    and updated rather than inserted a second time. Scoping this to the source was a
+    real defect: the practice's export window rolls back into the previous quarter, so
+    a visit near a quarter boundary appeared in both sheets, stored twice, and was
+    counted twice in every figure. See ASSUMPTIONS.md A-022.
+
+    Scoped to the incoming date range rather than loading the whole table, so memory
+    stays proportional to the quarter being imported rather than to the entire history
+    the application accumulates.
 
     Loaded once rather than queried per row: nine thousand round trips against an
-    encrypted SQLite file is the difference between a sync that takes a second and
-    one that takes a minute.
+    encrypted SQLite file is the difference between a sync that takes a second and one
+    that takes a minute.
     """
-    visits = db.execute(select(Visit).where(Visit.source_id == source_id)).scalars().all()
+    stmt = select(Visit)
+    if earliest is not None and latest is not None:
+        stmt = stmt.where(Visit.dos >= earliest, Visit.dos <= latest)
+    visits = db.execute(stmt).scalars().all()
     return {(v.therapist_id, v.patient_name_normalized, v.dos, v.cpt): v for v in visits}
 
 

@@ -10,9 +10,18 @@ that touches data, logging, or access control. Read [ASSUMPTIONS.md](ASSUMPTIONS
 every definitional choice, including the places where observed data forced a deviation
 from the build specification.
 
-Current state: **Phase 3 complete.** Authentication and administration, the import
-pipeline, and the Financial module with the Reports overview dashboard. A synthetic
-demo source lets you exercise the whole path without credentials.
+Current state: **Phase 5 complete.** Authentication and administration, the import
+pipeline, the Financial module with the Reports overview dashboard, therapist
+utilization with per period notes, and room utilization behind a feature flag. A
+synthetic demo source lets you exercise the whole path without credentials.
+
+Phase 6, the patient level funnel, is **not built**. It is gated on the practice owner
+confirming its scope, and it is the only module that would surface patient identity
+outside the import error queue.
+
+Whatever is still undecided is listed in the application itself at **`/status`**, worked
+out from the current state of the data rather than from a hardcoded list, so an item
+disappears once it is genuinely resolved.
 
 ---
 
@@ -23,8 +32,9 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# Fill in SESSION_SECRET_KEY and DATABASE_ENCRYPTION_KEY. Both are required.
-python -c "import secrets; print(secrets.token_urlsafe(48))"   # for each
+# Fill in SESSION_SECRET_KEY. Required.
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+# Set DATABASE_URL to a PostgreSQL database. In Replit it is injected for you.
 # Also set ADMIN_EMAIL and ADMIN_INITIAL_PASSWORD, or nobody can sign in.
 
 alembic upgrade head
@@ -42,10 +52,14 @@ else is reachable. Then:
 
 | Where | What |
 | --- | --- |
+| `/status` | **In development**: open questions, caveats on the numbers, what is not built |
 | `/reports` | The overview dashboard |
 | `/reports/financial` | Sessions, revenue, outstanding, and the breakdowns |
+| `/reports/therapist-utilization` | Status board, weekly history, and per period notes |
+| `/reports/room-utilization` | Heat grid, only when `FEATURE_ROOM_UTILIZATION` is on |
 | `/admin/sources` | The quarterly Q sheets and the sync |
 | `/admin/therapists` | Therapists, their aliases, and their employment type |
+| `/admin/rooms` | Rooms and the manual usage upload, only when the flag is on |
 | `/admin/config` | Benefits threshold, CPT exclusions, week start, session timeout |
 | `/admin/users` | People and their access |
 | `/admin/audit` | The append only log |
@@ -91,8 +105,8 @@ in a file. `.env` is gitignored and `.env.example` never holds a real value.
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `SESSION_SECRET_KEY` | yes | Minimum 32 characters. Reserved for signing. See the secrets reference below. |
-| `DATABASE_ENCRYPTION_KEY` | yes | SQLCipher key for the whole database file. **Losing it means losing all the data, permanently.** |
-| `DATABASE_PATH` | no | Defaults to `data/sri_dashboard.db`. |
+| `DATABASE_URL` | yes | PostgreSQL connection URL. Injected automatically by Replit for its managed database. Carries the database password, so treat it as a secret. |
+| `TEST_DATABASE_URL` | for tests | A **separate** database the test suite is allowed to drop and rebuild. Never point this at the real one. |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | for sync | Full service account JSON, one line. |
 | `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD` | to sign in | Seeds one admin on first start. Password change forced on first login. Must meet the password policy or startup fails. |
 | `ENVIRONMENT` | no | `development`, `test`, or `production`. |
@@ -103,7 +117,7 @@ in a file. `.env` is gitignored and `.env.example` never holds a real value.
 | `CPT_EXCLUSIONS` | no | Comma separated. Defaults to `99998,99999,QBCHK,FORM,PRO BONO`. Governs session counts only, not revenue. |
 | `WEEK_START_DAY` | no | `monday` (default) or `sunday`. |
 | `APP_TIMEZONE` | no | Default `America/New_York`. |
-| `FEATURE_ROOM_UTILIZATION` | no | Default off, per the build specification. |
+| `FEATURE_ROOM_UTILIZATION` | no | Default off. With it off the module is a 404 everywhere and absent from navigation. |
 | `FEATURE_PATIENT_FUNNEL` | no | Default off. Phase 6, gated on your confirmation. |
 
 A missing required secret is a startup failure with a named error. There is no fallback,
@@ -141,58 +155,36 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 Setting one does not satisfy the other. Leave any pre-existing `SESSION_SECRET` alone
 and add `SESSION_SECRET_KEY` separately.
 
-#### `DATABASE_ENCRYPTION_KEY`
+#### `DATABASE_URL`
 
-**What it does: it is the only thing standing between the database file and anyone who
-gets a copy of it.** It is applied as `PRAGMA key` on every connection before any other
-statement (`app/db.py`), so the entire SQLite file is encrypted with SQLCipher: patient
-names and codes, every balance and payment, user accounts, password hashes, and the
-whole audit log. Without the key the file is indistinguishable from noise, and the
-standard library `sqlite3` driver cannot open it at all.
+**What it does:** points the application at its PostgreSQL database. In Replit this is
+injected automatically by the built in database; there is nothing to generate. It embeds
+the database password, so it is treated as a secret: it is redacted from
+`Settings.__repr__` and never logged.
 
-**Safe to generate a fresh random value?** It depends entirely on whether a database
-already exists at `DATABASE_PATH`:
+**Safe to change?** Pointing it at a different database points the application at
+different data. The schema is created by `alembic upgrade head`, which runs on boot, so an
+empty database is populated automatically. An existing database keeps its rows.
 
-| Situation | Effect of a new random key |
-| --- | --- |
-| Brand new deployment, no database file yet | Safe. A fresh encrypted database is created with that key. |
-| Database file already exists with data in it | **The application refuses to start.** The data is still there but is unreadable, and stays unreadable until the original key comes back. |
+#### `TEST_DATABASE_URL`
 
-There is no partial or degraded mode. Startup verifies the key actually opens the file
-and exits with a named error if it does not (`_verify_encryption` in `app/db.py`), because
-a PHI application that quietly falls back to an unencrypted database is worse than one
-that will not start.
+The test suite drops every table and re runs the migrations before each test, so it must
+never touch the real database. It uses `TEST_DATABASE_URL` and nothing else: `DATABASE_URL`
+is deliberately not a fallback for the destructive path. Tests **skip** rather than fail
+when it is unset, so a suite that appears to pass with no database configured has in fact
+asserted nothing. CI sets it explicitly and checks the database is reachable first, for
+exactly that reason.
 
-**If the key is lost, the data is gone.** Not recoverable by us, by Replit, or by
-anyone. Backups of the encrypted file are worthless without it, so the key must be
-escrowed somewhere separate from the backups, by the practice.
+### Encryption at rest
 
-**On Replit specifically:** before rotating this, check whether the deployment's disk
-persists between deploys. If it does, the existing database is still there and a new key
-will lock you out of it. If each deploy starts with an empty disk, a new key is fine, but
-so is losing all previously imported data, which is its own problem worth knowing about.
+**There is currently none at the application layer.** Earlier versions of this application
+stored data in a SQLCipher encrypted SQLite file keyed from `DATABASE_ENCRYPTION_KEY`; the
+move to Replit's managed PostgreSQL removed that layer along with the tests that proved it.
+`DATABASE_ENCRYPTION_KEY` is no longer read anywhere and can be removed from Secrets.
 
-To change the key on an existing database, rekey it rather than just setting a new value.
-
-### Rotating the database encryption key
-
-SQLCipher supports rekeying in place. Do it with the service stopped and a verified
-backup in hand, and update the secret before restarting.
-
-```bash
-# service stopped, backup taken
-python - <<'PY'
-import sqlcipher3
-conn = sqlcipher3.connect("data/sri_dashboard.db")
-conn.execute("PRAGMA key = 'OLD_KEY'")
-conn.execute("PRAGMA rekey = 'NEW_KEY'")
-conn.close()
-PY
-# then set DATABASE_ENCRYPTION_KEY to the new value and restart
-```
-
-Backups of the encrypted file are worthless without the key, so the key must be escrowed
-separately from the backups, by the practice, outside this system.
+This is a real open gap on a PHI system, not a tidy up item. **SECURITY.md section 5.2**
+states what is and is not true now and sets out three ways to close it. Read that before
+treating the deployment as compliant.
 
 ---
 
@@ -264,7 +256,7 @@ offending value.
 ```
 app/
   config.py          environment configuration, fails loud on missing secrets
-  db.py              SQLCipher engine, key application, encryption verification
+  db.py              PostgreSQL engine, session factory, connectivity verification
   logging_setup.py   PHI scrubbing log filter and formatter
   middleware.py      security headers, CSP, safe error responses
   main.py            application factory, health endpoints, routes
@@ -286,8 +278,8 @@ tests/
 ```
 
 - Python, FastAPI, Jinja2, htmx. No SPA framework.
-- SQLAlchemy with Alembic from day one. SQLite with SQLCipher now, structured so
-  PostgreSQL later is a configuration change.
+- SQLAlchemy with Alembic from day one. Originally SQLite with SQLCipher, now PostgreSQL;
+  the move was a change to `app/db.py` and a new baseline migration, nothing in the models.
 - Chart.js 4 from CDN, wrapped in `static/js/charts.js`, which reads the design tokens
   off the document so charts and page chrome cannot drift apart.
 - The Content Security Policy allows exactly one off origin source, the Chart.js CDN.
@@ -302,9 +294,9 @@ tests/
 | 1 | Auth, roles, module grants, user administration, audit log, session timeout, seeding | **done** |
 | 2 | Data model, Data Sources registry, sync engine with dry run and import errors | **done** |
 | 3 | Financial module and the Reports overview dashboard | **done** |
-| 4 | Therapist utilization: threshold config, status board, drill in, notes | next |
-| 5 | Room utilization behind its flag, manual upload path | |
-| 6 | Patient funnel: AR aging, new patient volume, no show patterns. Gated. | |
+| 4 | Therapist utilization: threshold config, status board, drill in, notes | **done** |
+| 5 | Room utilization behind its flag, manual upload path | **done** |
+| 6 | Patient funnel: AR aging, new patient volume, no show patterns | **gated, not started** |
 
 Each phase stops for review before the next one starts.
 

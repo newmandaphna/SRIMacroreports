@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head">
+  <h1>In development</h1>
+  <p class="page-head__sub">
+    What is still undecided, what qualifies the numbers on the other pages, and what is
+    not built. Everything here is worked out from the current state of the data, so an
+    item disappears when it is genuinely resolved.
+  </p>
+</div>
+
+{% if report.open_items %}
+<h2 class="status-heading">Waiting on an answer</h2>
+<p class="text-muted">
+  These are decisions the application cannot make for itself. Each one changes what the
+  reports say.
+</p>
+
+<div class="stack" style="margin-top: var(--space-3)">
+  {% for item in report.open_items %}
+  <div class="card status-card status-card--open">
+    <div class="section-head">
+      <div>
+        <h3 class="status-card__title">{{ item.title }}</h3>
+        <p class="status-card__detail">{{ item.detail }}</p>
+      </div>
+      {% if item.action_href %}
+      <a href="{{ item.action_href }}" class="button button--primary no-print"
+        >{{ item.action_label }}</a
+      >
+      {% endif %}
+    </div>
+    <p class="status-card__consequence"><strong>What it decides:</strong> {{ item.consequence }}</p>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="state">
+  <p class="state__title">Nothing is waiting on an answer</p>
+  <p>Every setting the reports depend on has been confirmed.</p>
+</div>
+{% endif %}
+
+{% if report.caveats %}
+<h2 class="status-heading">Read the numbers with this in mind</h2>
+<p class="text-muted">
+  Not problems with the application: facts about the data that change what a figure
+  means.
+</p>
+
+<div class="stack" style="margin-top: var(--space-3)">
+  {% for item in report.caveats %}
+  <div class="card status-card status-card--caveat">
+    <div class="section-head">
+      <div>
+        <h3 class="status-card__title">{{ item.title }}</h3>
+        <p class="status-card__detail">{{ item.detail }}</p>
+      </div>
+      {% if item.action_href %}
+      <a href="{{ item.action_href }}" class="button no-print">{{ item.action_label }}</a>
+      {% endif %}
+    </div>
+    <p class="status-card__consequence"><strong>Effect:</strong> {{ item.consequence }}</p>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if report.not_built %}
+<h2 class="status-heading">Not built yet</h2>
+
+<div class="stack" style="margin-top: var(--space-3)">
+  {% for item in report.not_built %}
+  <div class="card status-card">
+    <h3 class="status-card__title">{{ item.title }}</h3>
+    <p class="status-card__detail">{{ item.detail }}</p>
+    <p class="status-card__consequence">{{ item.consequence }}</p>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card" style="margin-top: var(--space-5)">
+  <p class="card__title">Where the detail lives</p>
+  <p class="text-muted">
+    Every definitional choice behind these figures is recorded in ASSUMPTIONS.md in the
+    repository, including the measurements that led to each one. How each HIPAA control
+    is implemented is in SECURITY.md. Both are kept current as the application changes.
+  </p>
+</div>
+{% endblock %}

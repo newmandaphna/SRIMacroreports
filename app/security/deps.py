@@ -39,6 +39,15 @@ class RedirectRequired(Exception):
         super().__init__(location)
 
 
+class FeatureDisabled(Exception):
+    """Raised when a route belonging to a disabled feature is reached.
+
+    Answered with a 404 rather than a 403, so a disabled module is indistinguishable
+    from one that was never built: a 403 would confirm to a prober that the feature
+    exists and is merely switched off.
+    """
+
+
 class AccessDenied(Exception):
     """Raised when an authenticated user lacks the role or grant for a route."""
 
@@ -54,10 +63,11 @@ def get_settings_dep(request: Request) -> Settings:
 def get_db(request: Request) -> Iterator[Session]:
     """Request scoped database session.
 
-    RedirectRequired and AccessDenied are control flow, not failures, and the work
-    done before they are raised must survive. That work is exactly the work an
-    auditor cares about: the ACCESS_DENIED record explaining a refusal, and the
-    revocation plus SESSION_EXPIRED record written when an idle session is retired.
+    RedirectRequired, AccessDenied, and FeatureDisabled are control flow, not
+    failures, and the work done before they are raised must survive. That work is
+    exactly the work an auditor cares about: the ACCESS_DENIED record explaining a
+    refusal, and the revocation plus SESSION_EXPIRED record written when an idle
+    session is retired.
     A blanket rollback on every exception would discard both, leaving a log that
     records successes and stays silent about refusals.
 
@@ -67,7 +77,7 @@ def get_db(request: Request) -> Iterator[Session]:
     try:
         yield session
         session.commit()
-    except (RedirectRequired, AccessDenied):
+    except (RedirectRequired, AccessDenied, FeatureDisabled):
         session.commit()
         raise
     except Exception:
