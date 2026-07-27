@@ -67,4 +67,10 @@ Phase 1 complete: auth, roles, module grants, user administration, audit log, se
 
 Phase 2 (data model + Google Sheets sync) is next.
 
+## Run command
+
+```
+uvicorn app.main:create_app --factory --host 0.0.0.0 --port 5000
+```
+
 ## User preferences

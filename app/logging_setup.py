@@ -45,7 +45,7 @@ _SENSITIVE_KEYS = (
     "credential",
     "private_key",
     "session_secret_key",
-    "database_encryption_key",
+    "database_url",
     "google_service_account_json",
 )
 

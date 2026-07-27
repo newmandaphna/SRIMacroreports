@@ -1,13 +1,10 @@
-"""The app boots, its database is genuinely encrypted, and headers are set."""
+"""The app boots, connects to PostgreSQL, and security headers are set."""
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-
 import pytest
 
-from app.config import ConfigError
+from app.config import ConfigError, load_settings
 from app.db import DatabaseHandle
 
 
@@ -44,29 +41,21 @@ def test_no_api_docs_exposed(client):
         assert client.get(path).status_code == 404
 
 
-def test_database_file_is_encrypted(settings):
+def test_database_connects_to_postgresql(settings):
+    """Verify the app connects to PostgreSQL and can execute a query."""
     handle = DatabaseHandle(settings)
     with handle.session() as session:
         from sqlalchemy import text
 
-        session.execute(text("CREATE TABLE probe (marker TEXT)"))
-        session.execute(text("INSERT INTO probe VALUES ('CANARYVALUE')"))
+        result = session.execute(text("SELECT version()")).scalar()
+        assert result is not None
+        assert "PostgreSQL" in result
     handle.dispose()
 
-    raw = Path(settings.database_path).read_bytes()
-    # A plain SQLite file starts with this magic and would show the value verbatim.
-    assert not raw.startswith(b"SQLite format 3")
-    assert b"CANARYVALUE" not in raw
 
-    # And the stdlib driver, which has no key, cannot read it.
-    with pytest.raises(sqlite3.DatabaseError):
-        sqlite3.connect(settings.database_path).execute("SELECT * FROM probe").fetchall()
-
-
-def test_wrong_key_fails_loudly(settings):
-    DatabaseHandle(settings).dispose()
-    wrong = settings.__class__(
-        **{**settings.__dict__, "database_encryption_key": "a-different-wrong-key"}
-    )
-    with pytest.raises(ConfigError, match="DATABASE_ENCRYPTION_KEY"):
-        DatabaseHandle(wrong)
+def test_bad_database_url_fails_loudly(env, monkeypatch):
+    """A wrong or unreachable DATABASE_URL raises ConfigError at startup."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://invalid:invalid@localhost:5432/nonexistent")
+    s = load_settings()
+    with pytest.raises(ConfigError, match="Could not connect"):
+        DatabaseHandle(s)

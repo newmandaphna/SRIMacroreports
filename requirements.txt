@@ -5,11 +5,11 @@ jinja2==3.1.5
 python-multipart==0.0.20
 itsdangerous==2.2.0
 
-# Database. sqlcipher3-binary ships a SQLCipher enabled SQLite, so the database file
-# is encrypted at rest. See SECURITY.md section 5.2.
+# Database. psycopg2-binary connects to Replit's built-in PostgreSQL.
+# DATABASE_URL is injected automatically by the Replit environment.
 sqlalchemy==2.0.37
 alembic==1.14.1
-sqlcipher3-binary==0.5.4
+psycopg2-binary==2.9.10
 
 # Auth (Phase 1)
 passlib[argon2]==1.7.4

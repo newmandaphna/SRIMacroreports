@@ -2,7 +2,7 @@
 
 Every secret is read from the environment. Nothing has a usable default. A missing
 secret is a startup failure with a named error, never a silent fallback, because a
-PHI application that boots without its encryption key is worse than one that refuses
+PHI application that boots without its session key is worse than one that refuses
 to boot at all.
 """
 
@@ -19,10 +19,7 @@ class ConfigError(RuntimeError):
 
 # Secrets that must be present before the app will serve a request. Kept as a
 # module level tuple so the startup check and the docs cannot drift apart.
-REQUIRED_SECRETS = (
-    "SESSION_SECRET_KEY",
-    "DATABASE_ENCRYPTION_KEY",
-)
+REQUIRED_SECRETS = ("SESSION_SECRET_KEY",)
 
 # Required only once auth exists (Phase 1). Listed here so the seeding code has one
 # place to look, and so README and .env.example stay in sync with the code.
@@ -84,8 +81,7 @@ class Settings:
     debug: bool
 
     session_secret_key: str
-    database_encryption_key: str
-    database_path: str
+    database_url: str
 
     # Google Sheets ingestion. Absent is tolerated at boot in development so the app
     # can run before credentials exist; a sync attempt without it fails loudly.
@@ -106,7 +102,7 @@ class Settings:
     _secret_fields: tuple[str, ...] = field(
         default=(
             "session_secret_key",
-            "database_encryption_key",
+            "database_url",
             "google_service_account_json",
         ),
         repr=False,
@@ -117,7 +113,6 @@ class Settings:
         shown = {
             "environment": self.environment,
             "debug": self.debug,
-            "database_path": self.database_path,
             "session_timeout_minutes": self.session_timeout_minutes,
         }
         body = ", ".join(f"{k}={v!r}" for k, v in shown.items())
@@ -157,8 +152,12 @@ def load_settings() -> Settings:
             'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
         )
 
-    encryption_key = _env("DATABASE_ENCRYPTION_KEY")
-    assert encryption_key is not None
+    database_url = _env("DATABASE_URL")
+    if not database_url:
+        raise ConfigError(
+            "DATABASE_URL is not set. In Replit this is provided automatically by the "
+            "built-in PostgreSQL database. Make sure the database is provisioned."
+        )
 
     debug = _env_bool("DEBUG", default=False)
     if debug and environment == "production":
@@ -179,8 +178,7 @@ def load_settings() -> Settings:
         environment=environment,
         debug=debug,
         session_secret_key=session_secret,
-        database_encryption_key=encryption_key,
-        database_path=_env("DATABASE_PATH") or "data/sri_dashboard.db",
+        database_url=database_url,
         google_service_account_json=_env("GOOGLE_SERVICE_ACCOUNT_JSON"),
         session_timeout_minutes=timeout,
         session_warning_minutes=warning,
