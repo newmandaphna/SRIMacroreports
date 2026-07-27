@@ -19,6 +19,7 @@ from app.models.data_source import (
     SyncStatus,
 )
 from app.models.enums import AuditAction, AuditResult, Module, Role
+from app.models.room import Room, RoomUsage, UsageSource
 from app.models.session import UserSession
 from app.models.therapist import (
     AliasSource,
@@ -47,6 +48,8 @@ __all__ = [
     "ModuleGrant",
     "RejectReason",
     "Role",
+    "Room",
+    "RoomUsage",
     "SourceProvider",
     "SyncMode",
     "SyncRun",
@@ -54,6 +57,7 @@ __all__ = [
     "Therapist",
     "TherapistAlias",
     "User",
+    "UsageSource",
     "UserSession",
     "UtilizationNote",
     "Visit",
