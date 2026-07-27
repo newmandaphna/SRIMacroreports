@@ -10,9 +10,9 @@ that touches data, logging, or access control. Read [ASSUMPTIONS.md](ASSUMPTIONS
 every definitional choice, including the places where observed data forced a deviation
 from the build specification.
 
-Current state: **Phase 0, scaffold.** The app boots, proves its configuration, opens an
-encrypted database, and serves a health endpoint plus a placeholder shell built on the
-real design tokens. There is no authentication and no data model yet.
+Current state: **Phase 1 complete.** Authentication, roles, module grants, user
+administration, the append only audit log, session timeout, and admin seeding are in
+place and tested. The reporting modules arrive from Phase 3.
 
 ---
 
@@ -25,15 +25,21 @@ pip install -r requirements.txt
 cp .env.example .env
 # Fill in SESSION_SECRET_KEY and DATABASE_ENCRYPTION_KEY. Both are required.
 python -c "import secrets; print(secrets.token_urlsafe(48))"   # for each
+# Also set ADMIN_EMAIL and ADMIN_INITIAL_PASSWORD, or nobody can sign in.
 
+alembic upgrade head
 uvicorn app.main:create_app --factory --reload
 ```
 
 Then:
 
-- `http://127.0.0.1:8000/` the shell
+- `http://127.0.0.1:8000/` the application, which redirects to sign in
 - `http://127.0.0.1:8000/healthz` liveness
 - `http://127.0.0.1:8000/readyz` readiness, which proves the encrypted database opens
+
+Sign in as `ADMIN_EMAIL`. You will be required to choose a new password before anything
+else is reachable. From there, `/admin/users` manages people and `/admin/audit` shows
+the log.
 
 Tests and lint:
 
@@ -42,11 +48,11 @@ pytest
 ruff check . && ruff format --check .
 ```
 
-Migrations (there are none yet; the data model lands in Phase 2):
+Migrations:
 
 ```bash
-alembic revision --autogenerate -m "description"
-alembic upgrade head
+alembic upgrade head                                  # apply
+alembic revision --autogenerate -m "description"      # create after a model change
 ```
 
 Note that `alembic.ini` deliberately carries no `sqlalchemy.url`. The database is
@@ -67,7 +73,7 @@ in a file. `.env` is gitignored and `.env.example` never holds a real value.
 | `DATABASE_ENCRYPTION_KEY` | yes | SQLCipher key. **Losing it means losing the database.** |
 | `DATABASE_PATH` | no | Defaults to `data/sri_dashboard.db`. |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | for sync | Full service account JSON, one line. |
-| `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD` | Phase 1 | Seeds one admin. Password change forced on first login. |
+| `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD` | to sign in | Seeds one admin on first start. Password change forced on first login. Must meet the password policy or startup fails. |
 | `ENVIRONMENT` | no | `development`, `test`, or `production`. |
 | `DEBUG` | no | Refused in production. Debug output can carry PHI. |
 | `SESSION_TIMEOUT_MINUTES` | no | Default 15, idle, enforced server side. |
@@ -154,10 +160,15 @@ app/
   logging_setup.py   PHI scrubbing log filter and formatter
   middleware.py      security headers, CSP, safe error responses
   main.py            application factory, health endpoints, routes
-  models/            SQLAlchemy models (Phase 1 and 2)
+  models/            SQLAlchemy models: users, grants, sessions, audit log
+  routers/           auth, admin user management, audit log viewer
+  security/          passwords, sessions, CSRF, audit writer, route dependencies
+  seed.py            first administrator, from the environment, once
+  templating.py      one render() that supplies CSRF, user, and navigation everywhere
   templates/         Jinja2 server rendered pages
   static/css/        tokens.css defines every colour, space, and size; app.css uses them
-  static/js/         charts.js, the one Chart.js wrapper every chart goes through
+  static/js/         charts.js, the one Chart.js wrapper every chart goes through,
+                     plus the idle session warning
 migrations/          Alembic, engine built from settings so the key stays out of the repo
 tests/
 ```
@@ -176,8 +187,8 @@ tests/
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 0 | Scaffold, dependencies, README, SECURITY.md, ASSUMPTIONS.md | **done** |
-| 1 | Auth, roles, module grants, user administration, audit log, session timeout, seeding | next |
-| 2 | Data model, Data Sources registry, sync engine with dry run and import errors | |
+| 1 | Auth, roles, module grants, user administration, audit log, session timeout, seeding | **done** |
+| 2 | Data model, Data Sources registry, sync engine with dry run and import errors | next |
 | 3 | Financial module and the Reports overview dashboard | |
 | 4 | Therapist utilization: threshold config, status board, drill in, notes | |
 | 5 | Room utilization behind its flag, manual upload path | |

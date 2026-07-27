@@ -4,7 +4,7 @@ Every definitional choice made while building the SRI Practice Dashboard, record
 moment it was made. Read this after every phase. Anything marked **NEEDS CONFIRMATION** is a
 default I picked to keep moving, not a decision I am confident in.
 
-Last updated: Phase 0 review complete, all Phase 0 questions answered.
+Last updated: Phase 1 complete.
 
 ---
 
@@ -348,8 +348,48 @@ Financial, therapist utilization, and room utilization queries never select `pat
 cannot leak a name into a chart tooltip.
 
 **A-053. Session timeout is 15 minutes idle, warned at 13.**
-Server side expiry. The client warning is a courtesy; the server is what enforces it. Configurable
-per the build prompt.
+Server side expiry, evaluated on every authenticated request against `last_seen_at`. The client
+warning is a courtesy; the server is what enforces it. Configurable per the build prompt.
+
+The countdown endpoint reports remaining time without extending the session. This is deliberate:
+if the poll that drives the warning also refreshed the clock, the idle timeout could never fire.
+
+**A-053a. Failed logins lock an account for 15 minutes after 5 attempts.**
+Neither number came from the practice. Five is low enough to stop password guessing and high
+enough to survive an ordinary bad morning; fifteen minutes is short enough that a locked colleague
+usually waits rather than calls. An admin password reset clears a lockout immediately.
+
+Accepted tradeoff, recorded because it is a real one: anyone who knows a colleague's email address
+can lock them out for 15 minutes on purpose. For an internal application of this size, with an
+admin who can reset on request, that is the better side of the trade. The alternative, no lockout,
+leaves the login form open to unlimited guessing.
+
+**A-053b. Session cookies are browser session scoped, with no max age.**
+Closing the browser drops the cookie. The server side idle timeout is the real control either way,
+so a persistent cookie would only widen the window in which a stolen cookie is useful.
+
+**A-053c. Sessions are revoked immediately on any change to what a person may do.**
+Deactivation, a role change, a grant change, and a password reset all revoke every live session for
+that user. A password change revokes every session except the one making the change, so a stolen
+cookie does not survive the change intended to shut it out. The alternative, waiting for the next
+login, means a revoked grant stays usable for up to a working day.
+
+**A-053d. The last active administrator cannot be demoted or deactivated.**
+Including by themselves. Nothing else in the app can restore admin access, so allowing it would
+mean a support call and a hand edited database. Refusing it costs an admin one extra step on the
+rare occasion they genuinely want to hand over: promote the successor first.
+
+**A-053e. Failed logins reveal nothing about whether an account exists.**
+Wrong password and unknown address return the same message, the same status, and take about the
+same time (an unknown address still runs a password verification against a dummy hash). The one
+deliberate exception is a locked account, which says so: that user is almost certainly the account
+owner, and "incorrect password" would only send them into more failed attempts.
+
+**A-053f. All timestamps are stored and returned as timezone aware UTC.**
+SQLite has no native timestamp type, so `DateTime(timezone=True)` silently drops the offset on a
+round trip and hands back a naive value. A custom `UTCDateTime` column type makes the contract
+explicit. Under PostgreSQL it becomes a no op, so the models port unchanged. Display conversion to
+America/New_York happens at the template layer, never in storage.
 
 **A-054. Database encryption at rest uses SQLCipher, and the app fails loudly without a key.**
 Details and the operational caveats are in SECURITY.md. If the SQLCipher driver is unavailable in

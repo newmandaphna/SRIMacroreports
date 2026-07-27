@@ -5,7 +5,7 @@ This document is written to be handed to an auditor. It is kept current as each 
 every control below is marked with its implementation status so nobody mistakes an intention for a
 control.
 
-Last updated: Phase 0.
+Last updated: Phase 1.
 Status key: **IMPLEMENTED** / **PARTIAL** / **PLANNED (phase N)**.
 
 ---
@@ -43,14 +43,14 @@ funnel selects aggregates or therapist grain rows. None of them select patient c
 
 ### 3.1 Unique user identification, 164.312(a)(2)(i)
 
-**PLANNED (Phase 1).**
+**IMPLEMENTED (Phase 1).**
 Every person gets their own account keyed on their own email address. There are no shared logins,
 no generic `admin` or `frontdesk` account, and no service accounts that a human signs into. Accounts
 are deactivated, never deleted, so that audit log entries always resolve to a real identity.
 
 ### 3.2 Authentication
 
-**PLANNED (Phase 1).**
+**IMPLEMENTED (Phase 1).**
 - Passwords hashed with Argon2id via passlib. No reversible storage, no MD5 or SHA family.
 - Minimum 12 characters, checked against a common password list. No forced rotation, per current
   NIST guidance, since rotation drives users toward predictable increments.
@@ -62,7 +62,7 @@ are deactivated, never deleted, so that audit log entries always resolve to a re
 
 ### 3.3 Authorization
 
-**PLANNED (Phase 1).**
+**IMPLEMENTED (Phase 1).**
 Two orthogonal axes:
 - **Role** controls what you may do: `ADMIN` (everything, including user administration, config,
   Data Sources, sync, audit log), `MANAGER` (read granted modules, plus enter utilization data and
@@ -73,21 +73,33 @@ Two orthogonal axes:
 Financial access does not confer patient level access. The `patient_funnel` grant is separate and
 must be granted explicitly.
 
-**Enforcement is server side, on every route and every query.** Hiding a nav link is a usability
-choice, never a security control. A user who types a URL for a module they lack gets a 403 from the
-route dependency, and the query layer additionally refuses to build a patient grain query without
-the `patient_funnel` grant, so a routing mistake alone cannot leak identity.
+**Enforcement is server side.** Hiding a nav link is a usability choice, never a security control.
+A user who types a URL for a module they lack gets a 403 from the route dependency, and the refusal
+is written to the audit log. Navigation is rendered from the same grants the dependency checks, so
+the two cannot disagree.
+
+A second, independent check at the query layer, refusing to build a patient grain query without the
+`patient_funnel` grant, is **PLANNED (Phase 6)** and lands with the first query that could select a
+patient column. Until then there are no such queries to guard.
 
 ### 3.4 Automatic logoff, 164.312(a)(2)(iii)
 
-**PLANNED (Phase 1).**
-Server side idle expiry, default 15 minutes, configurable through the admin config page. The client
-shows a warning at 13 minutes with an extend option. Expiry is evaluated on the server against the
-stored session record; a client that never fires its timer still gets logged out.
+**IMPLEMENTED (Phase 1).**
+Server side idle expiry, default 15 minutes. The client shows a warning at 13 minutes with an
+extend option. Expiry is evaluated on the server against the stored session record on every
+authenticated request, so a client that never fires its timer still gets logged out, and a browser
+with JavaScript disabled is no less protected.
+
+The countdown endpoint (`/session/status`) deliberately reports the remaining time without
+extending the session. If polling for the countdown refreshed the clock, the idle timeout would
+never fire at all.
+
+Both values are configurable by environment variable today. Moving them into the admin config page
+is **PLANNED (Phase 2)**, with the config table.
 
 ### 3.5 Emergency access, 164.312(a)(2)(ii)
 
-**PLANNED (Phase 1).**
+**IMPLEMENTED (Phase 1).**
 An ADMIN may reach any module regardless of their own grants. Every such access is written to the
 audit log with a distinct action type (`emergency_access`) so that break glass use is separable from
 routine use when the log is reviewed.
@@ -96,7 +108,7 @@ routine use when the log is reviewed.
 
 ## 4. Audit controls, 45 CFR 164.312(b)
 
-**PLANNED (Phase 1).**
+**IMPLEMENTED (Phase 1).**
 
 The `audit_log` table is append only. There is no update path and no delete path anywhere in the
 codebase: no ORM update or delete on the model, no raw SQL, no admin UI affordance. Admins may read
@@ -107,18 +119,29 @@ action, target type, target id, timestamp in UTC, source IP, and result (success
 
 Logged events:
 
-| Category | Events |
-| --- | --- |
-| Authentication | login success, login failure, logout, session expiry, password change, forced change |
-| User administration | user created, role changed, grant added or removed, user deactivated or reactivated, password reset |
-| Configuration | any change to benefits threshold, CPT exclusions, week start, session timeout |
-| Data sources | source created, edited, activated, deactivated, mapping changed |
-| Sync | every run, dry run and live, with rows read, upserted, rejected, and by whom |
-| Manual data entry | utilization notes, room utilization uploads, any manual edit |
-| **PHI read** | every load of a patient level view, with the filter parameters used |
-| **Export** | every CSV export from any table view, with row count and filters |
+| Category | Events | Status |
+| --- | --- | --- |
+| Authentication | login success, login failure, logout, session expiry, session extension, password change, account lockout | live |
+| Authorization | access denied (role, grant, or CSRF), emergency access by an admin | live |
+| User administration | user created, updated, role changed, grant added or removed, deactivated or reactivated, password reset | live |
+| Audit | every view of the audit log itself | live |
+| **Export** | every CSV export, with row count and filters | live |
+| **PHI read** | every load of a patient level view, with the filter parameters used | live, exercised from Phase 6 |
+| Configuration | any change to benefits threshold, CPT exclusions, week start, session timeout | Phase 2 |
+| Data sources | source created, edited, activated, deactivated, mapping changed | Phase 2 |
+| Sync | every run, dry run and live, with rows read, upserted, rejected, and by whom | Phase 2 |
+| Manual data entry | utilization notes, room utilization uploads, any manual edit | Phase 4 |
+
+The action types for the later rows exist in the enum now, so adding the feature does not also
+require remembering to add its audit call.
 
 Retention is 6 years, met by never deleting.
+
+**Audit writes survive the failures they describe.** A refusal raises an exception that propagates
+out of the route, and a blanket rollback on exception would discard the ACCESS_DENIED record
+written moments earlier, leaving a log that faithfully records successes and stays silent about
+refusals. The request scoped session therefore commits on the two control flow exceptions
+(a redirect and an access denial) and rolls back on everything else.
 
 **The audit log itself contains no PHI.** A patient level view read is logged as the view name plus
 its filter parameters, not as the rows returned. Where a target is a specific patient record, the
@@ -130,22 +153,27 @@ target id is the internal row id, not the patient name.
 
 ### 5.1 In transit
 
-**PARTIAL (Phase 0 sets the middleware, Phase 1 completes it with auth cookies).**
+**IMPLEMENTED (Phase 1).**
 - HTTPS only. HTTP requests are redirected, and the app is intended to run only behind TLS
   termination.
 - HSTS with a long max age.
 - Session cookies are `Secure`, `HttpOnly`, and `SameSite=Strict`.
-- CSRF tokens on every state changing route (POST, PUT, PATCH, DELETE). Missing or mismatched token
-  is a 403 and an audit entry.
+- CSRF tokens on every state changing route (POST, PUT, PATCH, DELETE), enforced centrally in
+  middleware rather than per route, so a new handler is protected by default instead of by
+  remembering. The token is bound to the server side session rather than double submitted in a
+  cookie, so an attacker who can write cookies for a sibling subdomain still cannot forge a
+  request. A missing or mismatched token is a 403 and an audit entry.
 - Security headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
   `Referrer-Policy: no-referrer`, and a Content Security Policy. The CSP allows the Chart.js CDN
   and nothing else off origin.
 
 ### 5.2 At rest
 
-**PARTIAL (Phase 0 wires the configuration and the fail loud check, Phase 2 populates the schema).**
+**IMPLEMENTED (Phase 0), verified by test.**
 
-The database is SQLite encrypted with SQLCipher. The key comes from the `DATABASE_ENCRYPTION_KEY`
+The database is SQLite encrypted with SQLCipher. The test suite asserts that a canary value written
+through the application does not appear in the file's bytes, that the file does not carry the plain
+SQLite magic header, and that the standard library `sqlite3` driver cannot open it. The key comes from the `DATABASE_ENCRYPTION_KEY`
 environment variable and is applied as a `PRAGMA key` on every new connection, before any other
 statement runs.
 
@@ -255,15 +283,31 @@ Rules that hold for all of them:
 Recorded honestly, because an auditor will ask and a document that claims completeness at Phase 0
 is not credible.
 
-1. **Most controls are not built yet.** Phase 0 is scaffolding. Sections 3 and 4 are designed and
-   scheduled, not implemented. This document tracks status per control so the gap is visible.
+1. **The reporting modules do not exist yet.** Sections 3 and 4 are implemented and tested, but
+   they currently guard an application with no data in it. The controls will not have been
+   exercised against real PHI until Phase 2 syncs the first rows.
 2. **No BAA coverage claim is made for Google.** The Google Sheets side of this is the practice's
    existing workflow, and whether Google Workspace is covered by a BAA for that data is the
    practice's determination, not this application's. The app reads from it either way.
 3. **No encryption of the database backup process is specified here.** Backups of a SQLCipher file
    are encrypted at rest by construction, but backup storage, retention, and key escrow are
    operational matters outside this codebase.
-4. **No intrusion detection, no WAF, no rate limiting yet.** Login rate limiting is scheduled for
-   Phase 1. The rest depends on the hosting posture.
-5. **Single tenant assumption.** The application serves one practice. There is no tenant isolation
+4. **Login throttling is per account, not per source.** After 5 consecutive failed passwords an
+   account locks for 15 minutes, and the lockout is audited. That stops password guessing against
+   one account. It does not stop password spraying, one attempt each against many accounts from one
+   source, because there is no per IP limit. Adding one at the application layer is of limited
+   value behind a proxy that can be told to send any `X-Forwarded-For`; the right place is the
+   hosting edge. Flagged rather than half solved.
+
+   Note the tradeoff the lockout itself creates: an attacker who knows a colleague's email address
+   can lock them out for 15 minutes at will. For an internal application of this size, with an
+   administrator who can reset on request, that is the better side of the trade.
+5. **No intrusion detection and no WAF.** Both depend on the hosting posture rather than on this
+   codebase.
+6. **A bulk SQL statement could still modify the audit log.** The append only guarantee is enforced
+   by ORM events, which fire per instance and are bypassed by a hand written
+   `UPDATE audit_log` or `DELETE FROM audit_log`. No such statement exists in the codebase, and a
+   test greps the source on every build to keep it that way, but a database administrator with
+   direct file access and the encryption key is outside what application code can control.
+7. **Single tenant assumption.** The application serves one practice. There is no tenant isolation
    layer, because there are no other tenants.
