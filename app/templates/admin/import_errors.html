@@ -39,8 +39,10 @@
 <p class="text-muted" style="margin: var(--space-2) 0 var(--space-3)">
   Showing rows {{ ((page - 1) * page_size + 1)|count }} to
   {{ ((page - 1) * page_size + rejections|length)|count }} of {{ total|count }}.
-  Errors from an earlier run are resolved automatically when a newer sync re-reads
-  the sheet, so this list never has to be worked through by hand after a fix.
+  A live sync that re-reads a row's part of the sheet resolves its stale errors
+  automatically, so after a fix this list clears itself on the next live sync
+  rather than needing to be worked through by hand. A dry run replaces only an
+  earlier dry run's findings, because a preview imports nothing.
 </p>
 
 <div class="card">
@@ -69,10 +71,13 @@
         <td class="numeric">{{ r.created_at|datetime }}</td>
         <td class="table-actions">
           {% if r.is_resolved %}
-          {% if r.resolution_note and r.resolution_note.startswith("Superseded") %}
-          <span class="pill pill--neutral" title="{{ r.resolution_note }}">superseded</span>
+          {# Keyed on who resolved it, not on the note text: supersession leaves
+             resolved_by empty, a human resolution never does, and a human note is
+             free text that could begin with anything. #}
+          {% if r.resolved_by_id %}
+          <span class="pill pill--neutral" title="{{ r.resolution_note or '' }}">reviewed</span>
           {% else %}
-          <span class="pill pill--neutral">reviewed</span>
+          <span class="pill pill--neutral" title="{{ r.resolution_note or '' }}">superseded</span>
           {% endif %}
           {% else %}
           <form

@@ -695,3 +695,44 @@ def test_a_roster_wide_failure_gets_roster_advice_not_sheet_advice(admin_client,
     assert "rejected for the same reason" in page
     assert "means the roster, not the rows" in page
     assert "property of the sheet" not in page
+
+
+def test_the_old_run_page_also_says_superseded_not_reviewed(admin_client, demo):
+    """Both pages that render a resolved rejection must tell the same story about
+    who resolved it. The run history is where an admin investigates an old run."""
+    for _ in range(2):
+        admin_client.post(
+            f"/admin/sources/{demo}/sync",
+            data={"csrf_token": csrf(admin_client, demo), "mode": "live"},
+            follow_redirects=True,
+        )
+    with admin_client.app.state.db.session() as db:
+        first_run = db.execute(select(func.min(SyncRun.id))).scalar_one()
+
+    page = admin_client.get(f"/admin/sources/{demo}/runs/{first_run}").text
+    assert "superseded" in page
+    assert ">reviewed</span>" not in page
+
+
+def test_a_human_note_starting_with_superseded_still_reads_as_reviewed(admin_client, demo):
+    """The pill is keyed on who resolved the row, not on the note text, so a manual
+    resolution cannot dress itself up as a system action with a chosen phrase."""
+    admin_client.post(
+        f"/admin/sources/{demo}/sync",
+        data={"csrf_token": csrf(admin_client, demo), "mode": "live"},
+        follow_redirects=True,
+    )
+    with admin_client.app.state.db.session() as db:
+        entry_id = db.execute(select(func.min(ImportErrorRow.id))).scalar_one()
+
+    admin_client.post(
+        f"/admin/sources/{demo}/errors/{entry_id}/resolve",
+        data={
+            "csrf_token": csrf(admin_client, demo),
+            "note": "Superseded manually, spoke to the practice manager.",
+        },
+        follow_redirects=True,
+    )
+
+    page = admin_client.get(f"/admin/sources/{demo}/errors?show=all").text
+    assert ">reviewed</span>" in page

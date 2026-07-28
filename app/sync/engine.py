@@ -346,7 +346,11 @@ def run_sync(
     # the strength of a read that never reached it.
     if result.ok and result.rows_read > 0:
         result.superseded_errors = _supersede_stale_errors(
-            db, source.id, run.id, last_examined_row=source.header_row + result.rows_read
+            db,
+            source.id,
+            run.id,
+            last_examined_row=source.header_row + result.rows_read,
+            dry_run=dry_run,
         )
 
     if not dry_run and result.ok:
@@ -360,7 +364,12 @@ def run_sync(
 
 
 def _supersede_stale_errors(
-    db: Session, source_id: int, current_run_id: int, *, last_examined_row: int
+    db: Session,
+    source_id: int,
+    current_run_id: int,
+    *,
+    last_examined_row: int,
+    dry_run: bool,
 ) -> int:
     """Resolve unresolved errors that earlier runs of this source left behind.
 
@@ -368,21 +377,29 @@ def _supersede_stale_errors(
     note naming the run whose account replaced them, so nothing is silently dropped.
     A failed run never supersedes anything, because it did not produce a new account.
 
-    Three deliberate boundaries:
+    Four deliberate boundaries:
     - Only errors at or before `last_examined_row`. The current run's account covers
       exactly the sheet rows it read, no further.
     - Only errors from runs with a lower id. Two overlapping syncs must not let the
       older read mark the newer read's account as stale.
     - Only errors whose row reference is a plain row number. One that is not cannot be
       placed inside or outside the read, so it keeps its place in the review queue.
+    - A dry run replaces only earlier dry runs' findings. The open queue tracks what
+      is missing from the database, and a dry run changes nothing in the database: a
+      clean preview of a fixed sheet must not clear a live run's errors while the
+      fixed rows are still unimported, or every page would call the source fully
+      accounted for when its data exists nowhere.
     """
-    candidates = db.execute(
-        select(ImportErrorRow.id, ImportErrorRow.source_row_ref).where(
-            ImportErrorRow.source_id == source_id,
-            ImportErrorRow.sync_run_id < current_run_id,
-            ImportErrorRow.resolved_at.is_(None),
+    stmt = select(ImportErrorRow.id, ImportErrorRow.source_row_ref).where(
+        ImportErrorRow.source_id == source_id,
+        ImportErrorRow.sync_run_id < current_run_id,
+        ImportErrorRow.resolved_at.is_(None),
+    )
+    if dry_run:
+        stmt = stmt.join(SyncRun, SyncRun.id == ImportErrorRow.sync_run_id).where(
+            SyncRun.mode == SyncMode.DRY_RUN
         )
-    ).all()
+    candidates = db.execute(stmt).all()
     stale_ids = [
         row_id
         for row_id, ref in candidates

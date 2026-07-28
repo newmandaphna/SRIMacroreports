@@ -464,15 +464,37 @@ def test_superseded_errors_are_resolved_not_deleted(client, demo_source):
         assert f"run {second.run_id}" in (entry.resolution_note or "")
 
 
-def test_a_dry_run_also_supersedes(client, demo_source):
-    """Admins re-run dry runs while debugging a sheet, which is exactly when the pile
-    grows fastest. A completed read is a completed read."""
+def test_a_dry_run_supersedes_only_earlier_dry_runs(client, demo_source):
+    """Admins re-run dry runs while debugging a sheet, so previews replace previews
+    and the pile does not grow. But a preview replaces only previews: see the next
+    test for why it must never touch a live run's errors."""
     first = sync(client, demo_source, dry_run=True)
     sync(client, demo_source, dry_run=True)
 
     remaining = open_errors(client, demo_source)
     assert first.run_id not in {r.sync_run_id for r in remaining}
     assert len(remaining) == first.rows_rejected  # same sheet, same account
+
+
+def test_a_dry_run_never_clears_a_live_runs_errors(client, demo_source):
+    """The open queue tracks what is missing from the database, and a dry run changes
+    nothing in the database. If a clean preview of a fixed sheet cleared the live
+    errors, every page would call the source fully accounted for while the fixed rows
+    were still unimported: not in the sessions table, not in the queue, nowhere."""
+    live = sync(client, demo_source, dry_run=False)
+    preview = sync(client, demo_source, dry_run=True)
+
+    assert preview.superseded_errors == 0
+    still_open = {r.sync_run_id for r in open_errors(client, demo_source)}
+    assert live.run_id in still_open
+
+
+def test_a_live_run_supersedes_dry_run_findings_too(client, demo_source):
+    live_first = sync(client, demo_source, dry_run=True)
+    sync(client, demo_source, dry_run=False)
+
+    remaining = {r.sync_run_id for r in open_errors(client, demo_source)}
+    assert live_first.run_id not in remaining
 
 
 def test_a_failed_run_supersedes_nothing(client, demo_source):
@@ -566,7 +588,9 @@ def test_supersession_stops_at_the_last_row_the_run_examined(client, demo_source
         db.flush()
 
         # The current run examined sheet rows up to 100 only.
-        n = _supersede_stale_errors(db, demo_source, current.id, last_examined_row=100)
+        n = _supersede_stale_errors(
+            db, demo_source, current.id, last_examined_row=100, dry_run=False
+        )
         assert n == 1
 
         remaining = (
@@ -600,4 +624,9 @@ def test_an_older_read_never_supersedes_a_newer_account(client, demo_source):
         )
 
         # The older run finishes second and tries to supersede.
-        assert _supersede_stale_errors(db, demo_source, older.id, last_examined_row=9999) == 0
+        assert (
+            _supersede_stale_errors(
+                db, demo_source, older.id, last_examined_row=9999, dry_run=False
+            )
+            == 0
+        )

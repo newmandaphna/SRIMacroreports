@@ -208,7 +208,13 @@
         </td>
         <td class="table-actions">
           {% if r.is_resolved %}
-          <span class="pill pill--neutral">reviewed</span>
+          {# Same distinction as the errors page: reviewed records a human decision,
+             superseded records that a newer read replaced this list. #}
+          {% if r.resolved_by_id %}
+          <span class="pill pill--neutral" title="{{ r.resolution_note or '' }}">reviewed</span>
+          {% else %}
+          <span class="pill pill--neutral" title="{{ r.resolution_note or '' }}">superseded</span>
+          {% endif %}
           {% else %}
           <form
             method="post"
