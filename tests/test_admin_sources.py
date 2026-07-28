@@ -413,3 +413,83 @@ def test_raw_tab_is_refused_for_lookup_import(admin_client, demo):
 def test_raw_tab_is_not_offered_in_the_picker(admin_client, demo):
     page = admin_client.get(f"/admin/sources/{demo}")
     assert "RAW_Appointments" not in page.text
+
+
+# ------------------------------------------------- the unsaved mapping suggestion
+
+
+def clear_mapping(admin_client, source_id: int) -> None:
+    """Put a source back into the state a source created before the mapping was
+    persisted at creation would be in: correct headers, nothing stored."""
+    with admin_client.app.state.db.session() as db:
+        db.get(DataSource, source_id).column_mapping = {}
+
+
+def test_an_unsaved_suggestion_is_labelled_as_unsaved(admin_client, demo):
+    """The dropdowns fall back to a suggestion, so the mapping looks complete while
+    Sync refuses. Without this the page contradicts itself and names no next step."""
+    clear_mapping(admin_client, demo)
+    page = admin_client.get(f"/admin/sources/{demo}").text
+
+    assert "This mapping has not been saved yet" in page
+    assert "suggested, not saved" in page
+
+
+def test_the_sync_panel_names_the_missing_step_rather_than_the_missing_fields(admin_client, demo):
+    """ "Map these first: dos" is a dead end when dos is already filled in on screen."""
+    clear_mapping(admin_client, demo)
+    page = admin_client.get(f"/admin/sources/{demo}").text
+
+    assert "has not been saved" in page
+    assert "Save source" in page
+
+
+def test_saving_the_suggestion_clears_the_warning_and_enables_sync(admin_client, demo):
+    clear_mapping(admin_client, demo)
+
+    page = admin_client.get(f"/admin/sources/{demo}").text
+
+    # Re-post the form the way a browser would: every select at the value it displays,
+    # which for an unsaved source is the suggestion.
+    data = {
+        "csrf_token": token_from(page),
+        "label": "Demo (synthetic)",
+        "tab_name": "Q2 Snapshot (demo)",
+        "header_row": "1",
+        "active": "1",
+    }
+    for block in re.findall(r'name="(map__[a-z_]+)"[^>]*>(.*?)</select>', page, re.S):
+        name, options = block
+        chosen = re.search(r'<option value="([^"]*)" selected', options)
+        data[name] = chosen.group(1) if chosen else ""
+
+    assert data["map__dos"], "the form should be displaying a suggestion for dos"
+    admin_client.post(f"/admin/sources/{demo}", data=data, follow_redirects=True)
+
+    with admin_client.app.state.db.session() as db:
+        source = db.get(DataSource, demo)
+        assert not source.missing_required_fields
+        assert source.is_ready_to_sync
+
+    page = admin_client.get(f"/admin/sources/{demo}").text
+    assert "This mapping has not been saved yet" not in page
+    assert "suggested, not saved" not in page
+
+
+def test_a_saved_mapping_never_shows_the_warning(admin_client, demo):
+    """The demo route persists the mapping at creation, so this is the normal path."""
+    page = admin_client.get(f"/admin/sources/{demo}").text
+    assert "This mapping has not been saved yet" not in page
+    assert "suggested, not saved" not in page
+
+
+def test_the_warning_stays_off_when_the_sheet_cannot_be_read(admin_client, demo):
+    """No headers means no suggestion, so the honest message is the field list."""
+    with admin_client.app.state.db.session() as db:
+        source = db.get(DataSource, demo)
+        source.column_mapping = {}
+        source.tab_name = "No Such Tab"
+
+    page = admin_client.get(f"/admin/sources/{demo}").text
+    assert "This mapping has not been saved yet" not in page
+    assert "Map these first" in page
