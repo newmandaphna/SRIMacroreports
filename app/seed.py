@@ -58,17 +58,18 @@ def sync_admin_password(db: Session) -> None:
     if admin is None:
         return
 
-    # Never overwrite a password the user chose for themselves.
-    if not admin.must_change_password:
-        return
-
     if verify_password(password, admin.password_hash):
-        return  # already in sync
+        return  # already in sync — nothing to do
 
+    # Hash is out of sync with ADMIN_PASSWORD (secret was renamed, value was changed,
+    # or the database was re-created). Reset it and force a password change so the
+    # admin sets a permanent credential on next login.
     admin.password_hash = hash_password(password)
+    admin.must_change_password = True
     logger.warning(
-        "ADMIN_PASSWORD does not match stored hash for %s — hash updated at startup. "
-        "This is expected after a secret rename or value change.",
+        "ADMIN_PASSWORD does not match stored hash for %s — hash updated at startup "
+        "and must_change_password reset. Log in with ADMIN_PASSWORD then set a new "
+        "permanent password.",
         email,
     )
 
