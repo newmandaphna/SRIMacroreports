@@ -13,6 +13,7 @@ from app.models.data_source import (
     Lookup,
     LookupKind,
     SourceProvider,
+    SyncRun,
 )
 from app.models.data_source import (
     ImportError as ImportErrorRow,
@@ -493,3 +494,132 @@ def test_the_warning_stays_off_when_the_sheet_cannot_be_read(admin_client, demo)
     page = admin_client.get(f"/admin/sources/{demo}").text
     assert "This mapping has not been saved yet" not in page
     assert "Map these first" in page
+
+
+# ------------------------------------------- systemic failures and error paging
+
+
+def seed_run_with_errors(admin_client, source_id: int, *, count: int, rows_read: int) -> int:
+    """A run whose rejections are fabricated directly, so scale is cheap."""
+    from app.models.data_source import RejectReason, SyncMode, SyncStatus
+
+    with admin_client.app.state.db.session() as db:
+        run = SyncRun(
+            source_id=source_id,
+            mode=SyncMode.LIVE,
+            status=SyncStatus.SUCCESS,
+            rows_read=rows_read,
+            rows_rejected=count,
+        )
+        db.add(run)
+        db.flush()
+        for i in range(count):
+            db.add(
+                ImportErrorRow(
+                    sync_run_id=run.id,
+                    source_id=source_id,
+                    reason=RejectReason.MISSING_DOS,
+                    field="dos",
+                    source_row_ref=str(i + 2),
+                    therapist_hint="YEO",
+                )
+            )
+        return run.id
+
+
+def test_a_systemic_failure_is_named_as_a_sheet_problem(admin_client, demo):
+    """6,766 identical rejections are one problem, not 6,766. The run page must say
+    so instead of presenting them as individual errors to review."""
+    run_id = seed_run_with_errors(admin_client, demo, count=60, rows_read=62)
+
+    page = admin_client.get(f"/admin/sources/{demo}/runs/{run_id}").text
+    assert "rejected for the same reason" in page
+    assert "property of the sheet" in page
+    assert "Populate the dates in the sheet" in page
+
+
+def test_mixed_rejections_are_not_called_systemic(admin_client, demo):
+    """The demo sheet rejects five rows for five different reasons."""
+    page = admin_client.get(f"/admin/sources/{demo}").text
+    admin_client.post(
+        f"/admin/sources/{demo}/sync",
+        data={"csrf_token": token_from(page), "mode": "live"},
+        follow_redirects=True,
+    )
+    with admin_client.app.state.db.session() as db:
+        run_id = db.execute(select(func.max(SyncRun.id))).scalar_one()
+
+    page = admin_client.get(f"/admin/sources/{demo}/runs/{run_id}").text
+    assert "rejected for the same reason" not in page
+
+
+def test_the_run_page_caps_its_rejection_table(admin_client, demo):
+    """A run against the real sheet can reject thousands of rows. The page shows the
+    counts for all of them and the rows for a readable sample."""
+    run_id = seed_run_with_errors(admin_client, demo, count=210, rows_read=211)
+
+    page = admin_client.get(f"/admin/sources/{demo}/runs/{run_id}").text
+    assert page.count("Mark reviewed") == 200
+    assert "Showing the first 200 of 210" in re.sub(r"\s+", " ", page)
+    assert "No date of service: 210" in page
+
+
+def test_the_errors_page_paginates_instead_of_capping_silently(admin_client, demo):
+    """It used to stop at 500 rows while calling itself the full account."""
+    seed_run_with_errors(admin_client, demo, count=210, rows_read=211)
+
+    first = admin_client.get(f"/admin/sources/{demo}/errors").text
+    assert first.count("Mark reviewed") == 200
+    assert "Showing rows 1 to 200 of 210" in re.sub(r"\s+", " ", first)
+    assert "Page 1 of 2" in first
+
+    second = admin_client.get(f"/admin/sources/{demo}/errors?page=2").text
+    assert second.count("Mark reviewed") == 10
+    assert "Showing rows 201 to 210 of 210" in re.sub(r"\s+", " ", second)
+
+
+def test_the_errors_page_shows_reason_counts(admin_client, demo):
+    seed_run_with_errors(admin_client, demo, count=60, rows_read=62)
+    page = admin_client.get(f"/admin/sources/{demo}/errors").text
+    assert "No date of service: 60" in page
+
+
+def test_a_page_number_past_the_end_clamps_rather_than_404s(admin_client, demo):
+    seed_run_with_errors(admin_client, demo, count=10, rows_read=12)
+    page = admin_client.get(f"/admin/sources/{demo}/errors?page=99")
+    assert page.status_code == 200
+    assert "Showing rows 1 to 10 of 10" in re.sub(r"\s+", " ", page.text)
+
+
+def test_superseded_errors_read_as_superseded_not_reviewed(admin_client, demo):
+    """The distinction matters: reviewed records a human decision, superseded records
+    that a newer read of the sheet replaced the list."""
+    page = admin_client.get(f"/admin/sources/{demo}").text
+    for _ in range(2):
+        admin_client.post(
+            f"/admin/sources/{demo}/sync",
+            data={"csrf_token": csrf(admin_client, demo), "mode": "dry_run"},
+            follow_redirects=True,
+        )
+
+    page = admin_client.get(f"/admin/sources/{demo}/errors?show=all").text
+    assert "superseded" in page
+    assert "Superseded by sync run" in page
+
+
+def test_the_sync_audit_records_how_many_errors_were_superseded(admin_client, demo):
+    for _ in range(2):
+        admin_client.post(
+            f"/admin/sources/{demo}/sync",
+            data={"csrf_token": csrf(admin_client, demo), "mode": "live"},
+            follow_redirects=True,
+        )
+
+    with admin_client.app.state.db.session() as db:
+        entry = db.execute(
+            select(AuditLog)
+            .where(AuditLog.action == AuditAction.SYNC_RUN)
+            .order_by(AuditLog.id.desc())
+            .limit(1)
+        ).scalar_one()
+    assert '"superseded": 5' in (entry.detail or "")

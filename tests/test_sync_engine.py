@@ -413,3 +413,129 @@ def test_spreadsheet_id_extraction_rejects_nonsense():
         extract_spreadsheet_id("")
     with pytest.raises(SheetsError):
         extract_spreadsheet_id("https://example.invalid/some/other/thing")
+
+
+# ----------------------------------------------------------- error supersession
+
+
+def open_errors(client, source_id: int) -> list[ImportErrorRow]:
+    with client.app.state.db.session() as db:
+        return (
+            db.execute(
+                select(ImportErrorRow).where(
+                    ImportErrorRow.source_id == source_id,
+                    ImportErrorRow.resolved_at.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+def test_a_new_run_supersedes_the_previous_runs_errors(client, demo_source):
+    """Each run's list is the current account of the source, so the previous run's
+    unresolved errors are stale copies of it. Without this, every sync appended its
+    rejections and a 6,766 row problem doubled on the second look."""
+    first = sync(client, demo_source, dry_run=False)
+    second = sync(client, demo_source, dry_run=False)
+
+    assert second.superseded_errors == first.rows_rejected
+
+    remaining = open_errors(client, demo_source)
+    assert len(remaining) == second.rows_rejected
+    assert {r.sync_run_id for r in remaining} == {second.run_id}
+
+
+def test_superseded_errors_are_resolved_not_deleted(client, demo_source):
+    """Never silently dropped still holds: the stale rows stay, marked with the run
+    whose account replaced them."""
+    first = sync(client, demo_source, dry_run=False)
+    second = sync(client, demo_source, dry_run=False)
+
+    with client.app.state.db.session() as db:
+        stale = (
+            db.execute(select(ImportErrorRow).where(ImportErrorRow.sync_run_id == first.run_id))
+            .scalars()
+            .all()
+        )
+    assert len(stale) == first.rows_rejected
+    for entry in stale:
+        assert entry.resolved_at is not None
+        assert f"run {second.run_id}" in (entry.resolution_note or "")
+
+
+def test_a_dry_run_also_supersedes(client, demo_source):
+    """Admins re-run dry runs while debugging a sheet, which is exactly when the pile
+    grows fastest. A completed read is a completed read."""
+    first = sync(client, demo_source, dry_run=True)
+    sync(client, demo_source, dry_run=True)
+
+    remaining = open_errors(client, demo_source)
+    assert first.run_id not in {r.sync_run_id for r in remaining}
+    assert len(remaining) == first.rows_rejected  # same sheet, same account
+
+
+def test_a_failed_run_supersedes_nothing(client, demo_source):
+    """A run that read nothing produced no account, so it replaces nothing."""
+    live = sync(client, demo_source, dry_run=False)
+    assert live.rows_rejected > 0
+
+    with client.app.state.db.session() as db:
+        source = db.get(DataSource, demo_source)
+        source.column_mapping = {"therapist": "Therapist"}
+        failed = run_sync(db, source, DemoSheetsClient(), dry_run=True)
+
+    assert not failed.ok
+    assert failed.superseded_errors == 0
+    assert len(open_errors(client, demo_source)) == live.rows_rejected
+
+
+def test_supersession_is_scoped_to_its_own_source(client, demo_source):
+    """Another source's open errors are its own account and must not be touched."""
+    from app.models.data_source import SyncRun
+
+    with client.app.state.db.session() as db:
+        other = DataSource(
+            label="Other", provider=SourceProvider.DEMO, tab_name="t", column_mapping={}
+        )
+        db.add(other)
+        db.flush()
+        other_run = SyncRun(source_id=other.id, mode=SyncMode.LIVE)
+        db.add(other_run)
+        db.flush()
+        db.add(
+            ImportErrorRow(
+                sync_run_id=other_run.id,
+                source_id=other.id,
+                reason=RejectReason.MISSING_DOS,
+                source_row_ref="2",
+            )
+        )
+        other_id = other.id
+
+    sync(client, demo_source, dry_run=False)
+    sync(client, demo_source, dry_run=False)
+
+    assert len(open_errors(client, other_id)) == 1
+
+
+def test_a_manually_reviewed_error_is_not_relabelled(client, demo_source):
+    """A human's resolution note is a record of a decision. Supersession only touches
+    rows that nobody resolved."""
+    from app.models.types import utcnow
+
+    first = sync(client, demo_source, dry_run=False)
+
+    with client.app.state.db.session() as db:
+        entry = db.execute(
+            select(ImportErrorRow).where(ImportErrorRow.sync_run_id == first.run_id).limit(1)
+        ).scalar_one()
+        entry.resolved_at = utcnow()
+        entry.resolution_note = "Expected, per the practice manager."
+        reviewed_id = entry.id
+
+    sync(client, demo_source, dry_run=False)
+
+    with client.app.state.db.session() as db:
+        entry = db.get(ImportErrorRow, reviewed_id)
+        assert entry.resolution_note == "Expected, per the practice manager."

@@ -20,7 +20,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.data_source import (
@@ -70,6 +70,8 @@ class SyncResult:
     date_min: date | None = None
     date_max: date | None = None
     error_message: str | None = None
+    # Unresolved errors from earlier runs of this source that this run replaced.
+    superseded_errors: int = 0
 
     @property
     def rows_rejected(self) -> int:
@@ -331,6 +333,14 @@ def run_sync(
             )
         )
 
+    # A completed read of the sheet, dry or live, produces the current full account of
+    # what did not make it in, so the accounts left by earlier runs are stale copies of
+    # it. Without this every sync appended its rejections to the pile: a sheet with
+    # 6,766 undated rows became 6,766 open errors on the first look and 13,532 on the
+    # second, and fixing the sheet cleared none of them.
+    if result.ok and result.rows_read > 0:
+        result.superseded_errors = _supersede_stale_errors(db, source.id, run.id)
+
     if not dry_run and result.ok:
         source.last_synced_at = utcnow()
         source.coverage_start = result.date_min
@@ -339,6 +349,32 @@ def run_sync(
         source.row_count = _count_visits(db, source.id)
 
     return result
+
+
+def _supersede_stale_errors(db: Session, source_id: int, current_run_id: int) -> int:
+    """Resolve unresolved errors that earlier runs of this source left behind.
+
+    Resolved, not deleted: the rows stay visible under the All filter, each carrying a
+    note naming the run whose account replaced them, so nothing is silently dropped.
+    A failed run never supersedes anything, because it did not produce a new account.
+    """
+    stmt = (
+        update(ImportErrorRow)
+        .where(
+            ImportErrorRow.source_id == source_id,
+            ImportErrorRow.sync_run_id != current_run_id,
+            ImportErrorRow.resolved_at.is_(None),
+        )
+        .values(
+            resolved_at=utcnow(),
+            resolution_note=(
+                f"Superseded by sync run {current_run_id}, which re-read the sheet "
+                "in full. Its error list is the current account of this source."
+            ),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return db.execute(stmt).rowcount
 
 
 def _count_visits(db: Session, source_id: int) -> int:
