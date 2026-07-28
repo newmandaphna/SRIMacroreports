@@ -624,11 +624,19 @@ a {
   color: var(--color-ink-muted);
 }
 
-/* Tables scroll inside their card rather than pushing the page sideways. */
+/* Tables scroll inside their card rather than pushing the page sideways.
+
+   display: block on the table plus nowrap on every cell broke two things at once:
+   cells with real prose (audit details, notes, rejection reasons) could never wrap,
+   and a block table stops laying columns out against the full card width. Only the
+   headers stay on one line; body cells wrap like text should. */
 
 .card > .data-table {
   display: block;
   overflow-x: auto;
+}
+
+.card > .data-table th {
   white-space: nowrap;
 }
 
