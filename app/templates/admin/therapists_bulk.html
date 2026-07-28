@@ -6,7 +6,7 @@
     <h1>Bulk edit therapists</h1>
     <p class="page-head__sub">
       Update display names and employment types for every therapist in one submission.
-      Existing aliases are not changed here — use each therapist's detail page to manage them.
+      Existing aliases are not changed here. Use each therapist's detail page to manage them.
     </p>
   </div>
   <a href="/admin/therapists" class="button button--quiet">Back to list</a>
@@ -73,7 +73,7 @@
             <span class="pill pill--neutral">{{ a.alias }}</span>
             {% endfor %}
             {% if not t.aliases %}
-            <span class="text-muted" style="font-size: 0.85em">none — rows will reject at import</span>
+            <span class="text-muted" style="font-size: 0.85em">none, so rows will reject at import</span>
             {% endif %}
           </td>
           <td>

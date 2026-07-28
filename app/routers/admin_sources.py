@@ -35,7 +35,7 @@ from app.sync.demo_data import (
     DEMO_TAB_NAME,
     DEMO_THERAPISTS,
 )
-from app.sync.engine import run_sync, suggest_mapping
+from app.sync.engine import AliasResolver, run_sync, suggest_mapping
 from app.sync.sheets import (
     SheetsError,
     client_for,
@@ -47,6 +47,12 @@ from app.templating import render
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/sources", tags=["admin"])
+
+# Rejection tables render at most this many rows per page. A real sheet can reject
+# thousands of rows at once, and a page that tries to show all of them is unreadable,
+# heavy with patient hints, and slow to build. The counts always describe the whole
+# set; only the row detail is paged.
+REJECTION_PAGE_SIZE = 200
 
 
 def _client(request: Request, source: DataSource):
@@ -402,6 +408,7 @@ async def sync_source(
             "updated": result.rows_updated,
             "unchanged": result.rows_unchanged,
             "rejected": result.rows_rejected,
+            "superseded": result.superseded_errors,
             "unmapped_columns": result.unmapped_columns,
             "error": result.error_message,
         },
@@ -429,7 +436,7 @@ def _lookup_redirect(
 
     if isinstance(result, AliasImportResult):
         if result.created_aliases == 0 and not result.unmatched and not result.conflicts:
-            params["notice"] = "No new aliases to import — all were already up to date."
+            params["notice"] = "No new aliases to import: all were already up to date."
         else:
             parts = []
             if result.created_aliases:
@@ -439,7 +446,7 @@ def _lookup_redirect(
                 parts.append("All aliases already up to date.")
             if result.conflicts:
                 n = len(result.conflicts)
-                parts.append(f"{n} skipped — already point at a different therapist.")
+                parts.append(f"{n} skipped: already point at a different therapist.")
             params["notice"] = " ".join(parts) if parts else "Import complete."
         if result.unmatched:
             # Pipe-separated so commas inside names survive round-trip.
@@ -476,11 +483,46 @@ async def run_detail(
             status_code=404,
         )
 
+    # Aggregates first, in SQL: a run against the real sheet can reject thousands of
+    # rows, and 6,797 table rows in one page is unreadable and unrenderable. The
+    # breakdown carries the diagnosis; the table below it is a capped sample.
+    reason_rows = db.execute(
+        select(
+            ImportErrorRow.reason,
+            func.max(ImportErrorRow.field),
+            func.count(ImportErrorRow.id),
+        )
+        .where(ImportErrorRow.sync_run_id == run.id)
+        .group_by(ImportErrorRow.reason)
+        .order_by(func.count(ImportErrorRow.id).desc())
+    ).all()
+    reason_counts = [
+        (RejectReason(reason).label, field_name, n) for reason, field_name, n in reason_rows
+    ]
+    total_rejections = sum(n for _, _, n in reason_counts)
+
+    # When one reason accounts for nearly every row, the problem is the sheet or the
+    # mapping, not the rows, and saying so beats presenting 6,766 identical errors as
+    # though each deserved individual review.
+    systemic = None
+    if reason_rows and run.rows_read:
+        top_reason, top_field, top_count = reason_rows[0]
+        if top_count >= 50 and top_count >= 0.9 * run.rows_read:
+            systemic = {
+                "label": RejectReason(top_reason).label,
+                "field": top_field,
+                "count": top_count,
+                "total_read": run.rows_read,
+                "is_missing_dos": RejectReason(top_reason) is RejectReason.MISSING_DOS,
+                "is_unknown_therapist": RejectReason(top_reason) is RejectReason.UNKNOWN_THERAPIST,
+            }
+
     rejections = (
         db.execute(
             select(ImportErrorRow)
             .where(ImportErrorRow.sync_run_id == run.id)
             .order_by(ImportErrorRow.id)
+            .limit(REJECTION_PAGE_SIZE)
         )
         .scalars()
         .all()
@@ -496,17 +538,48 @@ async def run_detail(
             target_type="sync_run",
             target_id=run.id,
             request=request,
-            detail={"view": "import_errors", "rows": len(rejections)},
+            detail={"view": "import_errors", "rows": len(rejections), "total": total_rejections},
         )
 
     # Unique unrecognized therapist names, ordered by frequency so the most
-    # impactful ones are at the top of the callout.
-    unknown_therapists: list[tuple[str, int]] = []
-    _unknown_counts: dict[str, int] = {}
-    for r in rejections:
-        if r.reason.value == RejectReason.UNKNOWN_THERAPIST.value and r.raw_value:
-            _unknown_counts[r.raw_value] = _unknown_counts.get(r.raw_value, 0) + 1
-    unknown_therapists = sorted(_unknown_counts.items(), key=lambda t: -t[1])
+    # impactful ones are at the top of the callout. Computed over the whole run, not
+    # the displayed sample.
+    unknown_therapists = [
+        (name, n)
+        for name, n in db.execute(
+            select(ImportErrorRow.raw_value, func.count(ImportErrorRow.id))
+            .where(
+                ImportErrorRow.sync_run_id == run.id,
+                ImportErrorRow.reason == RejectReason.UNKNOWN_THERAPIST,
+                ImportErrorRow.raw_value.is_not(None),
+            )
+            .group_by(ImportErrorRow.raw_value)
+            .order_by(func.count(ImportErrorRow.id).desc())
+        ).all()
+    ]
+
+    # Names carried by rows that were rejected before the therapist was ever checked.
+    # The date check short circuits first, so a sheet wide date failure hides a second
+    # wave: none of those rows has been tested against the roster yet, and fixing the
+    # dates alone converts them into unknown therapist rejections on the next sync.
+    # Naming the gap now lets the roster be built in parallel, so the next sync
+    # imports in one pass instead of failing a second way.
+    unchecked_therapists: list[tuple[str, int]] = []
+    pending_names = db.execute(
+        select(ImportErrorRow.therapist_hint, func.count(ImportErrorRow.id))
+        .where(
+            ImportErrorRow.sync_run_id == run.id,
+            ImportErrorRow.reason != RejectReason.UNKNOWN_THERAPIST,
+            ImportErrorRow.therapist_hint.is_not(None),
+        )
+        .group_by(ImportErrorRow.therapist_hint)
+        .order_by(func.count(ImportErrorRow.id).desc())
+    ).all()
+    if pending_names:
+        resolver = AliasResolver(db)
+        unchecked_therapists = [
+            (name, n) for name, n in pending_names if resolver.resolve(name) is None
+        ]
 
     return render(
         request,
@@ -517,8 +590,12 @@ async def run_detail(
             "source": source,
             "run": run,
             "rejections": rejections,
+            "total_rejections": total_rejections,
+            "reason_counts": reason_counts,
+            "systemic": systemic,
             "reasons": {r.value: r.label for r in RejectReason},
             "unknown_therapists": unknown_therapists,
+            "unchecked_therapists": unchecked_therapists,
         },
     )
 
@@ -620,15 +697,43 @@ async def source_errors(
     auth: AdminUser,
     source_id: int,
     show: str = Query(default="open"),
+    page: int = Query(default=1, ge=1),
 ) -> Response:
     source = db.get(DataSource, source_id)
     if source is None:
         return RedirectResponse("/admin/sources", status_code=303)
 
-    stmt = select(ImportErrorRow).where(ImportErrorRow.source_id == source.id)
+    conditions = [ImportErrorRow.source_id == source.id]
     if show == "open":
-        stmt = stmt.where(ImportErrorRow.resolved_at.is_(None))
-    rejections = db.execute(stmt.order_by(ImportErrorRow.id.desc()).limit(500)).scalars().all()
+        conditions.append(ImportErrorRow.resolved_at.is_(None))
+
+    # Counts describe the whole set; the table below is one page of it. The page used
+    # to stop silently at 500 rows while calling itself the full account, which at
+    # 6,766 rejections meant most of the account was invisible with no sign it existed.
+    total = db.execute(select(func.count(ImportErrorRow.id)).where(*conditions)).scalar_one()
+    reason_counts = [
+        (RejectReason(reason).label, n)
+        for reason, n in db.execute(
+            select(ImportErrorRow.reason, func.count(ImportErrorRow.id))
+            .where(*conditions)
+            .group_by(ImportErrorRow.reason)
+            .order_by(func.count(ImportErrorRow.id).desc())
+        ).all()
+    ]
+
+    last_page = max(1, -(-total // REJECTION_PAGE_SIZE))  # ceiling division
+    page = min(page, last_page)
+    rejections = (
+        db.execute(
+            select(ImportErrorRow)
+            .where(*conditions)
+            .order_by(ImportErrorRow.id.desc())
+            .offset((page - 1) * REJECTION_PAGE_SIZE)
+            .limit(REJECTION_PAGE_SIZE)
+        )
+        .scalars()
+        .all()
+    )
 
     if rejections:
         audit.record(
@@ -638,7 +743,13 @@ async def source_errors(
             target_type="data_source",
             target_id=source.id,
             request=request,
-            detail={"view": "import_errors", "show": show, "rows": len(rejections)},
+            detail={
+                "view": "import_errors",
+                "show": show,
+                "page": page,
+                "rows": len(rejections),
+                "total": total,
+            },
         )
 
     return render(
@@ -650,5 +761,10 @@ async def source_errors(
             "source": source,
             "rejections": rejections,
             "show": show,
+            "page": page,
+            "last_page": last_page,
+            "total": total,
+            "page_size": REJECTION_PAGE_SIZE,
+            "reason_counts": reason_counts,
         },
     )

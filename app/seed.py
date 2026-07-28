@@ -4,7 +4,7 @@ Runs at startup, once. If an active admin already exists it does nothing, so a r
 never resurrects or overwrites an account.
 
 Also syncs the seeded admin's password hash if ADMIN_PASSWORD is set and the stored
-hash no longer matches — this covers the common case where the secret value changes
+hash no longer matches. This covers the common case where the secret value changes
 (or the secret was renamed) between deployments and the database hash falls out of sync.
 
 The seeded password must be changed on first login before any other route is reachable
@@ -59,7 +59,7 @@ def sync_admin_password(db: Session) -> None:
         return
 
     if verify_password(password, admin.password_hash):
-        return  # already in sync — nothing to do
+        return  # already in sync, nothing to do
 
     # Hash is out of sync with ADMIN_PASSWORD (secret was renamed, value was changed,
     # or the database was re-created). Reset the hash, clear any lockout, and force a
@@ -69,7 +69,7 @@ def sync_admin_password(db: Session) -> None:
     admin.failed_login_count = 0
     admin.locked_until = None
     logger.warning(
-        "ADMIN_PASSWORD does not match stored hash for %s — hash updated at startup, "
+        "ADMIN_PASSWORD does not match stored hash for %s. Hash updated at startup, "
         "lockout cleared, and must_change_password reset. Log in with ADMIN_PASSWORD "
         "then set a new permanent password.",
         email,

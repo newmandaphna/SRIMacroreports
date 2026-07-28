@@ -29,6 +29,22 @@
 </div>
 
 {% if rejections %}
+{% if reason_counts %}
+<p style="margin: var(--space-3) 0 0">
+  {% for label, n in reason_counts %}
+  <span class="pill pill--below">{{ label }}: {{ n|count }}</span>
+  {% endfor %}
+</p>
+{% endif %}
+<p class="text-muted" style="margin: var(--space-2) 0 var(--space-3)">
+  Showing rows {{ ((page - 1) * page_size + 1)|count }} to
+  {{ ((page - 1) * page_size + rejections|length)|count }} of {{ total|count }}.
+  A live sync that re-reads a row's part of the sheet resolves its stale errors
+  automatically, so after a fix this list clears itself on the next live sync
+  rather than needing to be worked through by hand. A dry run replaces only an
+  earlier dry run's findings, because a preview imports nothing.
+</p>
+
 <div class="card">
   <table class="data-table">
     <thead>
@@ -55,7 +71,14 @@
         <td class="numeric">{{ r.created_at|datetime }}</td>
         <td class="table-actions">
           {% if r.is_resolved %}
-          <span class="pill pill--neutral">reviewed</span>
+          {# Keyed on who resolved it, not on the note text: supersession leaves
+             resolved_by empty, a human resolution never does, and a human note is
+             free text that could begin with anything. #}
+          {% if r.resolved_by_id %}
+          <span class="pill pill--neutral" title="{{ r.resolution_note or '' }}">reviewed</span>
+          {% else %}
+          <span class="pill pill--neutral" title="{{ r.resolution_note or '' }}">superseded</span>
+          {% endif %}
           {% else %}
           <form
             method="post"
@@ -72,6 +95,26 @@
     </tbody>
   </table>
 </div>
+
+{% if last_page > 1 %}
+<div class="form-actions" style="margin-top: var(--space-3)">
+  {% if page > 1 %}
+  <a
+    href="/admin/sources/{{ source.id }}/errors?show={{ show }}&page={{ page - 1 }}"
+    class="button"
+    >Newer</a
+  >
+  {% endif %}
+  <span class="text-muted">Page {{ page }} of {{ last_page }}</span>
+  {% if page < last_page %}
+  <a
+    href="/admin/sources/{{ source.id }}/errors?show={{ show }}&page={{ page + 1 }}"
+    class="button"
+    >Older</a
+  >
+  {% endif %}
+</div>
+{% endif %}
 {% else %}
 <div class="state">
   <p class="state__title">

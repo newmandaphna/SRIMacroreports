@@ -89,18 +89,80 @@
   <p>
     <strong>{{ unknown_therapists|length }} unrecognized therapist name{{ "s" if unknown_therapists|length != 1 else "" }}.</strong>
     The rows for these names were not imported. Create a therapist record for each one,
-    then sync again. The importer never creates therapists automatically — a wrong merge
+    then sync again. The importer never creates therapists automatically, because a wrong merge
     is invisible once it happens.
   </p>
   <ul style="margin: var(--space-2) 0 0 0; padding-left: var(--space-4);">
-    {% for name, count in unknown_therapists %}
+    {% for name, count in unknown_therapists[:40] %}
     <li style="margin-bottom: var(--space-1);">
       <strong>{{ name }}</strong>
       <span class="text-muted">({{ count }} row{{ "s" if count != 1 else "" }})</span>
-      —
       <a href="/admin/therapists?prefill={{ name|urlencode }}">Create therapist →</a>
     </li>
     {% endfor %}
+    {% if unknown_therapists|length > 40 %}
+    <li class="text-muted">and {{ unknown_therapists|length - 40 }} more</li>
+    {% endif %}
+  </ul>
+</div>
+{% endif %}
+
+{% if systemic %}
+<div class="alert alert--warning" role="alert" style="margin-top: var(--space-4)">
+  <p>
+    <strong
+      >{{ systemic.count|count }} of the {{ systemic.total_read|count }} rows read were
+      rejected for the same reason: {{ systemic.label|lower }}.</strong
+    >
+  </p>
+  {% if systemic.is_missing_dos %}
+  <p>
+    A failure this uniform is a property of the sheet, not of the individual rows.
+    The <code>{{ systemic.field }}</code> column was found and mapped, and the cells
+    themselves came back empty. Populate the dates in the sheet, then sync again:
+    nothing here is lost, because every sync re-reads the whole tab, and this list
+    is replaced by the next run's. Marking these rows reviewed one by one would hide
+    the signal without importing anything.
+  </p>
+  {% elif systemic.is_unknown_therapist %}
+  <p>
+    A failure this uniform means the roster, not the rows: the rows carry usable data,
+    but no name in them matched a therapist record or alias. Create the therapists
+    listed above, then sync again. The importer never creates them itself, because a
+    wrong merge is invisible once it happens.
+  </p>
+  {% else %}
+  <p>
+    A failure this uniform usually points at the sheet or the mapping rather than at
+    the individual rows. Check both before working through rows one by one. A re-sync
+    replaces this list with the new run's account.
+  </p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if unchecked_therapists %}
+<div class="card" style="margin-top: var(--space-4)">
+  <p class="card__title">Names waiting behind these rejections</p>
+  <p class="text-muted">
+    These rows were rejected before the therapist name was ever checked, so fixing the
+    sheet is only half the work: {{ unchecked_therapists|length }}
+    name{{ "s" if unchecked_therapists|length != 1 else "" }} in them
+    {{ "are" if unchecked_therapists|length != 1 else "is" }} not in the roster yet.
+    Create them now and the next sync imports in one pass instead of failing a second
+    way.
+  </p>
+  <ul style="margin: var(--space-2) 0 0 0; padding-left: var(--space-4)">
+    {% for name, n in unchecked_therapists[:40] %}
+    <li style="margin-bottom: var(--space-1)">
+      <strong>{{ name }}</strong>
+      <span class="text-muted">({{ n|count }} row{{ "s" if n != 1 else "" }})</span>
+      <a href="/admin/therapists?prefill={{ name|urlencode }}">Create therapist →</a>
+    </li>
+    {% endfor %}
+    {% if unchecked_therapists|length > 40 %}
+    <li class="text-muted">and {{ unchecked_therapists|length - 40 }} more</li>
+    {% endif %}
   </ul>
 </div>
 {% endif %}
@@ -111,6 +173,14 @@
   These rows were not imported. Fix them in the sheet and sync again, or mark one
   reviewed if it is expected.
 </p>
+
+{% if reason_counts|length > 1 or total_rejections > rejections|length %}
+<p style="margin-top: var(--space-2)">
+  {% for label, field_name, n in reason_counts %}
+  <span class="pill pill--below">{{ label }}: {{ n|count }}</span>
+  {% endfor %}
+</p>
+{% endif %}
 
 <div class="card" style="margin-top: var(--space-2)">
   <table class="data-table">
@@ -138,7 +208,13 @@
         </td>
         <td class="table-actions">
           {% if r.is_resolved %}
-          <span class="pill pill--neutral">reviewed</span>
+          {# Same distinction as the errors page: reviewed records a human decision,
+             superseded records that a newer read replaced this list. #}
+          {% if r.resolved_by_id %}
+          <span class="pill pill--neutral" title="{{ r.resolution_note or '' }}">reviewed</span>
+          {% else %}
+          <span class="pill pill--neutral" title="{{ r.resolution_note or '' }}">superseded</span>
+          {% endif %}
           {% else %}
           <form
             method="post"
@@ -155,6 +231,14 @@
     </tbody>
   </table>
 </div>
+{% if total_rejections > rejections|length %}
+<p class="text-muted" style="margin-top: var(--space-2)">
+  Showing the first {{ rejections|length|count }} of {{ total_rejections|count }}
+  rejected rows. The counts above cover all of them, and the
+  <a href="/admin/sources/{{ source.id }}/errors">import errors page</a> pages through
+  the full list.
+</p>
+{% endif %}
 {% elif not run.error_message %}
 <div class="state" style="margin-top: var(--space-4)">
   <p class="state__title">Every row was accepted</p>

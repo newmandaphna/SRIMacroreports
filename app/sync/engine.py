@@ -20,7 +20,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.data_source import (
@@ -70,6 +70,8 @@ class SyncResult:
     date_min: date | None = None
     date_max: date | None = None
     error_message: str | None = None
+    # Unresolved errors from earlier runs of this source that this run replaced.
+    superseded_errors: int = 0
 
     @property
     def rows_rejected(self) -> int:
@@ -331,6 +333,26 @@ def run_sync(
             )
         )
 
+    # A completed read of the sheet, dry or live, produces the current account of what
+    # did not make it in, so the accounts left by earlier runs are stale copies of it.
+    # Without this every sync appended its rejections to the pile: a sheet with 6,766
+    # undated rows became 6,766 open errors on the first look and 13,532 on the second,
+    # and fixing the sheet cleared none of them.
+    #
+    # Scoped to the rows this run actually examined. The read stops at the first
+    # identity-blank row, and an admin can repoint the tab or header row between runs,
+    # so a successful run is not proof the whole sheet was seen. An open error past the
+    # last row read keeps its place in the review queue rather than being resolved on
+    # the strength of a read that never reached it.
+    if result.ok and result.rows_read > 0:
+        result.superseded_errors = _supersede_stale_errors(
+            db,
+            source.id,
+            run.id,
+            last_examined_row=source.header_row + result.rows_read,
+            dry_run=dry_run,
+        )
+
     if not dry_run and result.ok:
         source.last_synced_at = utcnow()
         source.coverage_start = result.date_min
@@ -339,6 +361,68 @@ def run_sync(
         source.row_count = _count_visits(db, source.id)
 
     return result
+
+
+def _supersede_stale_errors(
+    db: Session,
+    source_id: int,
+    current_run_id: int,
+    *,
+    last_examined_row: int,
+    dry_run: bool,
+) -> int:
+    """Resolve unresolved errors that earlier runs of this source left behind.
+
+    Resolved, not deleted: the rows stay visible under the All filter, each carrying a
+    note naming the run whose account replaced them, so nothing is silently dropped.
+    A failed run never supersedes anything, because it did not produce a new account.
+
+    Four deliberate boundaries:
+    - Only errors at or before `last_examined_row`. The current run's account covers
+      exactly the sheet rows it read, no further.
+    - Only errors from runs with a lower id. Two overlapping syncs must not let the
+      older read mark the newer read's account as stale.
+    - Only errors whose row reference is a plain row number. One that is not cannot be
+      placed inside or outside the read, so it keeps its place in the review queue.
+    - A dry run replaces only earlier dry runs' findings. The open queue tracks what
+      is missing from the database, and a dry run changes nothing in the database: a
+      clean preview of a fixed sheet must not clear a live run's errors while the
+      fixed rows are still unimported, or every page would call the source fully
+      accounted for when its data exists nowhere.
+    """
+    stmt = select(ImportErrorRow.id, ImportErrorRow.source_row_ref).where(
+        ImportErrorRow.source_id == source_id,
+        ImportErrorRow.sync_run_id < current_run_id,
+        ImportErrorRow.resolved_at.is_(None),
+    )
+    if dry_run:
+        stmt = stmt.join(SyncRun, SyncRun.id == ImportErrorRow.sync_run_id).where(
+            SyncRun.mode == SyncMode.DRY_RUN
+        )
+    candidates = db.execute(stmt).all()
+    stale_ids = [
+        row_id
+        for row_id, ref in candidates
+        if ref is not None and ref.isdigit() and int(ref) <= last_examined_row
+    ]
+    if not stale_ids:
+        return 0
+
+    superseded = 0
+    note = (
+        f"Superseded by sync run {current_run_id}, which re-read this part of the "
+        "sheet. That run's error list is the current account of it."
+    )
+    # Chunked so the IN clause stays a sane size against a six-figure backlog.
+    for start in range(0, len(stale_ids), 5000):
+        chunk = stale_ids[start : start + 5000]
+        superseded += db.execute(
+            update(ImportErrorRow)
+            .where(ImportErrorRow.id.in_(chunk))
+            .values(resolved_at=utcnow(), resolution_note=note)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+    return superseded
 
 
 def _count_visits(db: Session, source_id: int) -> int:
