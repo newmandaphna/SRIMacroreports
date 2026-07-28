@@ -15,10 +15,12 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from datetime import date, datetime
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy import select
 
@@ -28,7 +30,7 @@ from app.models.therapist import Therapist
 from app.models.types import utcnow
 from app.models.utilization import UtilizationNote
 from app.reporting import queries
-from app.reporting.periods import Granularity, period_start
+from app.reporting.periods import Granularity, period_start, today_in, week_start
 from app.routers.reports import Ctx, ReportContext, _ranked_for_board
 from app.security import audit
 from app.security.deps import AuthContext, DbSession, require_module, require_utilization_writer
@@ -149,6 +151,96 @@ async def export_board(
         iter([buffer.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# The week windows offered as one-click choices. Any other count typed into the URL
+# or the form works too, clamped to something renderable.
+WEEK_WINDOW_CHOICES = (4, 8, 13, 26, 52)
+DEFAULT_WEEK_WINDOW = 8
+MAX_WEEK_WINDOW = 104
+
+
+@dataclass
+class WeekRow:
+    """One calendar week in the weekly counts view."""
+
+    start: date
+    end: date
+    sessions: int
+    collected: Decimal
+    in_progress: bool
+
+
+# Registered before "/{therapist_id}": FastAPI matches in declaration order, and the
+# parameterized route would otherwise swallow "weekly" and 422 on the int parse.
+@router.get("/weekly", response_class=HTMLResponse)
+async def weekly_session_counts(
+    request: Request,
+    db: DbSession,
+    ctx: Ctx,
+    auth: UtilizationUser,
+    weeks: str = Query(default=""),
+) -> Response:
+    """Session counts per calendar week, over a window the viewer chooses.
+
+    The window is the last N weeks counted back from the current week, each shown
+    with its explicit date range so "week of 6 Apr" never needs a calendar to
+    decode. Anything unparseable in `weeks` falls back to the default rather than
+    erroring, matching how the report pickers behave everywhere else.
+    """
+    try:
+        week_count = int(weeks)
+    except ValueError:
+        week_count = DEFAULT_WEEK_WINDOW
+    week_count = max(1, min(week_count, MAX_WEEK_WINDOW))
+
+    today = today_in(ctx.config.timezone)
+    this_week = week_start(today, ctx.config.week_starts_monday)
+    window_start = this_week - timedelta(weeks=week_count - 1)
+
+    filters = ctx.filters.replaced(start=window_start, end=today)
+    points = queries.by_period(
+        db, filters, Granularity.WEEK, week_starts_monday=ctx.config.week_starts_monday
+    )
+
+    week_rows = [
+        WeekRow(
+            start=p.start,
+            end=p.start + timedelta(days=6),
+            sessions=p.sessions,
+            collected=p.collected,
+            in_progress=today < p.start + timedelta(days=6),
+        )
+        for p in points
+    ]
+
+    # The average is over completed weeks only. Including a Tuesday's worth of the
+    # current week would drag the average down and read as a real decline.
+    completed = [w for w in week_rows if not w.in_progress]
+    average = (
+        (Decimal(sum(w.sessions for w in completed)) / len(completed)).quantize(Decimal("0.1"))
+        if completed
+        else None
+    )
+
+    return render(
+        request,
+        "reports/weekly_sessions.html",
+        {
+            "page_title": "Weekly session counts",
+            "auth": auth,
+            "active_page": "utilization",
+            "week_rows": week_rows,
+            "chart_labels": [w.start.strftime("%-d %b") for w in week_rows],
+            "week_count": week_count,
+            "week_choices": WEEK_WINDOW_CHOICES,
+            "window_start": window_start,
+            "window_end": today,
+            "total_sessions": sum(w.sessions for w in week_rows),
+            "average_per_week": average,
+            **ctx.as_template_context(),
+        },
     )
 
 

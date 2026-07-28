@@ -456,3 +456,38 @@ def test_an_inactive_therapist_with_no_range_visits_stays_off_the_board(manager,
         "/reports/therapist-utilization?preset=custom&start=2026-04-01&end=2026-04-30"
     ).text
     assert "Long Gone" not in page
+
+
+# ----------------------------------------------------------- weekly session counts
+
+
+def test_weekly_counts_shows_one_row_per_week(manager):
+    page = manager.get("/reports/therapist-utilization/weekly?weeks=4").text
+    assert page.count("Week of ") == 4
+    assert "Last 4 weeks" in page
+
+
+def test_weekly_counts_carry_their_explicit_date_range(manager):
+    """Each week names its own Monday to Sunday span, so nobody needs a calendar to
+    decode which days "week of 6 Apr" covers."""
+    page = manager.get("/reports/therapist-utilization/weekly?weeks=52").text
+    assert "Week of 6 Apr" in page
+    assert "Mon 6 Apr 2026 to Sun 12 Apr 2026" in page
+
+
+def test_weekly_counts_count_sessions_not_cancellations(manager):
+    """The window spanning April holds 4 sessions: Alpha's 3 plus Beta's 1. Alpha's
+    99998 cancellation is present in the data and must not be counted."""
+    page = manager.get("/reports/therapist-utilization/weekly?weeks=52").text
+    match = re.search(r'"sessions": (\[[^\]]*\])', page)
+    assert match, "no chart data island on the page"
+    import json
+
+    assert sum(json.loads(match.group(1))) == 4
+
+
+def test_weekly_counts_garbage_and_extremes_fall_back_not_error(manager):
+    """A mistyped URL shows a dashboard, not a stack trace, like every other picker."""
+    assert "Last 8 weeks" in manager.get("/reports/therapist-utilization/weekly?weeks=banana").text
+    assert "Last 104 weeks" in manager.get("/reports/therapist-utilization/weekly?weeks=9999").text
+    assert "Last 1 week," in manager.get("/reports/therapist-utilization/weekly?weeks=-3").text

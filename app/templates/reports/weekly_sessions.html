@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>Weekly session counts</h1>
+    <p class="page-head__sub">
+      Last {{ week_count }} week{{ "" if week_count == 1 else "s" }},
+      {{ window_start.strftime("%-d %b %Y") }} to {{ window_end.strftime("%-d %b %Y") }}.
+      Weeks run {{ "Monday to Sunday" if config.week_starts_monday else "Sunday to Saturday" }}.
+    </p>
+  </div>
+  <a class="button button--quiet no-print" href="/reports/therapist-utilization">Status board</a>
+</div>
+
+<form class="filter-bar card no-print" method="get" action="/reports/therapist-utilization/weekly">
+  {# The typed number sits BEFORE the one-click buttons on purpose: duplicate query
+     params resolve last-wins, so a clicked button (whose value is submitted at its
+     document position, after this input) overrides whatever number is typed, while
+     the Show button submits no value of its own and lets the typed number stand. #}
+  <label class="field field--inline">
+    <span class="field__label">How many weeks</span>
+    <input
+      type="number"
+      name="weeks"
+      min="1"
+      max="104"
+      class="field__input"
+      value="{{ week_count }}"
+      style="width: 6em"
+    />
+  </label>
+  <button type="submit" class="button">Show</button>
+  <div class="filter-bar__group">
+    <span class="field__label">Or pick a window</span>
+    <div class="segmented">
+      {% for n in week_choices %}
+      <button
+        type="submit"
+        name="weeks"
+        value="{{ n }}"
+        class="segmented__item {% if week_count == n %}segmented__item--on{% endif %}"
+        {% if week_count == n %}aria-current="true"{% endif %}
+      >
+        {{ n }}
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+</form>
+
+{% if total_sessions == 0 and not coverage.has_data %}
+{% include "reports/_empty.html" %}
+{% else %}
+
+<div class="card-grid">
+  <div class="card">
+    <p class="kpi-question">How many sessions in this window?</p>
+    <p class="kpi-value">{{ total_sessions|count }}</p>
+    <p class="kpi-note">Cancellations are not counted as sessions.</p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">What does a typical week look like?</p>
+    <p class="kpi-value">{{ average_per_week if average_per_week is not none else "-" }}</p>
+    <p class="kpi-note">
+      Average over completed weeks only, so a half finished week never reads as a
+      decline.
+    </p>
+  </div>
+</div>
+
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="section-head">
+    <div>
+      <h2>Sessions per week</h2>
+      <p class="page-head__sub">Each bar is one calendar week.</p>
+    </div>
+  </div>
+  <div class="chart-frame">
+    <canvas id="weekly-counts"></canvas>
+  </div>
+  <script type="application/json" id="weekly-counts-data">
+    {
+      "labels": {{ chart_labels | tojson }},
+      "sessions": {{ week_rows | map(attribute="sessions") | list | tojson }}
+    }
+  </script>
+</div>
+
+<div class="card" style="margin-top: var(--space-4)">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Week</th>
+        <th>Date range</th>
+        <th class="numeric">Sessions</th>
+        <th class="numeric">Collected</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for w in week_rows %}
+      <tr>
+        <td>Week of {{ w.start.strftime("%-d %b") }}</td>
+        <td class="text-muted">
+          {{ w.start.strftime("%a %-d %b %Y") }} to {{ w.end.strftime("%a %-d %b %Y") }}
+          {% if w.in_progress %}<span class="pill pill--neutral">in progress</span>{% endif %}
+        </td>
+        <td class="numeric">{{ w.sessions|count }}</td>
+        <td class="numeric">{{ w.collected|currency }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', path='js/charts.js') }}"></script>
+<script src="{{ url_for('static', path='js/reports.js') }}"></script>
+{% endblock %}

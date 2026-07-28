@@ -94,6 +94,19 @@
     });
   }
 
+  function drawWeeklyCounts() {
+    var data = readJson("weekly-counts-data");
+    if (!data || !window.SRICharts) {
+      return;
+    }
+    SRICharts.render("weekly-counts", {
+      type: "bar",
+      labels: data.labels,
+      valueFormat: "count",
+      datasets: [{ label: "Sessions", data: data.sessions }],
+    });
+  }
+
   function drawSparklines() {
     if (!window.SRICharts) {
       return;
@@ -119,6 +132,7 @@
     drawTrend();
     drawUtilizationBars();
     drawTherapistHistory();
+    drawWeeklyCounts();
     drawSparklines();
   }
 
