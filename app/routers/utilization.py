@@ -28,7 +28,7 @@ from app.models.therapist import Therapist
 from app.models.types import utcnow
 from app.models.utilization import UtilizationNote
 from app.reporting import queries
-from app.reporting.periods import period_start
+from app.reporting.periods import Granularity, period_start
 from app.routers.reports import Ctx, ReportContext, _ranked_for_board
 from app.security import audit
 from app.security.deps import AuthContext, DbSession, require_module, require_utilization_writer
@@ -185,11 +185,16 @@ async def therapist_drill_in(
         ),
     )
 
+    # The threshold is sessions per WEEK, so it can only grade weekly buckets. A
+    # monthly bucket holds four times the sessions, and grading it against 25 showed
+    # everyone comfortably green at month granularity and red at week granularity,
+    # which are not two views of one truth.
     measured = therapist.employment_type.counts_against_threshold
+    graded = measured and ctx.granularity is Granularity.WEEK
     periods_with_status = [
         (
             point,
-            ctx.config.utilization_status(point.sessions) if measured else "",
+            ctx.config.utilization_status(point.sessions) if graded else "",
         )
         for point in history
     ]

@@ -93,8 +93,15 @@ class ReportContext:
         self.locations = queries.available_locations(db)
 
     @property
-    def weeks_in_range(self) -> int:
-        return max(1, round(self.range.days / 7))
+    def weeks_in_range(self) -> Decimal:
+        """Exact weeks, not rounded to whole ones.
+
+        round(days / 7) made a therapist's below-threshold status change with the
+        day of the week the report was opened: mid week, the current week counted
+        as either a whole week or not at all. days / 7 as an exact Decimal gives
+        the same answer on Tuesday as on Sunday.
+        """
+        return Decimal(self.range.days) / Decimal(7)
 
     def as_template_context(self) -> dict:
         return {

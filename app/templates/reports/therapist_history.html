@@ -8,6 +8,9 @@
       {{ therapist.employment_type.label }}.
       {% if not measured %}
       No session threshold applies, so no status is shown for any period.
+      {% elif granularity != "week" %}
+      The threshold is sessions per week, so statuses appear on the weekly view only.
+      Group by week to see them.
       {% endif %}
       {{ date_range.start }} to {{ date_range.end }}.
     </p>

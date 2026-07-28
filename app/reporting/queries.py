@@ -108,14 +108,14 @@ class TherapistRow:
     sessions: int = 0
     collected: Decimal = ZERO
     cancellations: int = 0
-    weeks_in_range: int = 1
+    weeks_in_range: Decimal = Decimal(1)
     notes: str | None = None
 
     @property
     def sessions_per_week(self) -> Decimal:
         if self.weeks_in_range <= 0:
             return Decimal(self.sessions)
-        return (Decimal(self.sessions) / self.weeks_in_range).quantize(Decimal("0.1"))
+        return (Decimal(self.sessions) / Decimal(self.weeks_in_range)).quantize(Decimal("0.1"))
 
     @property
     def measured_against_threshold(self) -> bool:
@@ -290,9 +290,18 @@ def by_period(
 # ------------------------------------------------------------------- therapist grain
 
 
-def by_therapist(db: Session, filters: Filters, *, weeks_in_range: int = 1) -> list[TherapistRow]:
-    """Therapist grain, never patient grain."""
-    rows = db.execute(
+def by_therapist(
+    db: Session, filters: Filters, *, weeks_in_range: Decimal | int = 1
+) -> list[TherapistRow]:
+    """Therapist grain, never patient grain.
+
+    An OUTER join with the range conditions on the join, not in WHERE: an inner join
+    dropped any therapist with zero visits in the range, which hid exactly the person
+    the utilization board most needs to show. Active therapists always get a row;
+    inactive ones appear only when the range actually contains their visits.
+    """
+    range_filter = list(filters.therapist_ids)
+    stmt = (
         select(
             Therapist.id,
             Therapist.display_name,
@@ -301,11 +310,14 @@ def by_therapist(db: Session, filters: Filters, *, weeks_in_range: int = 1) -> l
             _money(Visit.total_paid),
             _cancellation_count_expr(),
         )
-        .join(Visit, Visit.therapist_id == Therapist.id)
-        .where(and_(*_base_conditions(filters)))
+        .outerjoin(Visit, and_(Visit.therapist_id == Therapist.id, *_base_conditions(filters)))
         .group_by(Therapist.id, Therapist.display_name, Therapist.employment_type)
+        .having(or_(Therapist.active.is_(True), func.count(Visit.id) > 0))
         .order_by(func.lower(Therapist.display_name))
-    ).all()
+    )
+    if range_filter:
+        stmt = stmt.where(Therapist.id.in_(range_filter))
+    rows = db.execute(stmt).all()
 
     return [
         TherapistRow(
@@ -315,7 +327,7 @@ def by_therapist(db: Session, filters: Filters, *, weeks_in_range: int = 1) -> l
             sessions=int(r[3] or 0),
             collected=_as_money(r[4]),
             cancellations=int(r[5] or 0),
-            weeks_in_range=max(1, weeks_in_range),
+            weeks_in_range=Decimal(weeks_in_range) if weeks_in_range > 0 else Decimal(1),
         )
         for r in rows
     ]
