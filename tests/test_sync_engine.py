@@ -539,3 +539,65 @@ def test_a_manually_reviewed_error_is_not_relabelled(client, demo_source):
     with client.app.state.db.session() as db:
         entry = db.get(ImportErrorRow, reviewed_id)
         assert entry.resolution_note == "Expected, per the practice manager."
+
+
+def test_supersession_stops_at_the_last_row_the_run_examined(client, demo_source):
+    """The read stops at the first identity-blank row, so a successful run is not
+    proof the whole sheet was seen. An error past the last row read keeps its place
+    in the review queue rather than being resolved by a read that never reached it."""
+    from app.models.data_source import SyncRun
+    from app.sync.engine import _supersede_stale_errors
+
+    with client.app.state.db.session() as db:
+        early_run = SyncRun(source_id=demo_source, mode=SyncMode.LIVE)
+        db.add(early_run)
+        db.flush()
+        for ref in ("3", "5000", None):
+            db.add(
+                ImportErrorRow(
+                    sync_run_id=early_run.id,
+                    source_id=demo_source,
+                    reason=RejectReason.MISSING_DOS,
+                    source_row_ref=ref,
+                )
+            )
+        current = SyncRun(source_id=demo_source, mode=SyncMode.LIVE)
+        db.add(current)
+        db.flush()
+
+        # The current run examined sheet rows up to 100 only.
+        n = _supersede_stale_errors(db, demo_source, current.id, last_examined_row=100)
+        assert n == 1
+
+        remaining = (
+            db.execute(select(ImportErrorRow).where(ImportErrorRow.resolved_at.is_(None)))
+            .scalars()
+            .all()
+        )
+    # Row 5000 was never re-read, and the row without a number cannot be placed,
+    # so both stay open. Only row 3 is covered by the new account.
+    assert sorted(r.source_row_ref or "none" for r in remaining) == ["5000", "none"]
+
+
+def test_an_older_read_never_supersedes_a_newer_account(client, demo_source):
+    """With two overlapping syncs, the run with the lower id may finish second. Its
+    read is still the older one, so it must not mark the newer list as stale."""
+    from app.models.data_source import SyncRun
+    from app.sync.engine import _supersede_stale_errors
+
+    with client.app.state.db.session() as db:
+        older = SyncRun(source_id=demo_source, mode=SyncMode.LIVE)
+        newer = SyncRun(source_id=demo_source, mode=SyncMode.LIVE)
+        db.add_all([older, newer])
+        db.flush()
+        db.add(
+            ImportErrorRow(
+                sync_run_id=newer.id,
+                source_id=demo_source,
+                reason=RejectReason.MISSING_DOS,
+                source_row_ref="3",
+            )
+        )
+
+        # The older run finishes second and tries to supersede.
+        assert _supersede_stale_errors(db, demo_source, older.id, last_examined_row=9999) == 0

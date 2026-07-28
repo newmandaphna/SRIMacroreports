@@ -35,7 +35,7 @@ from app.sync.demo_data import (
     DEMO_TAB_NAME,
     DEMO_THERAPISTS,
 )
-from app.sync.engine import run_sync, suggest_mapping
+from app.sync.engine import AliasResolver, run_sync, suggest_mapping
 from app.sync.sheets import (
     SheetsError,
     client_for,
@@ -514,6 +514,7 @@ async def run_detail(
                 "count": top_count,
                 "total_read": run.rows_read,
                 "is_missing_dos": RejectReason(top_reason) is RejectReason.MISSING_DOS,
+                "is_unknown_therapist": RejectReason(top_reason) is RejectReason.UNKNOWN_THERAPIST,
             }
 
     rejections = (
@@ -557,6 +558,29 @@ async def run_detail(
         ).all()
     ]
 
+    # Names carried by rows that were rejected before the therapist was ever checked.
+    # The date check short circuits first, so a sheet wide date failure hides a second
+    # wave: none of those rows has been tested against the roster yet, and fixing the
+    # dates alone converts them into unknown therapist rejections on the next sync.
+    # Naming the gap now lets the roster be built in parallel, so the next sync
+    # imports in one pass instead of failing a second way.
+    unchecked_therapists: list[tuple[str, int]] = []
+    pending_names = db.execute(
+        select(ImportErrorRow.therapist_hint, func.count(ImportErrorRow.id))
+        .where(
+            ImportErrorRow.sync_run_id == run.id,
+            ImportErrorRow.reason != RejectReason.UNKNOWN_THERAPIST,
+            ImportErrorRow.therapist_hint.is_not(None),
+        )
+        .group_by(ImportErrorRow.therapist_hint)
+        .order_by(func.count(ImportErrorRow.id).desc())
+    ).all()
+    if pending_names:
+        resolver = AliasResolver(db)
+        unchecked_therapists = [
+            (name, n) for name, n in pending_names if resolver.resolve(name) is None
+        ]
+
     return render(
         request,
         "admin/sync_run.html",
@@ -571,6 +595,7 @@ async def run_detail(
             "systemic": systemic,
             "reasons": {r.value: r.label for r in RejectReason},
             "unknown_therapists": unknown_therapists,
+            "unchecked_therapists": unchecked_therapists,
         },
     )
 

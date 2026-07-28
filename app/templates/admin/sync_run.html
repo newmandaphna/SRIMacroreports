@@ -93,13 +93,16 @@
     is invisible once it happens.
   </p>
   <ul style="margin: var(--space-2) 0 0 0; padding-left: var(--space-4);">
-    {% for name, count in unknown_therapists %}
+    {% for name, count in unknown_therapists[:40] %}
     <li style="margin-bottom: var(--space-1);">
       <strong>{{ name }}</strong>
       <span class="text-muted">({{ count }} row{{ "s" if count != 1 else "" }})</span>
       <a href="/admin/therapists?prefill={{ name|urlencode }}">Create therapist →</a>
     </li>
     {% endfor %}
+    {% if unknown_therapists|length > 40 %}
+    <li class="text-muted">and {{ unknown_therapists|length - 40 }} more</li>
+    {% endif %}
   </ul>
 </div>
 {% endif %}
@@ -111,22 +114,56 @@
       >{{ systemic.count|count }} of the {{ systemic.total_read|count }} rows read were
       rejected for the same reason: {{ systemic.label|lower }}.</strong
     >
-    A failure this uniform is a property of the sheet, not of the individual rows.
   </p>
   {% if systemic.is_missing_dos %}
   <p>
+    A failure this uniform is a property of the sheet, not of the individual rows.
     The <code>{{ systemic.field }}</code> column was found and mapped, and the cells
     themselves came back empty. Populate the dates in the sheet, then sync again:
     nothing here is lost, because every sync re-reads the whole tab, and this list
     is replaced by the next run's. Marking these rows reviewed one by one would hide
     the signal without importing anything.
   </p>
+  {% elif systemic.is_unknown_therapist %}
+  <p>
+    A failure this uniform means the roster, not the rows: the rows carry usable data,
+    but no name in them matched a therapist record or alias. Create the therapists
+    listed above, then sync again. The importer never creates them itself, because a
+    wrong merge is invisible once it happens.
+  </p>
   {% else %}
   <p>
-    Check the sheet and the column mapping before working through rows one by one. A
-    re-sync replaces this list with the new run's account.
+    A failure this uniform usually points at the sheet or the mapping rather than at
+    the individual rows. Check both before working through rows one by one. A re-sync
+    replaces this list with the new run's account.
   </p>
   {% endif %}
+</div>
+{% endif %}
+
+{% if unchecked_therapists %}
+<div class="card" style="margin-top: var(--space-4)">
+  <p class="card__title">Names waiting behind these rejections</p>
+  <p class="text-muted">
+    These rows were rejected before the therapist name was ever checked, so fixing the
+    sheet is only half the work: {{ unchecked_therapists|length }}
+    name{{ "s" if unchecked_therapists|length != 1 else "" }} in them
+    {{ "are" if unchecked_therapists|length != 1 else "is" }} not in the roster yet.
+    Create them now and the next sync imports in one pass instead of failing a second
+    way.
+  </p>
+  <ul style="margin: var(--space-2) 0 0 0; padding-left: var(--space-4)">
+    {% for name, n in unchecked_therapists[:40] %}
+    <li style="margin-bottom: var(--space-1)">
+      <strong>{{ name }}</strong>
+      <span class="text-muted">({{ n|count }} row{{ "s" if n != 1 else "" }})</span>
+      <a href="/admin/therapists?prefill={{ name|urlencode }}">Create therapist →</a>
+    </li>
+    {% endfor %}
+    {% if unchecked_therapists|length > 40 %}
+    <li class="text-muted">and {{ unchecked_therapists|length - 40 }} more</li>
+    {% endif %}
+  </ul>
 </div>
 {% endif %}
 

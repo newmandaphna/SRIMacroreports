@@ -623,3 +623,75 @@ def test_the_sync_audit_records_how_many_errors_were_superseded(admin_client, de
             .limit(1)
         ).scalar_one()
     assert '"superseded": 5' in (entry.detail or "")
+
+
+def test_names_hidden_behind_a_date_failure_are_surfaced(admin_client, demo):
+    """The date check short circuits before the roster is consulted, so a sheet wide
+    date failure hides a second wave of unknown therapists. The run page names them
+    now, so the roster can be built while the dates are being fixed."""
+    from app.models.data_source import RejectReason, SyncMode, SyncStatus
+
+    with admin_client.app.state.db.session() as db:
+        run = SyncRun(
+            source_id=demo,
+            mode=SyncMode.LIVE,
+            status=SyncStatus.SUCCESS,
+            rows_read=6,
+            rows_rejected=6,
+        )
+        db.add(run)
+        db.flush()
+        # WREN is already in the roster via the demo aliases; YEO and SOLAZZO are not.
+        for i, hint in enumerate(["YEO", "YEO", "YEO", "SOLAZZO", "SOLAZZO", "WREN"]):
+            db.add(
+                ImportErrorRow(
+                    sync_run_id=run.id,
+                    source_id=demo,
+                    reason=RejectReason.MISSING_DOS,
+                    field="dos",
+                    source_row_ref=str(i + 2),
+                    therapist_hint=hint,
+                )
+            )
+        run_id = run.id
+
+    page = admin_client.get(f"/admin/sources/{demo}/runs/{run_id}").text
+    assert "Names waiting behind these rejections" in page
+    assert "prefill=YEO" in page
+    assert "prefill=SOLAZZO" in page
+    # A name the roster already resolves needs no creating.
+    assert "prefill=WREN" not in page
+
+
+def test_a_roster_wide_failure_gets_roster_advice_not_sheet_advice(admin_client, demo):
+    """Sixty identical unknown therapist rejections are a roster problem. Telling the
+    admin to check the sheet would send them to the wrong place."""
+    from app.models.data_source import RejectReason, SyncMode, SyncStatus
+
+    with admin_client.app.state.db.session() as db:
+        run = SyncRun(
+            source_id=demo,
+            mode=SyncMode.LIVE,
+            status=SyncStatus.SUCCESS,
+            rows_read=62,
+            rows_rejected=60,
+        )
+        db.add(run)
+        db.flush()
+        for i in range(60):
+            db.add(
+                ImportErrorRow(
+                    sync_run_id=run.id,
+                    source_id=demo,
+                    reason=RejectReason.UNKNOWN_THERAPIST,
+                    field="therapist",
+                    raw_value="YEO",
+                    source_row_ref=str(i + 2),
+                )
+            )
+        run_id = run.id
+
+    page = admin_client.get(f"/admin/sources/{demo}/runs/{run_id}").text
+    assert "rejected for the same reason" in page
+    assert "means the roster, not the rows" in page
+    assert "property of the sheet" not in page
