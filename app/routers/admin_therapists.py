@@ -63,6 +63,7 @@ async def list_therapists(
     auth: AdminUser,
     prefill: str = Query(default=""),
     deleted: str = Query(default=""),
+    notice: str = Query(default=""),
 ) -> Response:
     """List therapists. `?prefill=RAW+NAME` pre-fills the alias field on the add form.
 
@@ -71,6 +72,11 @@ async def list_therapists(
 
     `?deleted=<id>` shows a one-time success banner after a therapist is deleted.
     """
+    from app.practice_roster import PRACTICE_ROSTER
+
+    existing_aliases = set(db.execute(select(TherapistAlias.alias)).scalars().all())
+    roster_missing = sum(1 for alias, _, _ in PRACTICE_ROSTER if alias not in existing_aliases)
+
     return render(
         request,
         "admin/therapists.html",
@@ -79,6 +85,8 @@ async def list_therapists(
             "auth": auth,
             "prefill_alias": prefill.strip(),
             "just_deleted": bool(deleted),
+            "notice": notice.strip(),
+            "roster_missing": roster_missing,
             **_list_context(db),
         },
     )
@@ -358,6 +366,80 @@ async def bulk_update_therapists(
         )
 
     return RedirectResponse("/admin/therapists/bulk?saved=1", status_code=303)
+
+
+# Registered before the "/{therapist_id}" routes so the literal path is not shadowed.
+@router.post("/seed-roster")
+async def seed_practice_roster(request: Request, db: DbSession, auth: AdminUser) -> Response:
+    """Create the practice's therapists from its own Valant exports, one click.
+
+    Idempotent, and deliberately weaker than the records it creates: an entry is
+    skipped whenever its alias or its display name already exists, so anything an
+    admin has edited, renamed, or deactivated in the app wins over this list. The
+    importer itself still never creates a therapist; this route only exists so that
+    41 known names do not have to be typed in one at a time.
+    """
+    from urllib.parse import quote
+
+    from app.practice_roster import PRACTICE_ROSTER, SEED_NOTE
+
+    created = aliased = skipped = 0
+    for alias, display_name, credential in PRACTICE_ROSTER:
+        alias_owner = db.execute(
+            select(TherapistAlias).where(TherapistAlias.alias == alias)
+        ).scalar_one_or_none()
+        if alias_owner is not None:
+            skipped += 1
+            continue
+
+        therapist = db.execute(
+            select(Therapist).where(func.lower(Therapist.display_name) == display_name.lower())
+        ).scalar_one_or_none()
+        if therapist is None:
+            therapist = Therapist(
+                display_name=display_name,
+                employment_type=EmploymentType.OTHER,
+                notes=f"{credential}. {SEED_NOTE}" if credential else SEED_NOTE,
+            )
+            db.add(therapist)
+            db.flush()
+            created += 1
+        else:
+            # The person exists under their full name; only the sheet surname was
+            # missing, which is exactly what stops the importer resolving them.
+            aliased += 1
+        db.add(
+            TherapistAlias(
+                therapist_id=therapist.id,
+                alias=alias,
+                source=AliasSource.MANUAL,
+                created_by_id=auth.user.id,
+            )
+        )
+
+    audit.record(
+        db,
+        action=AuditAction.MANUAL_EDIT,
+        actor=auth.user,
+        target_type="therapist",
+        target_id=None,
+        request=request,
+        detail={"seed_roster": {"created": created, "alias_added": aliased, "skipped": skipped}},
+    )
+
+    parts = []
+    if created:
+        parts.append(f"{created} therapist{'s' if created != 1 else ''} created")
+    if aliased:
+        parts.append(f"{aliased} alias{'es' if aliased != 1 else ''} added to existing records")
+    if skipped:
+        parts.append(f"{skipped} already present and left untouched")
+    message = (", ".join(parts) or "Nothing to do, the roster is already present") + (
+        ". Every record is editable here, and each still needs its employment type set."
+        if created
+        else "."
+    )
+    return RedirectResponse(f"/admin/therapists?notice={quote(message)}", status_code=303)
 
 
 @router.get("/{therapist_id}", response_class=HTMLResponse)

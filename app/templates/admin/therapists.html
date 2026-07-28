@@ -13,8 +13,32 @@
 <div class="alert alert--ok" role="alert">Therapist deleted successfully.</div>
 {% endif %}
 
+{% if notice %}
+<div class="alert alert--ok" role="status">{{ notice }}</div>
+{% endif %}
+
 {% if error %}
 <div class="alert alert--error" role="alert">{{ error }}</div>
+{% endif %}
+
+{% if roster_missing %}
+<form method="post" action="/admin/therapists/seed-roster" class="card stack">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <p class="card__title">Create the practice roster</p>
+  <p class="text-muted">
+    {{ roster_missing }} of the practice's 41 therapists, with names taken from its own
+    Valant exports, are not in the app yet. One click creates them as ordinary editable
+    records with the sheet's surname attached as an alias, so the importer can resolve
+    them. Each is created with employment type "other", which keeps them off the
+    utilization board until someone who knows classifies them. Anything already
+    created or edited here is left untouched.
+  </p>
+  <div class="form-actions">
+    <button type="submit" class="button button--primary">
+      Create {{ roster_missing }} missing therapist{{ "s" if roster_missing != 1 else "" }}
+    </button>
+  </div>
+</form>
 {% endif %}
 
 {% if therapists %}
