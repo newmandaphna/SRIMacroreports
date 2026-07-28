@@ -122,6 +122,18 @@
     sheet is read, whatever it contains.
   </p>
 
+  {# The dropdowns fall back to a suggestion when nothing is saved, which is helpful
+     but was actively misleading: the mapping looked complete while Sync correctly
+     refused, and there was no cue that the missing step was pressing Save. Say it. #}
+  {% if unsaved_suggestion %}
+  <div class="alert alert--warning" role="status">
+    <strong>This mapping has not been saved yet.</strong>
+    The columns below were matched from the sheet's own headers, so they are filled in
+    for you, but nothing is stored until you press <em>Save source</em>. Until then this
+    source cannot sync, whatever the dropdowns show.
+  </div>
+  {% endif %}
+
   <table class="data-table">
     <thead>
       <tr>
@@ -142,13 +154,17 @@
         <td class="text-muted">{{ expected }}</td>
         <td>
           {% if headers %}
-          {% set current = source.column_mapping.get(field_name) or suggested.get(field_name, '') %}
+          {% set saved = source.column_mapping.get(field_name) %}
+          {% set current = saved or suggested.get(field_name, '') %}
           <select name="map__{{ field_name }}" class="field__input">
             <option value="">not mapped</option>
             {% for h in headers %}
             <option value="{{ h }}" {% if current == h %}selected{% endif %}>{{ h }}</option>
             {% endfor %}
           </select>
+          {% if not saved and current %}
+          <span class="pill pill--watch">suggested, not saved</span>
+          {% endif %}
           {% else %}
           <input
             type="text"
@@ -192,7 +208,13 @@
     <p class="text-muted">
       Not ready yet.
       {% if source.missing_required_fields %}
+      {% if unsaved_suggestion %}
+      A mapping for {{ source.missing_required_fields|join(", ") }} is already filled in
+      above from the sheet's headers, but it has not been saved. Press
+      <em>Save source</em> and this becomes ready.
+      {% else %}
       Map these first: {{ source.missing_required_fields|join(", ") }}.
+      {% endif %}
       {% else %}Choose a tab first.{% endif %}
     </p>
     {% endif %}

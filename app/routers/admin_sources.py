@@ -275,6 +275,17 @@ async def source_detail(
         )
     ).scalar_one()
 
+    suggested = suggest_mapping(headers) if headers else {}
+
+    # The mapping dropdowns fall back to `suggested` when nothing is saved, so a source
+    # with an empty mapping renders as though it were fully configured while the sync
+    # panel, which reads only what is stored, correctly refuses to run. The page
+    # contradicted itself and gave no hint that the missing step was pressing Save.
+    # This flag lets both halves say the same thing.
+    unsaved_suggestion = bool(
+        source.missing_required_fields and not (source.missing_required_fields - set(suggested))
+    )
+
     return render(
         request,
         "admin/source_detail.html",
@@ -286,7 +297,8 @@ async def source_detail(
             "tab_error": tab_error,
             "headers": [h for h in headers if h.strip()],
             "allowlist": IMPORT_ALLOWLIST,
-            "suggested": suggest_mapping(headers) if headers else {},
+            "suggested": suggested,
+            "unsaved_suggestion": unsaved_suggestion,
             "runs": runs,
             "open_error_count": open_error_count,
             "visit_count": db.execute(
