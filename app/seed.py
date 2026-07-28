@@ -62,14 +62,16 @@ def sync_admin_password(db: Session) -> None:
         return  # already in sync — nothing to do
 
     # Hash is out of sync with ADMIN_PASSWORD (secret was renamed, value was changed,
-    # or the database was re-created). Reset it and force a password change so the
-    # admin sets a permanent credential on next login.
+    # or the database was re-created). Reset the hash, clear any lockout, and force a
+    # password change so the admin sets a permanent credential on next login.
     admin.password_hash = hash_password(password)
     admin.must_change_password = True
+    admin.failed_login_count = 0
+    admin.locked_until = None
     logger.warning(
-        "ADMIN_PASSWORD does not match stored hash for %s — hash updated at startup "
-        "and must_change_password reset. Log in with ADMIN_PASSWORD then set a new "
-        "permanent password.",
+        "ADMIN_PASSWORD does not match stored hash for %s — hash updated at startup, "
+        "lockout cleared, and must_change_password reset. Log in with ADMIN_PASSWORD "
+        "then set a new permanent password.",
         email,
     )
 
