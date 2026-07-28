@@ -24,6 +24,7 @@ from app import config_store
 from app.config_store import PracticeConfig
 from app.models.enums import AuditAction, Module
 from app.reporting import queries
+from app.reporting.insights import build_insights
 from app.reporting.metrics import Kpi
 from app.reporting.periods import (
     PICKER_PRESETS,
@@ -276,6 +277,8 @@ async def overview(
         week_starts_monday=ctx.config.week_starts_monday,
     )
 
+    insight_report = build_insights(db, config=ctx.config, cpt_exclusions=ctx.config.cpt_exclusions)
+
     return render(
         request,
         "reports/overview.html",
@@ -288,8 +291,26 @@ async def overview(
             "trend": trend,
             "weekly": weekly,
             "week_choices": WEEK_WINDOW_CHOICES,
+            "top_insights": insight_report.top,
             "therapist_rows": _ranked_for_board(therapist_rows, ctx.config),
             "can_see_utilization": auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
+            **ctx.as_template_context(),
+        },
+    )
+
+
+@router.get("/insights", response_class=HTMLResponse)
+async def insights_page(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser) -> Response:
+    """Plain language findings from the whole history. See app/reporting/insights.py."""
+    report = build_insights(db, config=ctx.config, cpt_exclusions=ctx.config.cpt_exclusions)
+    return render(
+        request,
+        "reports/insights.html",
+        {
+            "page_title": "Insights",
+            "auth": auth,
+            "active_page": "insights",
+            "report": report,
             **ctx.as_template_context(),
         },
     )

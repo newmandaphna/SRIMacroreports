@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Insights</h1>
+  <p class="page-head__sub">
+    {% if report.history_weeks %}
+    What the record says, computed from {{ report.history_weeks }} completed weeks of
+    history ({{ report.window_start.strftime("%-d %b %Y") }} to
+    {{ report.window_end.strftime("%-d %b %Y") }}). Every finding is arithmetic you can
+    check against the report pages, never a black box. The more quarters and uploads
+    arrive, the more this page can say.
+    {% else %}
+    This page reads the practice's own history and states what it finds in plain
+    language.
+    {% endif %}
+  </p>
+</div>
+
+<div class="stack" style="display: grid; gap: var(--space-3)">
+  {% for insight in report.insights %}
+  <div class="card">
+    <div style="display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap">
+      <span class="pill {{ insight.pill_class }}">{{ insight.tone }}</span>
+      <p class="card__title" style="margin: 0">{{ insight.headline }}</p>
+    </div>
+    <p class="text-muted" style="margin-top: var(--space-2)">{{ insight.detail }}</p>
+    {% if insight.spark|length > 1 %}
+    <div class="sparkline" style="margin-top: var(--space-2)">
+      <canvas
+        id="insight-spark-{{ insight.key }}"
+        data-spark="{{ insight.spark|join(',') }}"
+        aria-hidden="true"
+      ></canvas>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="alert alert--warning" style="margin-top: var(--space-4)">
+  <p>
+    <strong>These are observations, not conclusions.</strong> Every finding names its
+    window and its arithmetic so it can be checked. A falling number has many honest
+    explanations, and the person it describes usually knows which one applies.
+  </p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', path='js/charts.js') }}"></script>
+<script src="{{ url_for('static', path='js/reports.js') }}"></script>
+{% endblock %}

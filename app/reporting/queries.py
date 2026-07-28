@@ -376,6 +376,24 @@ def _breakdown(
     ]
 
 
+def by_weekday(db: Session, filters: Filters) -> list[int]:
+    """Session counts by day of week, Monday first. Still no patient columns.
+
+    Grouped by DOS in SQL and folded to weekdays in Python, so the answer does not
+    depend on any database specific day-of-week function or its numbering.
+    """
+    rows = db.execute(
+        select(Visit.dos, _session_count_expr(filters.cpt_exclusions))
+        .where(and_(*_base_conditions(filters)))
+        .group_by(Visit.dos)
+    ).all()
+
+    out = [0] * 7
+    for dos, sessions in rows:
+        out[dos.weekday()] += int(sessions or 0)
+    return out
+
+
 # -------------------------------------------------------------------------- coverage
 
 
