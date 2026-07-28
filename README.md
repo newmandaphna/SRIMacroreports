@@ -32,8 +32,6 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# Fill in SESSION_SECRET_KEY. Required.
-python -c "import secrets; print(secrets.token_urlsafe(48))"
 # Set DATABASE_URL to a PostgreSQL database. In Replit it is injected for you.
 # Also set ADMIN_EMAIL and ADMIN_INITIAL_PASSWORD, or nobody can sign in.
 
@@ -45,7 +43,7 @@ Then:
 
 - `http://127.0.0.1:8000/` the application, which redirects to sign in
 - `http://127.0.0.1:8000/healthz` liveness
-- `http://127.0.0.1:8000/readyz` readiness, which proves the encrypted database opens
+- `http://127.0.0.1:8000/readyz` readiness, which proves the database answers
 
 Sign in as `ADMIN_EMAIL`. You will be required to choose a new password before anything
 else is reachable. Then:
@@ -90,10 +88,9 @@ alembic upgrade head                                  # apply
 alembic revision --autogenerate -m "description"      # create after a model change
 ```
 
-Note that `alembic.ini` deliberately carries no `sqlalchemy.url`. The database is
-encrypted and needs its key applied as a `PRAGMA` before any other statement, so
-`migrations/env.py` builds the engine from application settings instead. A URL in the
-ini file could not carry the key without committing the key.
+Note that `alembic.ini` deliberately carries no `sqlalchemy.url`. The connection URL
+embeds the database password, so `migrations/env.py` builds the engine from application
+settings instead of a committed file.
 
 ---
 
@@ -104,7 +101,7 @@ in a file. `.env` is gitignored and `.env.example` never holds a real value.
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `SESSION_SECRET_KEY` | yes | Minimum 32 characters. Reserved for signing. See the secrets reference below. |
+| `SESSION_SECRET_KEY` | no | Reserved for signing; nothing signs with it yet, so it is optional. If set, minimum 32 characters. See the secrets reference below. |
 | `DATABASE_URL` | yes | PostgreSQL connection URL. Injected automatically by Replit for its managed database. Carries the database password, so treat it as a secret. |
 | `TEST_DATABASE_URL` | for tests | A **separate** database the test suite is allowed to drop and rebuild. Never point this at the real one. |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | for sync | Full service account JSON, one line. |
@@ -118,28 +115,24 @@ in a file. `.env` is gitignored and `.env.example` never holds a real value.
 | `WEEK_START_DAY` | no | `monday` (default) or `sunday`. |
 | `APP_TIMEZONE` | no | Default `America/New_York`. |
 | `FEATURE_ROOM_UTILIZATION` | no | Default off. With it off the module is a 404 everywhere and absent from navigation. |
-| `FEATURE_PATIENT_FUNNEL` | no | Default off. Phase 6, gated on your confirmation. |
 
-A missing required secret is a startup failure with a named error. There is no fallback,
-and in particular there is no fallback to an unencrypted database.
+Missing required configuration is a startup failure with a named error, never a silent
+fallback.
 
 ### Secrets reference
 
-Two secrets are required at boot. They do very different things, and only one of them
-is dangerous to change.
-
 #### `SESSION_SECRET_KEY`
 
-**What it does today: nothing at runtime.** It is validated at startup (present, at
-least 32 characters) and then not used, because the session design does not need a
-signing key. The session cookie holds an opaque 256 bit random token, and only its
-SHA-256 hash is stored, so the server validates a session by looking the token up
-rather than by verifying a signature. See `app/security/sessions.py`. The CSRF token
+**What it does today: nothing at runtime, and it is optional.** If set, it is validated
+at startup (at least 32 characters) and then not used, because the session design does
+not need a signing key. The session cookie holds an opaque 256 bit random token, and
+only its SHA-256 hash is stored, so the server validates a session by looking the token
+up rather than by verifying a signature. See `app/security/sessions.py`. The CSRF token
 works the same way: random per session, stored server side, compared directly.
 
-It is kept and required so that it is already provisioned for the first feature that
-genuinely needs signing (a password reset link, or a signed export URL). Until then it
-is reserved, not load bearing.
+The variable name is reserved so that the first feature that genuinely needs signing (a
+password reset link, or a signed export URL) has an agreed home for its key. Until then
+it is reserved, not load bearing.
 
 **Safe to generate a fresh random value?** Yes, always, on any deployment. Changing it
 signs nobody out and breaks nothing, because nothing depends on it.

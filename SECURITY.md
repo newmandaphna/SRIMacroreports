@@ -69,7 +69,8 @@ are deactivated, never deleted, so that audit log entries always resolve to a re
   reading the database does not yield usable session cookies.
 - Note that no signing key is involved anywhere. A random token looked up server side cannot be
   forged without guessing 256 bits, so a signature would add nothing. `SESSION_SECRET_KEY` is
-  provisioned for future use and is currently not read at runtime.
+  therefore optional: the name is reserved for the first feature that genuinely signs
+  something, and it is not read at runtime.
 
 ### 3.3 Authorization
 
@@ -334,11 +335,12 @@ In addition:
 | --- | --- | --- |
 | Google service account key | `GOOGLE_SERVICE_ACCOUNT_JSON` | Full JSON, from Replit Secrets. Read only Sheets and Drive scopes. |
 | Database connection URL | `DATABASE_URL` | Injected by Replit for its managed PostgreSQL. Carries the database password, so it is treated as a secret: redacted from `Settings.__repr__` and never logged. |
-| Session signing secret | `SESSION_SECRET_KEY` | At least 32 characters. Reserved: nothing signs with it yet, because session and CSRF tokens are random values validated server side rather than signed. See README. |
+| Session signing secret | `SESSION_SECRET_KEY` | Optional. Reserved: nothing signs with it yet, because session and CSRF tokens are random values validated server side rather than signed. If set, at least 32 characters. See README. |
 | Seed admin | `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD` | Used once. Password change forced on first login. |
 
 Rules that hold for all of them:
-- Missing at boot is a hard failure with a named error, not a warning and a default.
+- Missing required configuration at boot is a hard failure with a named error, not a
+  warning and a default.
 - Never written to the repository. `.gitignore` excludes `.env` and credential file patterns.
 - Never logged. The scrubber redacts keys matching secret, token, password, credential, and
   `private_key`, but the primary control is not logging them.

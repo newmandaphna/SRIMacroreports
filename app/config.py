@@ -19,7 +19,10 @@ class ConfigError(RuntimeError):
 
 # Secrets that must be present before the app will serve a request. Kept as a
 # module level tuple so the startup check and the docs cannot drift apart.
-REQUIRED_SECRETS = ("SESSION_SECRET_KEY",)
+# Currently empty: DATABASE_URL has its own named check below, and
+# SESSION_SECRET_KEY became optional once it was clear nothing signs with it.
+# Session and CSRF tokens are random values validated server side.
+REQUIRED_SECRETS: tuple[str, ...] = ()
 
 # Required only once auth exists (Phase 1). Listed here so the seeding code has one
 # place to look, and so README and .env.example stay in sync with the code.
@@ -80,7 +83,9 @@ class Settings:
     environment: str
     debug: bool
 
-    session_secret_key: str
+    # Reserved for signing. Nothing signs with it today, so it is optional; when it
+    # is set, it must still be long enough to be worth having.
+    session_secret_key: str | None
     database_url: str
 
     # Google Sheets ingestion. Absent is tolerated at boot in development so the app
@@ -97,7 +102,6 @@ class Settings:
 
     # Feature flags.
     room_utilization_enabled: bool
-    patient_funnel_enabled: bool
 
     _secret_fields: tuple[str, ...] = field(
         default=(
@@ -152,8 +156,7 @@ def load_settings() -> Settings:
         )
 
     session_secret = _env("SESSION_SECRET_KEY")
-    assert session_secret is not None  # guaranteed by the check above
-    if len(session_secret) < MIN_SESSION_SECRET_BYTES:
+    if session_secret is not None and len(session_secret) < MIN_SESSION_SECRET_BYTES:
         raise ConfigError(
             f"SESSION_SECRET_KEY must be at least {MIN_SESSION_SECRET_BYTES} characters. "
             'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
@@ -194,7 +197,6 @@ def load_settings() -> Settings:
         week_start_day=week_start_day,
         timezone=_env("APP_TIMEZONE") or "America/New_York",
         room_utilization_enabled=_env_bool("FEATURE_ROOM_UTILIZATION", default=False),
-        patient_funnel_enabled=_env_bool("FEATURE_PATIENT_FUNNEL", default=False),
     )
 
 
