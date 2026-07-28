@@ -37,11 +37,34 @@
       ],
     });
 
+    var sessionDatasets = [{ label: "Sessions", data: data.sessions }];
+    if (data.sessions.length >= 8) {
+      sessionDatasets.push({
+        label: "4 period average",
+        data: trailingAverage(data.sessions, 4),
+        color: SRICharts.palette()[1],
+        overlay: true,
+      });
+    }
     SRICharts.render("sessions-trend", {
       type: "bar",
       labels: data.labels,
       valueFormat: "count",
-      datasets: [{ label: "Sessions", data: data.sessions }],
+      forceLegend: data.sessions.length >= 8,
+      datasets: sessionDatasets,
+    });
+  }
+
+  /* Trailing mean over the last `window` points, so the line smooths noise without
+   * ever using data from the future. */
+  function trailingAverage(values, window) {
+    return values.map(function (_, i) {
+      var start = Math.max(0, i - window + 1);
+      var slice = values.slice(start, i + 1);
+      var sum = slice.reduce(function (a, b) {
+        return a + b;
+      }, 0);
+      return Math.round((sum / slice.length) * 10) / 10;
     });
   }
 
@@ -99,11 +122,29 @@
     if (!data || !window.SRICharts) {
       return;
     }
+    var base = SRICharts.palette()[0];
+    var colors = data.sessions.map(function (_, i) {
+      // The half finished current week is muted so it never reads as a collapse.
+      return data.inProgress && data.inProgress[i]
+        ? SRICharts.withAlpha(base, 0.4)
+        : base;
+    });
+    var datasets = [{ label: "Sessions", data: data.sessions, colors: colors }];
+    if (data.average) {
+      datasets.push({
+        label: "Average completed week",
+        data: data.sessions.map(function () {
+          return data.average;
+        }),
+        reference: true,
+      });
+    }
     SRICharts.render("weekly-counts", {
       type: "bar",
       labels: data.labels,
       valueFormat: "count",
-      datasets: [{ label: "Sessions", data: data.sessions }],
+      forceLegend: Boolean(data.average),
+      datasets: datasets,
     });
   }
 

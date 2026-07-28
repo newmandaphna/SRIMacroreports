@@ -8,7 +8,9 @@
 <script type="application/json" id="weekly-counts-data">
   {
     "labels": {{ weekly.rows | map(attribute="label") | list | tojson }},
-    "sessions": {{ weekly.rows | map(attribute="sessions") | list | tojson }}
+    "sessions": {{ weekly.rows | map(attribute="sessions") | list | tojson }},
+    "inProgress": {{ weekly.rows | map(attribute="in_progress") | list | tojson }},
+    "average": {{ weekly.average_per_week | float if weekly.average_per_week is not none else "null" }}
   }
 </script>
 
