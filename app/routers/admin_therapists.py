@@ -64,6 +64,7 @@ async def list_therapists(
     prefill: str = Query(default=""),
     deleted: str = Query(default=""),
     notice: str = Query(default=""),
+    return_to: str = Query(default=""),
 ) -> Response:
     """List therapists. `?prefill=RAW+NAME` pre-fills the alias field on the add form.
 
@@ -86,6 +87,9 @@ async def list_therapists(
             "prefill_alias": prefill.strip(),
             "just_deleted": bool(deleted),
             "notice": notice.strip(),
+            # Internal paths only: this value round-trips through a form and becomes
+            # a redirect target, so anything not our own admin pages is dropped.
+            "return_to": return_to if return_to.startswith("/admin/") else "",
             "roster_missing": roster_missing,
             **_list_context(db),
         },
@@ -100,6 +104,7 @@ async def create_therapist(
     display_name: Annotated[str, Form()],
     employment_type: Annotated[str, Form()] = EmploymentType.OTHER.value,
     aliases: Annotated[str, Form()] = "",
+    return_to: Annotated[str, Form()] = "",
 ) -> Response:
     display_name = display_name.strip()
 
@@ -160,6 +165,10 @@ async def create_therapist(
             "aliases": sorted(added),
         },
     )
+    # Back to the sync run the admin came from, so fixing five rejected names is a
+    # loop rather than five dead ends. Internal admin paths only.
+    if return_to.startswith("/admin/"):
+        return RedirectResponse(return_to, status_code=303)
     return RedirectResponse(f"/admin/therapists/{therapist.id}", status_code=303)
 
 
