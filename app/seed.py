@@ -58,6 +58,14 @@ def sync_admin_password(db: Session) -> None:
     if admin is None:
         return
 
+    # The guard the docstring promises. Once the admin has chosen their own password,
+    # must_change_password is False and this function must never touch the account:
+    # without this check every redeploy silently reverted the admin's password to the
+    # bootstrap secret, which both broke their login and kept the bootstrap credential
+    # valid forever.
+    if not admin.must_change_password:
+        return
+
     if verify_password(password, admin.password_hash):
         return  # already in sync, nothing to do
 

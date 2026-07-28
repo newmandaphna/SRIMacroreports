@@ -135,6 +135,13 @@ def load_settings() -> Settings:
             f"ENVIRONMENT must be development, test, or production, got {environment!r}"
         )
 
+    # Production must not be opt in. Replit sets REPLIT_DEPLOYMENT in every deployed
+    # instance, so a deployment that forgot to set ENVIRONMENT still gets secure
+    # cookies, HSTS, and the production guards. ENVIRONMENT=test stays test so the
+    # suite can never be tricked into production behaviour by a stray variable.
+    if environment == "development" and (_env("REPLIT_DEPLOYMENT") or "").strip():
+        environment = "production"
+
     missing = [name for name in REQUIRED_SECRETS if _env(name) is None]
     if missing:
         raise ConfigError(

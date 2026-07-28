@@ -72,3 +72,23 @@ def test_repr_never_leaks_secrets(settings):
     assert settings.session_secret_key not in rendered
     assert settings.database_url not in rendered
     assert "REDACTED" in rendered
+
+
+def test_a_replit_deployment_is_production_even_if_nobody_said_so(env, monkeypatch):
+    """Secure cookies and HSTS must not be opt in: Replit sets REPLIT_DEPLOYMENT in
+    every deployed instance, so that signal alone turns the posture on."""
+    from app.config import load_settings
+
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("REPLIT_DEPLOYMENT", "1")
+    assert load_settings().is_production is True
+
+
+def test_the_test_environment_never_becomes_production(env, monkeypatch):
+    """A stray REPLIT_DEPLOYMENT variable must not flip the suite into production
+    behaviour, where the schema reset guard would refuse to run."""
+    from app.config import load_settings
+
+    monkeypatch.setenv("REPLIT_DEPLOYMENT", "1")
+    assert load_settings().environment == "test"
+    assert load_settings().is_production is False
