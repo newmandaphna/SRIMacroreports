@@ -1,17 +1,22 @@
 {# Global date range picker plus therapist and location filters.
 
-   A plain GET form. htmx swaps the chart section on change where it helps, but the
-   form works without JavaScript, so a filtered view is always a shareable URL. #}
+   A plain GET form, so a filtered view is always a shareable URL and everything works
+   with JavaScript off. filters.js progressively adds submit-on-change for the selects,
+   which replaced an htmx dependency that was never actually shipped. #}
 
 <form
   class="filter-bar card no-print"
   method="get"
   action="{{ filter_action or request.url.path }}"
-  hx-get="{{ filter_action or request.url.path }}"
-  hx-target="body"
-  hx-push-url="true"
-  hx-trigger="change from:(select, input[type=checkbox]) delay:250ms"
+  data-auto-submit
 >
+  {# Duplicate query params resolve last-wins, and every control below sits later in
+     the form than this input, so: a preset pill overrides it, the Apply button
+     overrides it with custom, and a bare select change (the auto-submit path, which
+     submits no button) falls back to it and keeps the current period instead of
+     snapping to the default. It must stay the FIRST control in the form. #}
+  <input type="hidden" name="preset" value="{{ date_range.preset.value }}" />
+
   <div class="filter-bar__group">
     <span class="field__label">Period</span>
     <div class="segmented">
@@ -40,7 +45,9 @@
         <span class="field__label">To</span>
         <input type="date" name="end" class="field__input" value="{{ date_range.end }}" />
       </label>
-      <input type="hidden" name="preset" value="custom" />
+      <button type="submit" name="preset" value="custom" class="button">
+        Apply dates
+      </button>
 
       <label class="field field--inline">
         <span class="field__label">Group by</span>

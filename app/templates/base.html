@@ -95,6 +95,7 @@
     {# Outside the auth block on purpose: the login page has no session yet and is
        where the toggle matters most. #}
     <script src="{{ url_for('static', path='js/password-reveal.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/filters.js') }}" defer></script>
     {% block scripts %}{% endblock %}
   </body>
 </html>

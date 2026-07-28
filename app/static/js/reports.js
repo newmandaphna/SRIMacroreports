@@ -128,6 +128,4 @@
     draw();
   }
 
-  // htmx swaps sections in without a page load, so redraw after a swap.
-  document.body.addEventListener("htmx:afterSwap", draw);
 })();
