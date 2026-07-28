@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -40,11 +40,6 @@ from app.templating import render
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["auth"])
-
-# Brute force resistance. Modest thresholds: this is a small internal application, so
-# a locked colleague is a phone call, while an unthrottled login form is a real risk.
-MAX_FAILED_LOGINS = 5
-LOCKOUT_MINUTES = 15
 
 GENERIC_LOGIN_ERROR = "Email or password is incorrect."
 
@@ -88,8 +83,6 @@ async def login(
 
     assert user is not None  # guaranteed when failure is None
 
-    user.failed_login_count = 0
-    user.locked_until = None
     user.last_login_at = datetime.now(UTC)
 
     # Opportunistically upgrade a hash whose parameters are now out of date.
@@ -120,9 +113,6 @@ def _login_failure_reason(user: User | None, password: str) -> str | None:
     if user is None:
         _burn_timing(password)
         return "unknown_user"
-    if user.is_locked:
-        _burn_timing(password)
-        return "locked"
     if not verify_password(password, user.password_hash):
         return "bad_password"
     if not user.is_active:
@@ -138,33 +128,12 @@ def _burn_timing(password: str) -> None:
 
 
 def _user_facing_login_error(reason: str) -> str:
-    if reason == "locked":
-        # Worth being specific: the account exists and the user is probably its owner,
-        # and "incorrect password" would send them into more failed attempts.
-        return (
-            f"This account is temporarily locked after {MAX_FAILED_LOGINS} failed "
-            f"attempts. Try again in {LOCKOUT_MINUTES} minutes, or ask an "
-            "administrator to reset your password."
-        )
     return GENERIC_LOGIN_ERROR
 
 
 def _handle_failed_login(
     db: DbSession, request: Request, user: User | None, attempted: str, reason: str
 ) -> None:
-    if user is not None and reason == "bad_password":
-        user.failed_login_count += 1
-        if user.failed_login_count >= MAX_FAILED_LOGINS:
-            user.locked_until = datetime.now(UTC) + timedelta(minutes=LOCKOUT_MINUTES)
-            audit.record(
-                db,
-                action=AuditAction.ACCOUNT_LOCKED,
-                result=AuditResult.FAILURE,
-                actor=user,
-                request=request,
-                detail={"failed_attempts": user.failed_login_count},
-            )
-
     audit.record(
         db,
         action=AuditAction.LOGIN_FAILURE,
