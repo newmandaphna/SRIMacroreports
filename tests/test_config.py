@@ -7,11 +7,10 @@ import pytest
 from app.config import ConfigError, load_settings
 
 
-def test_missing_session_secret_raises(env, monkeypatch):
+def test_missing_session_secret_is_tolerated(env, monkeypatch):
+    """Nothing signs with it, so the app must boot without it. See SECURITY.md."""
     monkeypatch.delenv("SESSION_SECRET_KEY", raising=False)
-    with pytest.raises(ConfigError) as exc:
-        load_settings()
-    assert "SESSION_SECRET_KEY" in str(exc.value)
+    assert load_settings().session_secret_key is None
 
 
 def test_missing_database_url_raises(env, monkeypatch):
@@ -23,11 +22,12 @@ def test_missing_database_url_raises(env, monkeypatch):
 
 def test_blank_secret_counts_as_missing(env, monkeypatch):
     monkeypatch.setenv("SESSION_SECRET_KEY", "   ")
-    with pytest.raises(ConfigError):
-        load_settings()
+    assert load_settings().session_secret_key is None
 
 
 def test_short_session_secret_rejected(env, monkeypatch):
+    """Optional, but a value that is set must be worth having: a short one is a
+    misconfiguration, not a choice, and it fails loudly."""
     monkeypatch.setenv("SESSION_SECRET_KEY", "tooshort")
     with pytest.raises(ConfigError, match="at least 32"):
         load_settings()
@@ -52,9 +52,8 @@ def test_defaults(settings):
     assert settings.session_warning_minutes == 13
     assert settings.week_start_day == "monday"
     assert settings.timezone == "America/New_York"
-    # Both gated modules default to off, per the build prompt.
+    # The gated module defaults to off, per the build prompt.
     assert settings.room_utilization_enabled is False
-    assert settings.patient_funnel_enabled is False
 
 
 def test_default_cpt_exclusions(settings):
@@ -72,3 +71,23 @@ def test_repr_never_leaks_secrets(settings):
     assert settings.session_secret_key not in rendered
     assert settings.database_url not in rendered
     assert "REDACTED" in rendered
+
+
+def test_a_replit_deployment_is_production_even_if_nobody_said_so(env, monkeypatch):
+    """Secure cookies and HSTS must not be opt in: Replit sets REPLIT_DEPLOYMENT in
+    every deployed instance, so that signal alone turns the posture on."""
+    from app.config import load_settings
+
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("REPLIT_DEPLOYMENT", "1")
+    assert load_settings().is_production is True
+
+
+def test_the_test_environment_never_becomes_production(env, monkeypatch):
+    """A stray REPLIT_DEPLOYMENT variable must not flip the suite into production
+    behaviour, where the schema reset guard would refuse to run."""
+    from app.config import load_settings
+
+    monkeypatch.setenv("REPLIT_DEPLOYMENT", "1")
+    assert load_settings().environment == "test"
+    assert load_settings().is_production is False

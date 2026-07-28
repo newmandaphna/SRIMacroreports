@@ -291,6 +291,8 @@ def run_sync(
         mode=mode,
         status=SyncStatus.RUNNING,
         run_by_id=actor.id if actor else None,
+        tab_name=source.tab_name,
+        header_row=source.header_row,
     )
     db.add(run)
     db.flush()

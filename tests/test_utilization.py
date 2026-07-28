@@ -380,3 +380,114 @@ def test_export_is_audited(manager):
 def test_export_route_is_not_shadowed_by_the_drill_in(manager):
     """`/export.csv` must not be parsed as a therapist id."""
     assert manager.get(f"/reports/therapist-utilization/export.csv?{ALL}").status_code == 200
+
+
+# ---------------------------------------------- threshold math fixes (audit tier 1)
+
+
+def test_monthly_buckets_carry_no_weekly_status(manager, practice):
+    """25 per week cannot grade a month of sessions. Statuses only at week."""
+    tid = practice["salaried"]
+
+    monthly = manager.get(
+        f"/reports/therapist-utilization/{tid}"
+        "?preset=custom&start=2026-04-01&end=2026-04-30&granularity=month"
+    ).text
+    assert "statuses appear on the weekly view" in monthly
+    assert ">below<" not in monthly and ">at threshold<" not in monthly
+
+    weekly = manager.get(
+        f"/reports/therapist-utilization/{tid}"
+        "?preset=custom&start=2026-04-01&end=2026-04-30&granularity=week"
+    ).text
+    assert (">below<" in weekly) or (">watch<" in weekly) or (">at threshold<" in weekly)
+
+
+def test_per_week_average_is_exact_not_weekday_rounded(manager, practice):
+    """A 10 day range is 10/7 weeks whatever day it is viewed on. round(days/7) used
+    to flip a person across the alert line depending on the viewing weekday."""
+    from decimal import Decimal
+
+    from app.reporting import queries
+
+    with manager.app.state.db.session() as db:
+        rows = queries.by_therapist(
+            db,
+            queries.Filters(
+                start=date(2026, 4, 6),
+                end=date(2026, 4, 15),
+                cpt_exclusions=("99998", "99999"),
+            ),
+            weeks_in_range=Decimal(10) / Decimal(7),
+        )
+    alpha = next(r for r in rows if r.display_name == "Alpha")
+    # 3 sessions in 10 days is exactly 2.1 a week, not 3/1 or 3/2.
+    assert alpha.sessions == 3
+    assert alpha.sessions_per_week == Decimal("2.1")
+
+
+def test_a_salaried_therapist_with_zero_visits_is_on_the_board(manager, practice):
+    """The person most below threshold is the one with no sessions at all. An inner
+    join silently removed them from the exact page built to show them."""
+    with manager.app.state.db.session() as db:
+        db.add(
+            Therapist(
+                display_name="Zero Sessions", employment_type=EmploymentType.SALARIED_BENEFITS
+            )
+        )
+
+    page = manager.get(
+        "/reports/therapist-utilization?preset=custom&start=2026-04-01&end=2026-04-30"
+    ).text
+    assert "Zero Sessions" in page
+
+
+def test_an_inactive_therapist_with_no_range_visits_stays_off_the_board(manager, practice):
+    with manager.app.state.db.session() as db:
+        db.add(
+            Therapist(
+                display_name="Long Gone",
+                employment_type=EmploymentType.SALARIED_BENEFITS,
+                active=False,
+            )
+        )
+
+    page = manager.get(
+        "/reports/therapist-utilization?preset=custom&start=2026-04-01&end=2026-04-30"
+    ).text
+    assert "Long Gone" not in page
+
+
+# ----------------------------------------------------------- weekly session counts
+
+
+def test_weekly_counts_shows_one_row_per_week(manager):
+    page = manager.get("/reports/therapist-utilization/weekly?weeks=4").text
+    assert page.count("Week of ") == 4
+    assert "Last 4 weeks" in page
+
+
+def test_weekly_counts_carry_their_explicit_date_range(manager):
+    """Each week names its own Monday to Sunday span, so nobody needs a calendar to
+    decode which days "week of 6 Apr" covers."""
+    page = manager.get("/reports/therapist-utilization/weekly?weeks=52").text
+    assert "Week of 6 Apr" in page
+    assert "Mon 6 Apr 2026 to Sun 12 Apr 2026" in page
+
+
+def test_weekly_counts_count_sessions_not_cancellations(manager):
+    """The window spanning April holds 4 sessions: Alpha's 3 plus Beta's 1. Alpha's
+    99998 cancellation is present in the data and must not be counted."""
+    page = manager.get("/reports/therapist-utilization/weekly?weeks=52").text
+    match = re.search(r'"sessions": (\[[^\]]*\])', page)
+    assert match, "no chart data island on the page"
+    import json
+
+    assert sum(json.loads(match.group(1))) == 4
+
+
+def test_weekly_counts_garbage_and_extremes_fall_back_not_error(manager):
+    """A mistyped URL shows a dashboard, not a stack trace, like every other picker."""
+    assert "Last 8 weeks" in manager.get("/reports/therapist-utilization/weekly?weeks=banana").text
+    assert "Last 104 weeks" in manager.get("/reports/therapist-utilization/weekly?weeks=9999").text
+    assert "Last 1 week," in manager.get("/reports/therapist-utilization/weekly?weeks=-3").text

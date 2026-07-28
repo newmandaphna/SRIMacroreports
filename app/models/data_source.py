@@ -24,6 +24,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 from app.models.types import UTCDateTime, enum_column, utcnow
+from app.models.user import User
 
 # The only columns that may be imported, keyed by the canonical field name the app
 # uses internally. The values are the header text as it appears in the Q sheet.
@@ -81,12 +82,16 @@ class SourceProvider(StrEnum):
     # A bundled synthetic workbook with obviously fake patients, so the sync engine
     # can be demonstrated and tested end to end without credentials and without PHI.
     DEMO = "demo"
+    # Historical data arrives as an uploaded .xlsx or .csv instead of a live sheet.
+    # Same pipeline, same allowlist; the file is parsed in memory and never stored.
+    UPLOAD = "upload"
 
     @property
     def label(self) -> str:
         return {
             SourceProvider.GOOGLE_SHEETS: "Google Sheets",
             SourceProvider.DEMO: "Demo (synthetic data)",
+            SourceProvider.UPLOAD: "File upload (historical data)",
         }[self]
 
 
@@ -146,6 +151,9 @@ class DataSource(Base):
             self.spreadsheet_id and self.tab_name
         ):
             return False
+        # The engine refuses to run without a tab name, whatever the provider.
+        if not self.tab_name:
+            return False
         return not self.missing_required_fields
 
 
@@ -186,6 +194,12 @@ class SyncRun(Base):
         enum_column(SyncStatus, length=20), nullable=False, default=SyncStatus.RUNNING
     )
 
+    # What was actually read, captured at run time. The source's tab can be repointed
+    # afterwards, and a run page that cannot say which tab it read is how an entire
+    # evening was once lost to syncing the wrong one.
+    tab_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    header_row: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     started_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
@@ -210,6 +224,7 @@ class SyncRun(Base):
     )
 
     source: Mapped[DataSource] = relationship(lazy="selectin")
+    run_by: Mapped[User | None] = relationship(lazy="selectin")
 
     @property
     def duration_seconds(self) -> float | None:

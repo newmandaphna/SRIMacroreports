@@ -83,12 +83,6 @@
 
   enhanceAll(document);
 
-  // Password fields are on full page loads today, but the rest of the application
-  // swaps content in with htmx, so anything arriving that way is picked up too.
-  document.body.addEventListener("htmx:afterSwap", function (event) {
-    enhanceAll(event.target);
-  });
-
   // Leaving the page with a password on screen and coming back to it revealed is the
   // one way the browser can undo the submit handler above.
   window.addEventListener("pagehide", function () {

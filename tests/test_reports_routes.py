@@ -346,3 +346,54 @@ def test_an_out_of_range_threshold_is_refused(client):
     )
     assert response.status_code == 400
     assert "between 1 and" in response.text
+
+
+# ---------------------------------------------------------- the period preset fix
+
+
+def test_a_preset_pill_beats_the_hidden_current_preset(financial_user, with_data):
+    """The form submits the current preset as a hidden first field and the clicked
+    pill after it; last wins. A hidden preset=custom used to sit after the pills and
+    swallow every click, so the pills had never worked at all."""
+    page = financial_user.get(
+        "/reports/financial?preset=custom&preset=this_week&start=2026-04-01&end=2026-04-30"
+    ).text
+    assert "This week" in page
+    # A custom range would echo its explicit dates as the range label.
+    assert "2026-04-01 to 2026-04-30" not in page
+
+
+def test_apply_dates_wins_over_the_current_preset(financial_user, with_data):
+    page = financial_user.get(
+        "/reports/financial?preset=this_week&preset=custom&start=2026-04-01&end=2026-04-30"
+    ).text
+    assert "2026-04-01 to 2026-04-30" in page
+
+
+def test_the_filter_form_carries_no_unconditional_custom(financial_user, with_data):
+    """The template regression itself: the only preset inputs are the current-value
+    hidden field, the pills, and the Apply button."""
+    page = financial_user.get("/reports/financial").text
+    assert 'name="preset" value="custom" />' not in page.replace("  ", " ")
+
+
+def test_a_bare_select_change_keeps_the_current_period(financial_user, with_data):
+    """The auto-submit path posts no button, so the hidden field keeps the period."""
+    page = financial_user.get("/reports/financial?preset=last_4_weeks&granularity=week").text
+    match = re.search(r'name="preset" value="([^"]+)"', page)
+    assert match and match.group(1) == "last_4_weeks"
+
+
+# ------------------------------------------------------------ weekly counts section
+
+
+def test_overview_shows_the_weekly_counts_section(financial_user, with_data):
+    page = financial_user.get(f"/reports?{ALL}").text
+    assert "Weekly session counts" in page
+    # The default window is 8 weeks, one table row each.
+    assert page.count("Week of ") == 8
+
+
+def test_overview_weekly_window_is_selectable_and_forgiving(financial_user, with_data):
+    assert financial_user.get(f"/reports?{ALL}&weeks=4").text.count("Week of ") == 4
+    assert financial_user.get(f"/reports?{ALL}&weeks=nonsense").text.count("Week of ") == 8

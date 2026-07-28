@@ -257,3 +257,53 @@ def test_authentication_events_are_audited(client, viewer):
 
     assert (AuditAction.LOGIN_FAILURE, AuditResult.FAILURE) in actions
     assert (AuditAction.LOGIN_SUCCESS, AuditResult.SUCCESS) in actions
+
+
+# ------------------------------------------------- the startup password sync guard
+
+
+def test_a_chosen_password_survives_a_restart(seeded_env, monkeypatch):
+    """Every redeploy used to revert the admin's chosen password to the bootstrap
+    secret, which broke their login and kept the bootstrap credential valid forever.
+    The sync may only touch an account still on its bootstrap password."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+
+    from app.config import load_settings
+    from app.main import create_app
+    from app.models.user import User
+    from app.security.passwords import verify_password
+    from tests.conftest import SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD, _reset_schema
+
+    chosen = "a-password-the-admin-chose-9944"  # noqa: S105
+
+    s = load_settings()
+    _reset_schema(s)
+    with TestClient(create_app(s)) as client:
+        client.post(
+            "/login",
+            data={"email": SEED_ADMIN_EMAIL, "password": SEED_ADMIN_PASSWORD},
+            follow_redirects=False,
+        )
+        page = client.get("/change-password")
+        import re
+
+        token = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+        client.post(
+            "/change-password",
+            data={
+                "csrf_token": token,
+                "current_password": SEED_ADMIN_PASSWORD,
+                "new_password": chosen,
+                "confirm_password": chosen,
+            },
+        )
+
+    # The restart: same environment, ADMIN_INITIAL_PASSWORD still set to the old value.
+    with TestClient(create_app(load_settings())) as client:
+        with client.app.state.db.session() as db:
+            admin = db.execute(select(User).where(User.email == SEED_ADMIN_EMAIL)).scalar_one()
+            assert verify_password(chosen, admin.password_hash), (
+                "the admin's chosen password was overwritten at startup"
+            )
+            assert admin.must_change_password is False

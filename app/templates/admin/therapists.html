@@ -92,12 +92,21 @@
 </div>
 {% endif %}
 
-<form method="post" action="/admin/therapists/new" class="card stack" style="margin-top: var(--space-4)">
+<form
+  method="post"
+  action="/admin/therapists/new"
+  class="card stack"
+  style="margin-top: var(--space-4)"
+  id="add-therapist"
+>
+  {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}" />{% endif %}
   <p class="card__title">Add a therapist</p>
   {% if prefill_alias %}
   <div class="alert alert--warning">
-    Creating therapist for unrecognized sync name: <strong>{{ prefill_alias }}</strong>.
-    Confirm the display name and employment type below, then save.
+    Creating a therapist for the rejected name <strong>{{ prefill_alias }}</strong>,
+    already filled in below as an alias. Give them their real display name and
+    employment type, then save{% if return_to %}; you will be taken back to the sync
+    run you came from{% endif %}.
   </div>
   {% endif %}
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />

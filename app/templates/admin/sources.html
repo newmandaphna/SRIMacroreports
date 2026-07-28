@@ -13,6 +13,10 @@
 <div class="alert alert--error" role="alert">{{ error }}</div>
 {% endif %}
 
+{% if request.query_params.get('notice') %}
+<div class="alert alert--ok" role="status">{{ request.query_params['notice'] }}</div>
+{% endif %}
+
 {% if sources %}
 <div class="card">
   <table class="data-table">
@@ -96,6 +100,23 @@
     </label>
 
     <button type="submit" class="button button--primary">Add source</button>
+  </form>
+
+  <form method="post" action="/admin/sources/new" class="card stack">
+    <p class="card__title">Historical data upload</p>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="provider" value="upload" />
+    <p class="text-muted">
+      For quarters that predate the live sheet. Creates a source that imports from an
+      uploaded .xlsx or .csv instead of Google Sheets, through the same allowlist and
+      validation. The column mapping is prefilled from the most recent source. The
+      file itself is read in memory and never stored.
+    </p>
+    <label class="field">
+      <span class="field__label">Label</span>
+      <input type="text" name="label" class="field__input" placeholder="Q1 2026 (historical)" required />
+    </label>
+    <button type="submit" class="button">Create upload source</button>
   </form>
 
   <form method="post" action="/admin/sources/demo" class="card stack">

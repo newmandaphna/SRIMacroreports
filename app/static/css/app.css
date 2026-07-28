@@ -271,6 +271,8 @@ a {
     background: #ffffff;
   }
   .app-header__nav,
+  .app-header__user,
+  .form-actions,
   .no-print {
     display: none !important;
   }
@@ -280,6 +282,13 @@ a {
   }
   .chart-frame {
     height: 220px;
+  }
+  /* Chart.js sizes each canvas in device pixels for the screen. Left alone it
+     overflows the paper and the printer clips it, so on paper the canvas gives
+     up its fixed size and fits its frame. */
+  .chart-frame canvas {
+    max-width: 100% !important;
+    height: auto !important;
   }
   a[href]::after {
     content: "";
@@ -624,11 +633,19 @@ a {
   color: var(--color-ink-muted);
 }
 
-/* Tables scroll inside their card rather than pushing the page sideways. */
+/* Tables scroll inside their card rather than pushing the page sideways.
+
+   display: block on the table plus nowrap on every cell broke two things at once:
+   cells with real prose (audit details, notes, rejection reasons) could never wrap,
+   and a block table stops laying columns out against the full card width. Only the
+   headers stay on one line; body cells wrap like text should. */
 
 .card > .data-table {
   display: block;
   overflow-x: auto;
+}
+
+.card > .data-table th {
   white-space: nowrap;
 }
 
@@ -752,6 +769,9 @@ a {
   font-size: var(--text-sm);
   padding: var(--space-2) var(--space-3);
   cursor: pointer;
+  /* The item is sometimes a button and sometimes a link; both must render alike. */
+  display: inline-block;
+  text-decoration: none;
 }
 
 .segmented__item:last-child {

@@ -8,6 +8,8 @@
       {{ source.label }}
     </h1>
     <p class="page-head__sub">
+      Read tab <strong>{{ run.tab_name or source.tab_name or "unknown" }}</strong>{%
+      if run.header_row %} from header row {{ run.header_row }}{% endif %},
       {{ run.started_at|datetime("%Y-%m-%d %H:%M:%S") }} UTC{% if run.duration_seconds is not none %},
       took {{ "%.1f"|format(run.duration_seconds) }} seconds{% endif %}.
     </p>
@@ -97,7 +99,7 @@
     <li style="margin-bottom: var(--space-1);">
       <strong>{{ name }}</strong>
       <span class="text-muted">({{ count }} row{{ "s" if count != 1 else "" }})</span>
-      <a href="/admin/therapists?prefill={{ name|urlencode }}">Create therapist →</a>
+      <a href="/admin/therapists?prefill={{ name|urlencode }}&return_to=/admin/sources/{{ source.id }}/runs/{{ run.id }}#add-therapist">Create therapist →</a>
     </li>
     {% endfor %}
     {% if unknown_therapists|length > 40 %}
@@ -157,7 +159,7 @@
     <li style="margin-bottom: var(--space-1)">
       <strong>{{ name }}</strong>
       <span class="text-muted">({{ n|count }} row{{ "s" if n != 1 else "" }})</span>
-      <a href="/admin/therapists?prefill={{ name|urlencode }}">Create therapist →</a>
+      <a href="/admin/therapists?prefill={{ name|urlencode }}&return_to=/admin/sources/{{ source.id }}/runs/{{ run.id }}#add-therapist">Create therapist →</a>
     </li>
     {% endfor %}
     {% if unchecked_therapists|length > 40 %}

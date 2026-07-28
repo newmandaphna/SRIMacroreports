@@ -23,6 +23,43 @@
   {% include "reports/_trend.html" %}
 </div>
 
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="section-head">
+    <div>
+      <h2>Weekly session counts</h2>
+      <p class="page-head__sub">
+        Last {{ weekly.week_count }} week{{ "" if weekly.week_count == 1 else "s" }},
+        {{ weekly.window_start.strftime("%-d %b %Y") }} to
+        {{ weekly.window_end.strftime("%-d %b %Y") }}, anchored to today whatever
+        period is picked above.
+        {% if weekly.average_per_week is not none %}
+        A typical completed week: {{ weekly.average_per_week }} sessions.
+        {% endif %}
+      </p>
+    </div>
+    <div class="segmented no-print">
+      {% for n in week_choices %}
+      <a
+        href="/reports?{{ query_string }}&weeks={{ n }}"
+        class="segmented__item {% if weekly.week_count == n %}segmented__item--on{% endif %}"
+        {% if weekly.week_count == n %}aria-current="true"{% endif %}
+      >
+        {{ n }}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% set compact = true %}
+  {% include "reports/_weekly_counts.html" %}
+  {% if can_see_utilization %}
+  <p class="kpi-note no-print" style="margin-top: var(--space-2)">
+    <a href="/reports/therapist-utilization/weekly?weeks={{ weekly.week_count }}"
+      >Open the full weekly view</a
+    >, with collected amounts and any window up to 104 weeks.
+  </p>
+  {% endif %}
+</div>
+
 <div style="margin-top: var(--space-4)">
   {% set show_export = true %}
   {% include "reports/_utilization_board.html" %}

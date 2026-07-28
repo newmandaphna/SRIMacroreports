@@ -11,8 +11,9 @@
 <div class="state">
   <p class="state__title">No synced data yet</p>
   <p>
-    Authentication and administration are in place. Reporting appears here once Phase 2
-    lands and a data source has been synced.
+    Reports appear once a data source has been synced.
+    {% if auth.role.is_admin %}Start under <a href="/admin/sources">Data sources</a>.{%
+    else %}An administrator runs the sync from Data sources.{% endif %}
   </p>
 </div>
 

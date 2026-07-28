@@ -18,7 +18,7 @@ import logging
 from datetime import date, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy import select
 
@@ -28,7 +28,8 @@ from app.models.therapist import Therapist
 from app.models.types import utcnow
 from app.models.utilization import UtilizationNote
 from app.reporting import queries
-from app.reporting.periods import period_start
+from app.reporting.periods import Granularity, period_start
+from app.reporting.weekly import WEEK_WINDOW_CHOICES, parse_week_count, weekly_counts
 from app.routers.reports import Ctx, ReportContext, _ranked_for_board
 from app.security import audit
 from app.security.deps import AuthContext, DbSession, require_module, require_utilization_writer
@@ -152,6 +153,45 @@ async def export_board(
     )
 
 
+# Registered before "/{therapist_id}": FastAPI matches in declaration order, and the
+# parameterized route would otherwise swallow "weekly" and 422 on the int parse.
+@router.get("/weekly", response_class=HTMLResponse)
+async def weekly_session_counts(
+    request: Request,
+    db: DbSession,
+    ctx: Ctx,
+    auth: UtilizationUser,
+    weeks: str = Query(default=""),
+) -> Response:
+    """Session counts per calendar week, over a window the viewer chooses.
+
+    The window is the last N weeks counted back from the current week, each shown
+    with its explicit date range so "week of 6 Apr" never needs a calendar to
+    decode. The computation is shared with the overview section (see
+    app/reporting/weekly.py).
+    """
+    weekly = weekly_counts(
+        db,
+        ctx.filters,
+        week_count=parse_week_count(weeks),
+        timezone=ctx.config.timezone,
+        week_starts_monday=ctx.config.week_starts_monday,
+    )
+
+    return render(
+        request,
+        "reports/weekly_sessions.html",
+        {
+            "page_title": "Weekly session counts",
+            "auth": auth,
+            "active_page": "utilization",
+            "weekly": weekly,
+            "week_choices": WEEK_WINDOW_CHOICES,
+            **ctx.as_template_context(),
+        },
+    )
+
+
 @router.get("/{therapist_id}", response_class=HTMLResponse)
 async def therapist_drill_in(
     request: Request, db: DbSession, ctx: Ctx, auth: UtilizationUser, therapist_id: int
@@ -185,11 +225,16 @@ async def therapist_drill_in(
         ),
     )
 
+    # The threshold is sessions per WEEK, so it can only grade weekly buckets. A
+    # monthly bucket holds four times the sessions, and grading it against 25 showed
+    # everyone comfortably green at month granularity and red at week granularity,
+    # which are not two views of one truth.
     measured = therapist.employment_type.counts_against_threshold
+    graded = measured and ctx.granularity is Granularity.WEEK
     periods_with_status = [
         (
             point,
-            ctx.config.utilization_status(point.sessions) if measured else "",
+            ctx.config.utilization_status(point.sessions) if graded else "",
         )
         for point in history
     ]

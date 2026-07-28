@@ -31,6 +31,7 @@ from app.reporting.periods import (
     Granularity,
     resolve_range,
 )
+from app.reporting.weekly import WEEK_WINDOW_CHOICES, parse_week_count, weekly_counts
 from app.security import audit
 from app.security.deps import AuthContext, DbSession, require_module
 from app.templating import render
@@ -93,8 +94,15 @@ class ReportContext:
         self.locations = queries.available_locations(db)
 
     @property
-    def weeks_in_range(self) -> int:
-        return max(1, round(self.range.days / 7))
+    def weeks_in_range(self) -> Decimal:
+        """Exact weeks, not rounded to whole ones.
+
+        round(days / 7) made a therapist's below-threshold status change with the
+        day of the week the report was opened: mid week, the current week counted
+        as either a whole week or not at all. days / 7 as an exact Decimal gives
+        the same answer on Tuesday as on Sunday.
+        """
+        return Decimal(self.range.days) / Decimal(7)
 
     def as_template_context(self) -> dict:
         return {
@@ -176,6 +184,16 @@ def build_kpis(db: DbSession, ctx: ReportContext, current: queries.Totals) -> li
 
     return [
         Kpi(
+            key="collected",
+            question="What came in the door?",
+            label="Revenue collected",
+            value=current.collected,
+            previous=previous.collected,
+            kind="currency",
+            sparkline=collected_spark,
+            href=f"/reports/financial?{qs}",
+        ),
+        Kpi(
             key="sessions",
             question="How much clinical work did we do?",
             label="Sessions",
@@ -185,16 +203,6 @@ def build_kpis(db: DbSession, ctx: ReportContext, current: queries.Totals) -> li
             sparkline=session_spark,
             href=f"/reports/financial?{qs}",
             note="Cancellations are not counted as sessions.",
-        ),
-        Kpi(
-            key="collected",
-            question="What came in the door?",
-            label="Revenue collected",
-            value=current.collected,
-            previous=previous.collected,
-            kind="currency",
-            sparkline=collected_spark,
-            href=f"/reports/financial?{qs}",
         ),
         Kpi(
             key="outstanding",
@@ -244,13 +252,29 @@ def below_threshold_count(db: DbSession, ctx: ReportContext) -> int:
 
 
 @router.get("", response_class=HTMLResponse)
-async def overview(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser) -> Response:
+async def overview(
+    request: Request,
+    db: DbSession,
+    ctx: Ctx,
+    auth: FinancialUser,
+    weeks: str = Query(default=""),
+) -> Response:
     """The overview leadership will judge the application by."""
     current = queries.totals(db, ctx.filters)
     trend = queries.by_period(
         db, ctx.filters, ctx.granularity, week_starts_monday=ctx.config.week_starts_monday
     )
     therapist_rows = queries.by_therapist(db, ctx.filters, weeks_in_range=ctx.weeks_in_range)
+
+    # The weekly section is anchored to today, not to the report's date range: "the
+    # last N weeks" should mean the same thing whatever period is picked above it.
+    weekly = weekly_counts(
+        db,
+        ctx.filters,
+        week_count=parse_week_count(weeks),
+        timezone=ctx.config.timezone,
+        week_starts_monday=ctx.config.week_starts_monday,
+    )
 
     return render(
         request,
@@ -262,6 +286,8 @@ async def overview(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUse
             "totals": current,
             "kpis": build_kpis(db, ctx, current),
             "trend": trend,
+            "weekly": weekly,
+            "week_choices": WEEK_WINDOW_CHOICES,
             "therapist_rows": _ranked_for_board(therapist_rows, ctx.config),
             "can_see_utilization": auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
             **ctx.as_template_context(),

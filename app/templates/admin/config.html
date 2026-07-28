@@ -9,6 +9,12 @@
   </p>
 </div>
 
+{% if request.query_params.get('saved') %}
+<div class="alert alert--ok" role="status">
+  Settings saved. They apply from the next page load for everyone.
+</div>
+{% endif %}
+
 {% if error %}
 <div class="alert alert--error" role="alert">{{ error }}</div>
 {% endif %}
@@ -113,20 +119,6 @@
         </td>
         <td>
           {% if settings.room_utilization_enabled %}
-          <span class="pill pill--ok">on</span>
-          {% else %}<span class="pill pill--neutral">off</span>{% endif %}
-        </td>
-      </tr>
-      <tr>
-        <td>
-          Patient funnel
-          <span class="field__hint">
-            The only module that shows patient identity. Gated on the practice owner
-            confirming scope.
-          </span>
-        </td>
-        <td>
-          {% if settings.patient_funnel_enabled %}
           <span class="pill pill--ok">on</span>
           {% else %}<span class="pill pill--neutral">off</span>{% endif %}
         </td>

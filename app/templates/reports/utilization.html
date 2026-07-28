@@ -6,11 +6,16 @@
     <h1>Therapist utilization</h1>
     <p class="page-head__sub">{{ date_range.label }}, {{ date_range.start }} to {{ date_range.end }}.</p>
   </div>
-  <a
-    class="button button--quiet no-print"
-    href="/reports/therapist-utilization/export.csv?{{ query_string }}"
-    >Export CSV</a
-  >
+  <div class="no-print" style="display: flex; gap: var(--space-2)">
+    <a class="button button--quiet" href="/reports/therapist-utilization/weekly"
+      >Weekly counts</a
+    >
+    <a
+      class="button button--quiet"
+      href="/reports/therapist-utilization/export.csv?{{ query_string }}"
+      >Export CSV</a
+    >
+  </div>
 </div>
 
 {% include "reports/_filters.html" %}
