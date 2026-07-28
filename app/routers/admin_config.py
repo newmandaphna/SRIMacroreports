@@ -113,4 +113,4 @@ async def save_config(
         request=request,
         detail={"changes": changes} if changes else {"changes": "none"},
     )
-    return RedirectResponse("/admin/config", status_code=303)
+    return RedirectResponse("/admin/config?saved=1", status_code=303)

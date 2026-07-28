@@ -34,7 +34,7 @@
     {% set raw = entry.split(' -> ')[0] if ' -> ' in entry else entry %}
     <li style="margin-bottom: var(--space-1)">
       <code>{{ entry }}</code>
-      <a href="/admin/therapists?prefill={{ raw|urlencode }}" style="margin-left: var(--space-2)">Create therapist →</a>
+      <a href="/admin/therapists?prefill={{ raw|urlencode }}&return_to=/admin/sources/{{ source.id }}#add-therapist" style="margin-left: var(--space-2)">Create therapist →</a>
     </li>
     {% endfor %}
   </ul>
@@ -268,6 +268,37 @@
   </form>
 </div>
 
+{% set deletable = source.provider.value == "demo" or visit_count == 0 %}
+<div class="card stack" style="margin-top: var(--space-4)">
+  <p class="card__title">Delete this source</p>
+  {% if deletable %}
+  <p class="text-muted">
+    {% if source.provider.value == "demo" %}
+    Removes the demo source together with its {{ visit_count|count }} synthetic session
+    rows and sync history. The demo therapists stay and can be deleted from the
+    Therapists page.
+    {% else %}
+    This source has imported nothing, so deleting it removes only the source entry and
+    its sync history.
+    {% endif %}
+  </p>
+  <form
+    method="post"
+    action="/admin/sources/{{ source.id }}/delete"
+    onsubmit="return confirm('Delete {{ source.label }}? This cannot be undone.')"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button type="submit" class="button button--danger">Delete source</button>
+  </form>
+  {% else %}
+  <p class="text-muted">
+    Not available: this source holds {{ visit_count|count }} imported session rows, and
+    imported rows are never deleted from here. For a finished quarter, untick
+    <em>Sync this source</em> above instead; its rows stay in every report.
+  </p>
+  {% endif %}
+</div>
+
 {% if runs %}
 <h2 style="margin-top: var(--space-5)">Sync history</h2>
 <div class="card" style="margin-top: var(--space-2)">
@@ -295,7 +326,7 @@
           {% if r.mode.value == "dry_run" %}<span class="pill pill--neutral">dry run</span>
           {% else %}<span class="pill pill--ok">live</span>{% endif %}
         </td>
-        <td class="text-muted">{{ r.run_by_id or "-" }}</td>
+        <td class="text-muted">{{ r.run_by.display_name if r.run_by else "-" }}</td>
         <td class="numeric">{{ r.rows_read|count }}</td>
         <td class="numeric">{{ r.rows_inserted|count }}</td>
         <td class="numeric">{{ r.rows_updated|count }}</td>

@@ -9,6 +9,12 @@
   </p>
 </div>
 
+{% if request.query_params.get('saved') %}
+<div class="alert alert--ok" role="status">
+  Settings saved. They apply from the next page load for everyone.
+</div>
+{% endif %}
+
 {% if error %}
 <div class="alert alert--error" role="alert">{{ error }}</div>
 {% endif %}

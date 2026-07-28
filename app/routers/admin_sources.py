@@ -359,7 +359,63 @@ async def update_source(
             "active": source.active,
         },
     )
-    return RedirectResponse(f"/admin/sources/{source.id}", status_code=303)
+    from urllib.parse import quote
+
+    saved_note = quote(
+        f"Saved. Reading tab {source.tab_name!r} from header row {source.header_row}."
+        if source.tab_name
+        else "Saved. No tab chosen yet."
+    )
+    return RedirectResponse(f"/admin/sources/{source.id}?notice={saved_note}", status_code=303)
+
+
+@router.post("/{source_id}/delete")
+async def delete_source(
+    request: Request, db: DbSession, auth: AdminUser, source_id: int
+) -> Response:
+    """Remove a source that was created by mistake or is no longer wanted.
+
+    Real session rows are the system of record and are never deleted from here: a
+    source that holds any refuses to go, and the answer for a finished quarter is to
+    deactivate it. The demo source is the one exception, because every row it holds
+    is synthetic by construction.
+    """
+    source = db.get(DataSource, source_id)
+    if source is None:
+        return RedirectResponse("/admin/sources", status_code=303)
+
+    visit_count = db.execute(
+        select(func.count(Visit.id)).where(Visit.source_id == source.id)
+    ).scalar_one()
+
+    if visit_count and source.provider is not SourceProvider.DEMO:
+        return _detail_redirect_with_flash(
+            source.id,
+            f"Not deleted: this source holds {visit_count} imported session rows. "
+            "Deactivate it instead; imported rows are never deleted from here.",
+        )
+
+    label = source.label
+    audit.record(
+        db,
+        action=AuditAction.DATA_SOURCE_CHANGED,
+        actor=auth.user,
+        target_type="data_source",
+        target_id=source.id,
+        request=request,
+        detail={
+            "deleted": label,
+            "provider": source.provider.value,
+            "visits_deleted": visit_count,
+        },
+    )
+    db.delete(source)
+
+    from urllib.parse import quote
+
+    return RedirectResponse(
+        f"/admin/sources?notice={quote(f'Deleted source {label!r}.')}", status_code=303
+    )
 
 
 @router.post("/{source_id}/sync")

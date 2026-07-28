@@ -13,6 +13,10 @@
 <div class="alert alert--error" role="alert">{{ error }}</div>
 {% endif %}
 
+{% if request.query_params.get('notice') %}
+<div class="alert alert--ok" role="status">{{ request.query_params['notice'] }}</div>
+{% endif %}
+
 {% if sources %}
 <div class="card">
   <table class="data-table">
