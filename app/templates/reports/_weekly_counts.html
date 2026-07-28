@@ -1,0 +1,37 @@
+{# The weekly counts chart and table, shared between the dedicated page and the
+   overview section. Expects `weekly` (a WeeklyCounts). Set `compact = true` before
+   including to cap the table and skip the collected column. #}
+
+<div class="chart-frame">
+  <canvas id="weekly-counts"></canvas>
+</div>
+<script type="application/json" id="weekly-counts-data">
+  {
+    "labels": {{ weekly.rows | map(attribute="label") | list | tojson }},
+    "sessions": {{ weekly.rows | map(attribute="sessions") | list | tojson }}
+  }
+</script>
+
+<table class="data-table" style="margin-top: var(--space-3)">
+  <thead>
+    <tr>
+      <th>Week</th>
+      <th>Date range</th>
+      <th class="numeric">Sessions</th>
+      {% if not compact %}<th class="numeric">Collected</th>{% endif %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for w in weekly.rows %}
+    <tr>
+      <td>Week of {{ w.start.strftime("%-d %b") }}</td>
+      <td class="text-muted">
+        {{ w.start.strftime("%a %-d %b %Y") }} to {{ w.end.strftime("%a %-d %b %Y") }}
+        {% if w.in_progress %}<span class="pill pill--neutral">in progress</span>{% endif %}
+      </td>
+      <td class="numeric">{{ w.sessions|count }}</td>
+      {% if not compact %}<td class="numeric">{{ w.collected|currency }}</td>{% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>

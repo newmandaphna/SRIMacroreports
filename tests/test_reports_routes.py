@@ -382,3 +382,18 @@ def test_a_bare_select_change_keeps_the_current_period(financial_user, with_data
     page = financial_user.get("/reports/financial?preset=last_4_weeks&granularity=week").text
     match = re.search(r'name="preset" value="([^"]+)"', page)
     assert match and match.group(1) == "last_4_weeks"
+
+
+# ------------------------------------------------------------ weekly counts section
+
+
+def test_overview_shows_the_weekly_counts_section(financial_user, with_data):
+    page = financial_user.get(f"/reports?{ALL}").text
+    assert "Weekly session counts" in page
+    # The default window is 8 weeks, one table row each.
+    assert page.count("Week of ") == 8
+
+
+def test_overview_weekly_window_is_selectable_and_forgiving(financial_user, with_data):
+    assert financial_user.get(f"/reports?{ALL}&weeks=4").text.count("Week of ") == 4
+    assert financial_user.get(f"/reports?{ALL}&weeks=nonsense").text.count("Week of ") == 8

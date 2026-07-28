@@ -769,6 +769,9 @@ a {
   font-size: var(--text-sm);
   padding: var(--space-2) var(--space-3);
   cursor: pointer;
+  /* The item is sometimes a button and sometimes a link; both must render alike. */
+  display: inline-block;
+  text-decoration: none;
 }
 
 .segmented__item:last-child {

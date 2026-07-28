@@ -5,8 +5,8 @@
   <div>
     <h1>Weekly session counts</h1>
     <p class="page-head__sub">
-      Last {{ week_count }} week{{ "" if week_count == 1 else "s" }},
-      {{ window_start.strftime("%-d %b %Y") }} to {{ window_end.strftime("%-d %b %Y") }}.
+      Last {{ weekly.week_count }} week{{ "" if weekly.week_count == 1 else "s" }},
+      {{ weekly.window_start.strftime("%-d %b %Y") }} to {{ weekly.window_end.strftime("%-d %b %Y") }}.
       Weeks run {{ "Monday to Sunday" if config.week_starts_monday else "Sunday to Saturday" }}.
     </p>
   </div>
@@ -26,7 +26,7 @@
       min="1"
       max="104"
       class="field__input"
-      value="{{ week_count }}"
+      value="{{ weekly.week_count }}"
       style="width: 6em"
     />
   </label>
@@ -39,8 +39,8 @@
         type="submit"
         name="weeks"
         value="{{ n }}"
-        class="segmented__item {% if week_count == n %}segmented__item--on{% endif %}"
-        {% if week_count == n %}aria-current="true"{% endif %}
+        class="segmented__item {% if weekly.week_count == n %}segmented__item--on{% endif %}"
+        {% if weekly.week_count == n %}aria-current="true"{% endif %}
       >
         {{ n }}
       </button>
@@ -49,19 +49,19 @@
   </div>
 </form>
 
-{% if total_sessions == 0 and not coverage.has_data %}
+{% if weekly.total_sessions == 0 and not coverage.has_data %}
 {% include "reports/_empty.html" %}
 {% else %}
 
 <div class="card-grid">
   <div class="card">
     <p class="kpi-question">How many sessions in this window?</p>
-    <p class="kpi-value">{{ total_sessions|count }}</p>
+    <p class="kpi-value">{{ weekly.total_sessions|count }}</p>
     <p class="kpi-note">Cancellations are not counted as sessions.</p>
   </div>
   <div class="card">
     <p class="kpi-question">What does a typical week look like?</p>
-    <p class="kpi-value">{{ average_per_week if average_per_week is not none else "-" }}</p>
+    <p class="kpi-value">{{ weekly.average_per_week if weekly.average_per_week is not none else "-" }}</p>
     <p class="kpi-note">
       Average over completed weeks only, so a half finished week never reads as a
       decline.
@@ -76,41 +76,7 @@
       <p class="page-head__sub">Each bar is one calendar week.</p>
     </div>
   </div>
-  <div class="chart-frame">
-    <canvas id="weekly-counts"></canvas>
-  </div>
-  <script type="application/json" id="weekly-counts-data">
-    {
-      "labels": {{ chart_labels | tojson }},
-      "sessions": {{ week_rows | map(attribute="sessions") | list | tojson }}
-    }
-  </script>
-</div>
-
-<div class="card" style="margin-top: var(--space-4)">
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Week</th>
-        <th>Date range</th>
-        <th class="numeric">Sessions</th>
-        <th class="numeric">Collected</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for w in week_rows %}
-      <tr>
-        <td>Week of {{ w.start.strftime("%-d %b") }}</td>
-        <td class="text-muted">
-          {{ w.start.strftime("%a %-d %b %Y") }} to {{ w.end.strftime("%a %-d %b %Y") }}
-          {% if w.in_progress %}<span class="pill pill--neutral">in progress</span>{% endif %}
-        </td>
-        <td class="numeric">{{ w.sessions|count }}</td>
-        <td class="numeric">{{ w.collected|currency }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {% include "reports/_weekly_counts.html" %}
 </div>
 
 {% endif %}
