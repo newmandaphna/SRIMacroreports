@@ -266,4 +266,11 @@ def client_for(provider: str, service_account_json: str | None = None) -> Sheets
 
     if provider == SourceProvider.DEMO:
         return DemoSheetsClient()
+    if provider == SourceProvider.UPLOAD:
+        # An upload source has no live workbook to poll. Its client exists only for
+        # the duration of one uploaded file (see app/sync/upload.py).
+        raise SheetsError(
+            "This source imports from uploaded files, so there is nothing to sync "
+            "on demand. Upload a file below instead."
+        )
     return GoogleSheetsClient(service_account_json)

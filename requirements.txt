@@ -18,6 +18,9 @@ argon2-cffi==23.1.0
 google-api-python-client==2.159.0
 google-auth==2.37.0
 
+# Historical data upload (.xlsx parsing, in memory)
+openpyxl==3.1.5
+
 # Dev and test
 pytest==8.3.4
 httpx==0.28.1

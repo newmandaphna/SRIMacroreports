@@ -86,7 +86,14 @@
         class="field__input"
         value="{{ source.tab_name or '' }}"
       />
+      {% if source.provider.value == "upload" %}
+      <span class="field__hint">
+        For a CSV upload this can say anything. For an Excel upload it must match the
+        name of the tab to import; a mismatch is reported with the file's actual tabs.
+      </span>
+      {% else %}
       <span class="field__hint">The tab list could not be read, so type the name.</span>
+      {% endif %}
       {% endif %}
     </label>
 
@@ -185,6 +192,33 @@
 </form>
 
 <div class="card-grid" style="margin-top: var(--space-4)">
+  {% if source.provider.value == "upload" %}
+  <form
+    method="post"
+    action="/admin/sources/{{ source.id }}/upload"
+    enctype="multipart/form-data"
+    class="card stack"
+  >
+    <p class="card__title">Upload a file</p>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <p class="text-muted">
+      An .xlsx or .csv export goes through exactly the same pipeline as a live sync:
+      same column allowlist, same validation, same rejection queue. The file is read
+      in memory and never stored. A dry run validates everything and writes nothing,
+      always worth doing first.
+    </p>
+    <label class="field">
+      <span class="field__label">File</span>
+      <input type="file" name="file" accept=".xlsx,.csv" required class="field__input" />
+    </label>
+    <div class="form-actions">
+      <button type="submit" name="mode" value="dry_run" class="button">Dry run</button>
+      <button type="submit" name="mode" value="live" class="button button--primary">
+        Import
+      </button>
+    </div>
+  </form>
+  {% else %}
   <div class="card">
     <p class="card__title">Sync</p>
     {% if source.is_ready_to_sync %}
@@ -219,7 +253,9 @@
     </p>
     {% endif %}
   </div>
+  {% endif %}
 
+  {% if source.provider.value != "upload" %}
   <form method="post" action="/admin/sources/{{ source.id }}/lookups" class="card stack">
     <p class="card__title">Import abbreviations</p>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
@@ -266,6 +302,7 @@
     </label>
     <button type="submit" class="button">Import aliases</button>
   </form>
+  {% endif %}
 </div>
 
 {% set deletable = source.provider.value == "demo" or visit_count == 0 %}

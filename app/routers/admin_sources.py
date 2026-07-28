@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Form, Query, Request
+from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import func, select
 
@@ -42,6 +42,7 @@ from app.sync.sheets import (
     extract_spreadsheet_id,
     selectable_tabs,
 )
+from app.sync.upload import CSV_TAB_NAME, MAX_UPLOAD_BYTES, UploadedWorkbookClient
 from app.templating import render
 
 logger = logging.getLogger(__name__)
@@ -111,11 +112,19 @@ async def create_source(
     error: str | None = None
     spreadsheet_id: str | None = None
 
-    if not label:
+    try:
+        chosen_provider = SourceProvider(provider)
+    except ValueError:
+        chosen_provider = SourceProvider.GOOGLE_SHEETS
+        error = f"Unknown provider {provider!r}."
+
+    if error:
+        pass
+    elif not label:
         error = "Give the source a label, for example Q3 2026."
     elif db.execute(select(DataSource).where(DataSource.label == label)).scalar_one_or_none():
         error = f"A source labelled {label!r} already exists."
-    elif provider == SourceProvider.GOOGLE_SHEETS:
+    elif chosen_provider is SourceProvider.GOOGLE_SHEETS:
         try:
             spreadsheet_id = extract_spreadsheet_id(spreadsheet_url)
         except SheetsError as exc:
@@ -142,12 +151,20 @@ async def create_source(
         select(DataSource).order_by(DataSource.created_at.desc()).limit(1)
     ).scalar_one_or_none()
 
+    # An upload source defaults its tab to the CSV pseudo-tab, which is correct for
+    # any CSV upload; an Excel upload whose tabs disagree gets a message naming them.
+    default_tab = None
+    if chosen_provider is SourceProvider.DEMO:
+        default_tab = DEMO_TAB_NAME
+    elif chosen_provider is SourceProvider.UPLOAD:
+        default_tab = CSV_TAB_NAME
+
     source = DataSource(
         label=label,
-        provider=SourceProvider(provider),
+        provider=chosen_provider,
         spreadsheet_id=spreadsheet_id,
         spreadsheet_url=spreadsheet_url.strip() or None,
-        tab_name=DEMO_TAB_NAME if provider == SourceProvider.DEMO else None,
+        tab_name=default_tab,
         column_mapping=dict(previous.column_mapping) if previous else {},
         active=True,
         created_by_id=auth.user.id,
@@ -253,16 +270,19 @@ async def source_detail(
     tab_error: str | None = None
     headers: list[str] = []
 
-    try:
-        client = _client(request, source)
-        if source.spreadsheet_id or source.provider is SourceProvider.DEMO:
-            tabs = selectable_tabs(client.list_tabs(source.spreadsheet_id or ""))
-        if source.tab_name and source.tab_name in tabs:
-            headers = client.read_tab(
-                source.spreadsheet_id or "", source.tab_name, source.header_row
-            ).headers
-    except SheetsError as exc:
-        tab_error = str(exc)
+    # An upload source has no live workbook to read tabs or headers from; its tab
+    # and mapping are typed in, usually prefilled from the previous source.
+    if source.provider is not SourceProvider.UPLOAD:
+        try:
+            client = _client(request, source)
+            if source.spreadsheet_id or source.provider is SourceProvider.DEMO:
+                tabs = selectable_tabs(client.list_tabs(source.spreadsheet_id or ""))
+            if source.tab_name and source.tab_name in tabs:
+                headers = client.read_tab(
+                    source.spreadsheet_id or "", source.tab_name, source.header_row
+                ).headers
+        except SheetsError as exc:
+            tab_error = str(exc)
 
     runs = (
         db.execute(
@@ -458,6 +478,79 @@ async def sync_source(
         target_id=source.id,
         request=request,
         detail={
+            "mode": result.mode.value,
+            "rows_read": result.rows_read,
+            "inserted": result.rows_inserted,
+            "updated": result.rows_updated,
+            "unchanged": result.rows_unchanged,
+            "rejected": result.rows_rejected,
+            "superseded": result.superseded_errors,
+            "unmapped_columns": result.unmapped_columns,
+            "error": result.error_message,
+        },
+    )
+
+    return RedirectResponse(f"/admin/sources/{source.id}/runs/{result.run_id}", status_code=303)
+
+
+@router.post("/{source_id}/upload")
+async def upload_workbook(
+    request: Request,
+    db: DbSession,
+    auth: AdminUser,
+    source_id: int,
+    file: Annotated[UploadFile, File()],
+    mode: Annotated[str, Form()] = "dry_run",
+) -> Response:
+    """Import an uploaded .xlsx or .csv through the ordinary sync pipeline.
+
+    The file lives only in memory for the duration of this request. Everything
+    downstream, allowlist, validation, alias resolution, rejection queue, audit,
+    is exactly the sync path; only where the rows came from differs.
+    """
+    source = db.get(DataSource, source_id)
+    if source is None:
+        return RedirectResponse("/admin/sources", status_code=303)
+
+    if not source.is_ready_to_sync:
+        return _detail_redirect_with_flash(
+            source.id,
+            "Map and save the required columns before uploading, so the file can be "
+            "validated the same way a live sheet is.",
+        )
+
+    # Read one byte past the cap so an oversized file is detected without ever
+    # holding an unbounded body in memory.
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    dry_run = mode != "live"
+
+    try:
+        client = UploadedWorkbookClient(file.filename or "", content)
+    except SheetsError as exc:
+        audit.record(
+            db,
+            action=AuditAction.SYNC_RUN,
+            result=AuditResult.FAILURE,
+            actor=auth.user,
+            target_type="data_source",
+            target_id=source.id,
+            request=request,
+            detail={"upload": file.filename, "error": str(exc)},
+        )
+        return _detail_redirect_with_flash(source.id, str(exc))
+
+    result = run_sync(db, source, client, dry_run=dry_run, actor=auth.user)
+
+    audit.record(
+        db,
+        action=AuditAction.SYNC_RUN,
+        result=AuditResult.SUCCESS if result.ok else AuditResult.FAILURE,
+        actor=auth.user,
+        target_type="data_source",
+        target_id=source.id,
+        request=request,
+        detail={
+            "upload": file.filename,
             "mode": result.mode.value,
             "rows_read": result.rows_read,
             "inserted": result.rows_inserted,

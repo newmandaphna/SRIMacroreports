@@ -82,12 +82,16 @@ class SourceProvider(StrEnum):
     # A bundled synthetic workbook with obviously fake patients, so the sync engine
     # can be demonstrated and tested end to end without credentials and without PHI.
     DEMO = "demo"
+    # Historical data arrives as an uploaded .xlsx or .csv instead of a live sheet.
+    # Same pipeline, same allowlist; the file is parsed in memory and never stored.
+    UPLOAD = "upload"
 
     @property
     def label(self) -> str:
         return {
             SourceProvider.GOOGLE_SHEETS: "Google Sheets",
             SourceProvider.DEMO: "Demo (synthetic data)",
+            SourceProvider.UPLOAD: "File upload (historical data)",
         }[self]
 
 
@@ -146,6 +150,9 @@ class DataSource(Base):
         if self.provider is SourceProvider.GOOGLE_SHEETS and not (
             self.spreadsheet_id and self.tab_name
         ):
+            return False
+        # The engine refuses to run without a tab name, whatever the provider.
+        if not self.tab_name:
             return False
         return not self.missing_required_fields
 

@@ -67,6 +67,15 @@ wrong merge between two people is invisible once it happens. An unrecognized nam
 rejects to the import errors queue with a suggestion, and you resolve it by adding the
 therapist and its aliases, then syncing again.
 
+### Importing historical data
+
+Quarters that predate the live sheet come in as files. On `/admin/sources`, click
+**Create upload source**, check the prefilled column mapping, then upload the
+quarter's `.xlsx` or `.csv` export. The file goes through exactly the same pipeline as
+a live sync, same column allowlist, same validation, same rejection queue, and is read
+in memory without ever being written to disk. Because the database is the system of
+record, everything imported stays queryable forever, whichever source it arrived from.
+
 ### Trying the import without credentials
 
 On `/admin/sources`, click **Create demo source**. That builds a synthetic workbook
