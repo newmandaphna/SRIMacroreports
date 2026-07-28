@@ -183,6 +183,16 @@ def build_kpis(db: DbSession, ctx: ReportContext, current: queries.Totals) -> li
 
     return [
         Kpi(
+            key="collected",
+            question="What came in the door?",
+            label="Revenue collected",
+            value=current.collected,
+            previous=previous.collected,
+            kind="currency",
+            sparkline=collected_spark,
+            href=f"/reports/financial?{qs}",
+        ),
+        Kpi(
             key="sessions",
             question="How much clinical work did we do?",
             label="Sessions",
@@ -192,16 +202,6 @@ def build_kpis(db: DbSession, ctx: ReportContext, current: queries.Totals) -> li
             sparkline=session_spark,
             href=f"/reports/financial?{qs}",
             note="Cancellations are not counted as sessions.",
-        ),
-        Kpi(
-            key="collected",
-            question="What came in the door?",
-            label="Revenue collected",
-            value=current.collected,
-            previous=previous.collected,
-            kind="currency",
-            sparkline=collected_spark,
-            href=f"/reports/financial?{qs}",
         ),
         Kpi(
             key="outstanding",

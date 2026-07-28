@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
     <title>{% block title %}{{ page_title }}{% endblock %} - SRI Practice Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f5c5c'/%3E%3Ctext x='16' y='22' font-family='Georgia,serif' font-size='16' fill='white' text-anchor='middle'%3ESRI%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="{{ url_for('static', path='css/tokens.css') }}" />
     <link rel="stylesheet" href="{{ url_for('static', path='css/app.css') }}" />
     {% block head %}{% endblock %}
@@ -19,7 +20,11 @@
 
         {% if auth %}
         <nav class="app-header__nav" aria-label="Modules">
+          {# The overview is the financial module's front page, so a viewer without
+             that grant gets sent to a page they can actually open. #}
+          {% if nav_modules | selectattr("value", "equalto", "financial") | list %}
           <a href="/reports" {% if current_path == '/reports' %}aria-current="page"{% endif %}>Overview</a>
+          {% endif %}
           {% for module in nav_modules %}
           {% if module.value == 'financial' %}
           <a href="/reports/financial" {% if current_path.startswith('/reports/financial') %}aria-current="page"{% endif %}>{{ module.label }}</a>
