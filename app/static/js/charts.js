@@ -27,7 +27,7 @@
       token("--chart-1", "#0f5c5c"),
       token("--chart-2", "#4a7fa5"),
       token("--chart-3", "#8a6fa8"),
-      token("--chart-4", "#b57314"),
+      token("--chart-4", "#a34d8c"),
       token("--chart-5", "#6b7f4a"),
       token("--chart-6", "#a06070"),
     ];
@@ -138,7 +138,7 @@
           type: "line",
           borderWidth: 1.5,
           borderDash: [5, 4],
-          borderColor: token("--color-ink-subtle", "#8b939f"),
+          borderColor: token("--color-ink-subtle", "#6e7683"),
           backgroundColor: "transparent",
           pointRadius: 0,
           pointHoverRadius: 0,

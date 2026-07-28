@@ -271,6 +271,8 @@ a {
     background: #ffffff;
   }
   .app-header__nav,
+  .app-header__user,
+  .form-actions,
   .no-print {
     display: none !important;
   }
@@ -280,6 +282,13 @@ a {
   }
   .chart-frame {
     height: 220px;
+  }
+  /* Chart.js sizes each canvas in device pixels for the screen. Left alone it
+     overflows the paper and the printer clips it, so on paper the canvas gives
+     up its fixed size and fits its frame. */
+  .chart-frame canvas {
+    max-width: 100% !important;
+    height: auto !important;
   }
   a[href]::after {
     content: "";

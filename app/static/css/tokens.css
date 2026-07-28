@@ -17,7 +17,7 @@
   --color-surface-sunken: #f1efea;
   --color-ink: #1a1d21;
   --color-ink-muted: #5c6470;
-  --color-ink-subtle: #8b939f;
+  --color-ink-subtle: #6e7683;
   --color-border: #e2ded6;
   --color-border-strong: #cdc7bc;
 
@@ -28,18 +28,20 @@
   --color-primary-ink: #ffffff;
 
   /* Status. Amber warns, red alerts. Red is only for below threshold and overdue. */
-  --color-warning: #b57314;
+  --color-warning: #8a5a10;
   --color-warning-soft: #fbf0dc;
   --color-alert: #a52a1f;
   --color-alert-soft: #fbe4e1;
   --color-positive: #2f6b3f;
   --color-positive-soft: #e2efe4;
 
-  /* Chart series. Read by charts.js. Ordered for categorical use. */
+  /* Chart series. Read by charts.js. Ordered for categorical use.
+     None of these may reuse a status color: a series that happens to be
+     painted warning amber would read as a warning. */
   --chart-1: #0f5c5c;
   --chart-2: #4a7fa5;
   --chart-3: #8a6fa8;
-  --chart-4: #b57314;
+  --chart-4: #a34d8c;
   --chart-5: #6b7f4a;
   --chart-6: #a06070;
   --chart-grid: rgba(26, 29, 33, 0.1);
