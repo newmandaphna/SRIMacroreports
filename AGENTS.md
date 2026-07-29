@@ -52,3 +52,23 @@ suite is almost always this.
 
 `main` is what gets deployed. Push to a branch and open a pull request so CI
 reports on the change before it reaches `main`, not after.
+
+## Known risk: commits that bypass CI
+
+Replit's "Published your App" flow, and agents working inside the Replit
+workspace, commit directly to `main` without CI running first. Both recent
+main breakages arrived exactly this way:
+
+- `tests/test_auth.py` kept importing `MAX_FAILED_LOGINS` after the lockout
+  logic was deleted from `app/routers/auth.py`, which broke test collection
+  outright with an ImportError.
+- A vendored skill bundle under `.agents/` landed with 119 ruff violations,
+  which failed the Lint step before pytest ever ran, so every push anywhere
+  went red for a reason that had nothing to do with the app.
+
+The guard is a branch protection rule on `main` requiring the CI check to
+pass before anything lands, direct pushes included. That is a repository
+setting only the owner can turn on: GitHub, Settings, Branches, add a rule
+for `main`, require status checks, select the CI workflow. Until it is on,
+treat any red CI immediately after a Replit publish as probably caused by
+the publish, and check the newest commits on `main` first.

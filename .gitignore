@@ -38,3 +38,9 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# === Vendored agent skill bundles: not our code ===
+# Installed by the agent harness and pinned by skills-lock.json (which stays
+# tracked). The bundle is reproducible from its lock entry, and tracking it put
+# 2,800 lines of third-party code through our lint gate. See AGENTS.md.
+.agents/
