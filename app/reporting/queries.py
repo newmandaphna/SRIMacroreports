@@ -21,7 +21,7 @@ from decimal import Decimal
 from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.therapist import EmploymentType, Therapist
+from app.models.therapist import Discipline, EmploymentType, Therapist
 from app.models.visit import Visit
 from app.reporting.periods import Granularity, format_period, period_series
 
@@ -59,6 +59,7 @@ class Totals:
     """Headline figures for one window."""
 
     sessions: int = 0
+    psychiatry_sessions: int = 0
     visits: int = 0
     collected: Decimal = ZERO
     outstanding: Decimal = ZERO
@@ -68,6 +69,10 @@ class Totals:
     no_show_fee_revenue: Decimal = ZERO
     cancellations: int = 0
     cancellations_with_fee: int = 0
+
+    @property
+    def therapy_sessions(self) -> int:
+        return self.sessions - self.psychiatry_sessions
 
     @property
     def collection_rate(self) -> Decimal | None:
@@ -95,6 +100,7 @@ class PeriodPoint:
     start: date
     label: str
     sessions: int = 0
+    psychiatry_sessions: int = 0
     collected: Decimal = ZERO
     billed: Decimal = ZERO
     outstanding: Decimal = ZERO
@@ -105,6 +111,8 @@ class TherapistRow:
     therapist_id: int
     display_name: str
     employment_type: EmploymentType
+    discipline: Discipline = Discipline.THERAPIST
+    weekly_expected_sessions: int | None = None
     sessions: int = 0
     collected: Decimal = ZERO
     cancellations: int = 0
@@ -118,13 +126,22 @@ class TherapistRow:
         return (Decimal(self.sessions) / Decimal(self.weeks_in_range)).quantize(Decimal("0.1"))
 
     @property
-    def measured_against_threshold(self) -> bool:
-        """Percentage based therapists have no session minimum to fall short of.
+    def cancellation_rate(self) -> Decimal | None:
+        """Cancellations as a share of what was scheduled (sessions plus
+        cancellations). None when nothing was scheduled at all."""
+        scheduled = self.sessions + self.cancellations
+        if scheduled == 0:
+            return None
+        return (Decimal(self.cancellations) / scheduled * 100).quantize(Decimal("0.1"))
 
-        Flagging them "below threshold" would be a false alarm about a real person's
-        work, so they are shown without a status rather than shown as failing.
+    @property
+    def measured_against_threshold(self) -> bool:
+        """Whether this person's arrangement carries a session expectation at all.
+
+        Flagging the unmeasured as "below threshold" would be a false alarm about
+        a real person's work, so they are shown without a status instead.
         """
-        return self.employment_type is EmploymentType.SALARIED_BENEFITS
+        return self.employment_type.counts_against_threshold
 
 
 @dataclass
@@ -189,6 +206,16 @@ def _cancellation_count_expr(code: str | None = None):
     return func.coalesce(func.sum(case((Visit.cpt_base.in_(codes), 1), else_=0)), 0)
 
 
+def _psychiatry_session_count_expr(exclusions: tuple[str, ...]):
+    """Sessions whose base CPT starts with 99: evaluation and management codes,
+    which at this practice means psychiatry. The cancellation codes also start
+    with 99 but are never sessions, so the session predicate screens them out."""
+    return func.coalesce(
+        func.sum(case((and_(_is_session(exclusions), Visit.cpt_base.like("99%")), 1), else_=0)),
+        0,
+    )
+
+
 def _money(column) -> Decimal:
     return func.coalesce(func.sum(column), 0)
 
@@ -201,6 +228,7 @@ def totals(db: Session, filters: Filters) -> Totals:
     stmt: Select = select(
         func.count(Visit.id),
         _session_count_expr(filters.cpt_exclusions),
+        _psychiatry_session_count_expr(filters.cpt_exclusions),
         _money(Visit.total_paid),
         _money(Visit.total_balance),
         _money(Visit.pt_amount_due),
@@ -218,14 +246,15 @@ def totals(db: Session, filters: Filters) -> Totals:
     return Totals(
         visits=row[0] or 0,
         sessions=int(row[1] or 0),
-        collected=_as_money(row[2]),
-        outstanding=_as_money(row[3]),
-        outstanding_patient=_as_money(row[4]),
-        outstanding_insurance=_as_money(row[5]),
-        billed=_as_money(row[6]),
-        no_show_fee_revenue=_as_money(row[7]),
-        cancellations=int(row[8] or 0),
-        cancellations_with_fee=int(row[9] or 0),
+        psychiatry_sessions=int(row[2] or 0),
+        collected=_as_money(row[3]),
+        outstanding=_as_money(row[4]),
+        outstanding_patient=_as_money(row[5]),
+        outstanding_insurance=_as_money(row[6]),
+        billed=_as_money(row[7]),
+        no_show_fee_revenue=_as_money(row[8]),
+        cancellations=int(row[9] or 0),
+        cancellations_with_fee=int(row[10] or 0),
     )
 
 
@@ -258,6 +287,7 @@ def by_period(
         select(
             Visit.dos,
             _session_count_expr(filters.cpt_exclusions),
+            _psychiatry_session_count_expr(filters.cpt_exclusions),
             _money(Visit.total_paid),
             _money(Visit.total_due),
             _money(Visit.total_balance),
@@ -274,12 +304,13 @@ def by_period(
 
     from app.reporting.periods import period_start
 
-    for dos, sessions, collected, billed, outstanding in rows:
+    for dos, sessions, psychiatry, collected, billed, outstanding in rows:
         bucket_start = period_start(dos, granularity, week_starts_monday=week_starts_monday)
         point = buckets.get(bucket_start)
         if point is None:
             continue
         point.sessions += int(sessions or 0)
+        point.psychiatry_sessions += int(psychiatry or 0)
         point.collected += _as_money(collected)
         point.billed += _as_money(billed)
         point.outstanding += _as_money(outstanding)
@@ -306,12 +337,20 @@ def by_therapist(
             Therapist.id,
             Therapist.display_name,
             Therapist.employment_type,
+            Therapist.discipline,
+            Therapist.weekly_expected_sessions,
             _session_count_expr(filters.cpt_exclusions),
             _money(Visit.total_paid),
             _cancellation_count_expr(),
         )
         .outerjoin(Visit, and_(Visit.therapist_id == Therapist.id, *_base_conditions(filters)))
-        .group_by(Therapist.id, Therapist.display_name, Therapist.employment_type)
+        .group_by(
+            Therapist.id,
+            Therapist.display_name,
+            Therapist.employment_type,
+            Therapist.discipline,
+            Therapist.weekly_expected_sessions,
+        )
         .having(or_(Therapist.active.is_(True), func.count(Visit.id) > 0))
         .order_by(func.lower(Therapist.display_name))
     )
@@ -324,9 +363,11 @@ def by_therapist(
             therapist_id=r[0],
             display_name=r[1],
             employment_type=EmploymentType(r[2]),
-            sessions=int(r[3] or 0),
-            collected=_as_money(r[4]),
-            cancellations=int(r[5] or 0),
+            discipline=Discipline(r[3]),
+            weekly_expected_sessions=r[4],
+            sessions=int(r[5] or 0),
+            collected=_as_money(r[6]),
+            cancellations=int(r[7] or 0),
             weeks_in_range=Decimal(weeks_in_range) if weeks_in_range > 0 else Decimal(1),
         )
         for r in rows
@@ -336,8 +377,39 @@ def by_therapist(
 # ----------------------------------------------------------------------- breakdowns
 
 
-def by_insurance(db: Session, filters: Filters, limit: int = 15) -> list[Breakdown]:
-    return _breakdown(db, filters, Visit.insurance_short, "Unknown", limit)
+def by_insurance(
+    db: Session,
+    filters: Filters,
+    limit: int = 15,
+    *,
+    groups: dict[str, str] | None = None,
+) -> list[Breakdown]:
+    """Per payer, with member codes folded into their configured group (for
+    example KS, PC, and IA are all IBC), so one payer is one row."""
+    rows = _breakdown(db, filters, Visit.insurance_short, "Unknown", limit=200)
+    return _fold_groups(rows, groups)[:limit]
+
+
+def _fold_groups(rows: list[Breakdown], groups: dict[str, str] | None) -> list[Breakdown]:
+    if not groups:
+        return rows
+    folded: dict[str, Breakdown] = {}
+    for row in rows:
+        name = groups.get(row.key.strip().upper(), row.label) if row.key else row.label
+        target = folded.get(name)
+        if target is None:
+            folded[name] = Breakdown(
+                key=name,
+                label=name,
+                sessions=row.sessions,
+                collected=row.collected,
+                outstanding=row.outstanding,
+            )
+        else:
+            target.sessions += row.sessions
+            target.collected += row.collected
+            target.outstanding += row.outstanding
+    return sorted(folded.values(), key=lambda b: b.collected, reverse=True)
 
 
 def by_location(db: Session, filters: Filters, limit: int = 15) -> list[Breakdown]:
@@ -388,7 +460,11 @@ class AgingRow:
 
 
 def aging_by_insurance(
-    db: Session, *, today: date, limit: int = 12
+    db: Session,
+    *,
+    today: date,
+    limit: int = 12,
+    groups: dict[str, str] | None = None,
 ) -> tuple[list[AgingRow], AgingRow]:
     """Open balances bucketed by the age of the session they sit on, per payer.
 
@@ -430,6 +506,21 @@ def aging_by_insurance(
         )
         for r in rows
     ]
+    if groups:
+        folded: dict[str, AgingRow] = {}
+        for row in payer_rows:
+            name = groups.get(row.key.strip().upper(), row.label) if row.key else row.label
+            target = folded.get(name)
+            if target is None:
+                folded[name] = AgingRow(key=name, label=name, buckets=row.buckets, total=row.total)
+            else:
+                folded[name] = AgingRow(
+                    key=name,
+                    label=name,
+                    buckets=tuple(a + b for a, b in zip(target.buckets, row.buckets, strict=True)),
+                    total=target.total + row.total,
+                )
+        payer_rows = sorted(folded.values(), key=lambda r: r.total, reverse=True)
     total_row = AgingRow(
         key="",
         label="All payers",

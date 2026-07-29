@@ -168,25 +168,25 @@ def test_percentage_therapists_carry_no_status(manager, practice):
 def test_a_salaried_therapist_below_the_threshold_is_flagged(manager):
     set_threshold(manager, 10)
     page = manager.get(f"/reports/therapist-utilization?{ALL}").text
-    assert "below threshold" in page
+    assert "below expectation" in page
 
 
 def test_the_threshold_decides_the_status(manager):
     """Alpha runs 2.0 sessions per week in this range, so the status follows it."""
     set_threshold(manager, 2)
     relaxed = manager.get(f"/reports/therapist-utilization?{WEEK1}").text
-    assert "at threshold" in relaxed
+    assert "meeting it" in relaxed
     assert "below threshold" not in relaxed
 
     set_threshold(manager, 10)
     strict = manager.get(f"/reports/therapist-utilization?{WEEK1}").text
-    assert "below threshold" in strict
+    assert "below expectation" in strict
     assert "at threshold" not in strict
 
 
 def test_cancellations_carry_their_caveat(manager):
     page = manager.get(f"/reports/therapist-utilization?{ALL}").text
-    assert "not comparable until recording practice" in page
+    assert "Ask before concluding" in page
 
 
 def test_low_counts_carry_their_caveat(manager):
@@ -359,7 +359,7 @@ def test_export_includes_status_and_notes(manager, practice):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/csv")
     assert "Referral shortage." in response.text
-    assert "threshold" in response.text
+    assert "measured against their own ex" in response.text
     assert "Patient AA" not in response.text
 
 

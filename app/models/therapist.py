@@ -22,28 +22,80 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db import Base
 from app.models.types import UTCDateTime, enum_column, utcnow
 
+# Part time is a band, not a floor: fewer than PART_TIME_MIN a week is below, and
+# at or over PART_TIME_MAX the arrangement itself is being exceeded, which is a
+# different conversation from underperformance. Confirmed with the practice.
+PART_TIME_MIN = 5
+PART_TIME_MAX = 20
+
+# Full time without benefits carries a fixed expectation, per the practice.
+FULL_TIME_NO_BENEFITS_EXPECTED = 25
+
 
 class EmploymentType(StrEnum):
     SALARIED_BENEFITS = "salaried_benefits"
+    FULL_TIME_NO_BENEFITS = "full_time_no_benefits"
+    PART_TIME = "part_time"
     PERCENTAGE_LEGACY = "percentage_legacy"
     OTHER = "other"
 
     @property
     def label(self) -> str:
         return {
-            EmploymentType.SALARIED_BENEFITS: "Salaried with benefits",
+            EmploymentType.SALARIED_BENEFITS: "Full time with benefits",
+            EmploymentType.FULL_TIME_NO_BENEFITS: "Full time, no benefits",
+            EmploymentType.PART_TIME: "Part time",
             EmploymentType.PERCENTAGE_LEGACY: "Percentage (legacy)",
             EmploymentType.OTHER: "Other",
         }[self]
 
     @property
     def counts_against_threshold(self) -> bool:
-        """Only salaried therapists are measured against the benefits threshold.
+        """Whether this arrangement carries a session expectation at all.
 
         A percentage based therapist has no session minimum to meet, so showing them
         as "below threshold" would be a false alarm about someone's work.
         """
-        return self is EmploymentType.SALARIED_BENEFITS
+        return self in (
+            EmploymentType.SALARIED_BENEFITS,
+            EmploymentType.FULL_TIME_NO_BENEFITS,
+            EmploymentType.PART_TIME,
+        )
+
+    @property
+    def expectation_note(self) -> str:
+        """What the form shows next to each choice."""
+        return {
+            EmploymentType.SALARIED_BENEFITS: (
+                "Measured against the with-benefits expectation (default 30 a week, "
+                "set in Settings)."
+            ),
+            EmploymentType.FULL_TIME_NO_BENEFITS: (
+                f"Measured against {FULL_TIME_NO_BENEFITS_EXPECTED} sessions a week."
+            ),
+            EmploymentType.PART_TIME: (
+                f"Expected between {PART_TIME_MIN} and {PART_TIME_MAX} sessions a week; "
+                f"{PART_TIME_MAX} or more flags the arrangement, not the person."
+            ),
+            EmploymentType.PERCENTAGE_LEGACY: (
+                "No session threshold, so no below threshold status is ever shown."
+            ),
+            EmploymentType.OTHER: (
+                "No session threshold, so no below threshold status is ever shown."
+            ),
+        }[self]
+
+
+class Discipline(StrEnum):
+    THERAPIST = "therapist"
+    PSYCHIATRIST = "psychiatrist"
+
+    @property
+    def label(self) -> str:
+        return {
+            Discipline.THERAPIST: "Therapist",
+            Discipline.PSYCHIATRIST: "Psychiatrist",
+        }[self]
 
 
 def normalize_therapist_name(raw: str | None) -> str:
@@ -67,6 +119,16 @@ class Therapist(Base):
     employment_type: Mapped[EmploymentType] = mapped_column(
         enum_column(EmploymentType, length=30), nullable=False, default=EmploymentType.OTHER
     )
+    discipline: Mapped[Discipline] = mapped_column(
+        enum_column(Discipline, length=20),
+        nullable=False,
+        default=Discipline.THERAPIST,
+        server_default=Discipline.THERAPIST.value,
+    )
+    # Overrides the employment type's default expectation for this one person,
+    # because expectations are individual agreements: one full timer may be on 25
+    # while a colleague on insurance panels needs 30.
+    weekly_expected_sessions: Mapped[int | None] = mapped_column(Integer, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 

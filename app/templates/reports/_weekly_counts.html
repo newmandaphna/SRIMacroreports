@@ -19,7 +19,9 @@
     <tr>
       <th>Week</th>
       <th>Date range</th>
-      <th class="numeric">Sessions</th>
+      <th class="numeric">Therapy</th>
+      <th class="numeric">Psychiatry</th>
+      <th class="numeric">Total</th>
       {% if not compact %}<th class="numeric">Collected</th>{% endif %}
     </tr>
   </thead>
@@ -31,7 +33,9 @@
         {{ w.start.strftime("%a %-d %b %Y") }} to {{ w.end.strftime("%a %-d %b %Y") }}
         {% if w.in_progress %}<span class="pill pill--neutral">in progress</span>{% endif %}
       </td>
-      <td class="numeric">{{ w.sessions|count }}</td>
+      <td class="numeric">{{ w.therapy_sessions|count }}</td>
+      <td class="numeric">{{ w.psychiatry_sessions|count }}</td>
+      <td class="numeric"><strong>{{ w.sessions|count }}</strong></td>
       {% if not compact %}<td class="numeric">{{ w.collected|currency }}</td>{% endif %}
     </tr>
     {% endfor %}

@@ -58,6 +58,7 @@ async def status_board(
     request: Request, db: DbSession, ctx: Ctx, auth: UtilizationUser
 ) -> Response:
     board = _board(db, ctx)
+    from app.models.therapist import Discipline
 
     return render(
         request,
@@ -67,6 +68,12 @@ async def status_board(
             "auth": auth,
             "active_page": "utilization",
             "board": board,
+            # Psychiatry is its own category, not a filter: the two groups render
+            # as separate boards so neither is judged inside the other's numbers.
+            "board_therapy": [pair for pair in board if pair[0].discipline is Discipline.THERAPIST],
+            "board_psychiatry": [
+                pair for pair in board if pair[0].discipline is Discipline.PSYCHIATRIST
+            ],
             "can_write": auth.role.can_write_utilization,
             "summary": _summarize(board, ctx.config),
             **ctx.as_template_context(),
@@ -81,6 +88,7 @@ def _summarize(board: list, config: PracticeConfig) -> dict:
         "unmeasured": len(board) - len(measured),
         "below": sum(1 for _, s in measured if s == "below"),
         "watch": sum(1 for _, s in measured if s == "watch"),
+        "over": sum(1 for _, s in measured if s == "over"),
         "ok": sum(1 for _, s in measured if s == "ok"),
         "threshold": config.benefits_session_threshold,
     }
@@ -113,7 +121,7 @@ async def export_board(
         [
             "SRI Practice Dashboard, therapist utilization",
             f"{ctx.range.start.isoformat()} to {ctx.range.end.isoformat()}",
-            f"threshold {ctx.config.benefits_session_threshold} sessions per week",
+            "each therapist measured against their own expectation",
             f"exported {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')}",
         ]
     )
@@ -121,10 +129,13 @@ async def export_board(
     writer.writerow(
         [
             "Therapist",
+            "Discipline",
             "Employment type",
+            "Expected per week",
             "Sessions",
             "Sessions per week",
             "Status",
+            "Cancellation rate",
             "Collected",
             "Cancellations",
             "Latest note",
@@ -134,10 +145,13 @@ async def export_board(
         writer.writerow(
             [
                 row.display_name,
+                row.discipline.label,
                 row.employment_type.label,
+                ctx.config.expectation_for(row.employment_type, row.weekly_expected_sessions).label,
                 row.sessions,
                 row.sessions_per_week,
                 status or "not measured",
+                f"{row.cancellation_rate}%" if row.cancellation_rate is not None else "",
                 row.collected,
                 row.cancellations,
                 row.notes or "",
@@ -229,12 +243,23 @@ async def therapist_drill_in(
     # monthly bucket holds four times the sessions, and grading it against 25 showed
     # everyone comfortably green at month granularity and red at week granularity,
     # which are not two views of one truth.
-    measured = therapist.employment_type.counts_against_threshold
+    # Graded against this one person's own expectation: a personal override if
+    # set, otherwise their employment type's default.
+    expectation = ctx.config.expectation_for(
+        therapist.employment_type, therapist.weekly_expected_sessions
+    )
+    measured = expectation.kind != "none"
     graded = measured and ctx.granularity is Granularity.WEEK
     periods_with_status = [
         (
             point,
-            ctx.config.utilization_status(point.sessions) if graded else "",
+            ctx.config.status_for(
+                therapist.employment_type,
+                therapist.weekly_expected_sessions,
+                point.sessions,
+            )
+            if graded
+            else "",
         )
         for point in history
     ]

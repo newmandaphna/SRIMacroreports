@@ -29,8 +29,13 @@ class WeekRow:
     start: date
     end: date
     sessions: int
+    psychiatry_sessions: int
     collected: Decimal
     in_progress: bool
+
+    @property
+    def therapy_sessions(self) -> int:
+        return self.sessions - self.psychiatry_sessions
 
     @property
     def label(self) -> str:
@@ -91,6 +96,7 @@ def weekly_counts(
             start=p.start,
             end=p.start + timedelta(days=6),
             sessions=p.sessions,
+            psychiatry_sessions=p.psychiatry_sessions,
             collected=p.collected,
             in_progress=today < p.start + timedelta(days=6),
         )

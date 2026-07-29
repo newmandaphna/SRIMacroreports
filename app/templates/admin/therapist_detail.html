@@ -38,17 +38,54 @@
       />
       <span>
         <strong>{{ e.label }}</strong>
+        <span class="choice__hint">{{ e.expectation_note }}</span>
+      </span>
+    </label>
+    {% endfor %}
+  </fieldset>
+
+  <fieldset class="field">
+    <legend class="field__label">Discipline</legend>
+    {% for d in disciplines %}
+    <label class="choice">
+      <input
+        type="radio"
+        name="discipline"
+        value="{{ d.value }}"
+        {% if therapist.discipline == d %}checked{% endif %}
+      />
+      <span>
+        <strong>{{ d.label }}</strong>
         <span class="choice__hint">
-          {% if e.counts_against_threshold %}
-          Measured against the weekly session threshold.
+          {% if d.value == "psychiatrist" %}
+          Broken out separately on the boards and in the weekly counts, so medication
+          management is never judged against therapy caseload numbers.
           {% else %}
-          No session threshold, so no below threshold status is ever shown.
+          Counted in the therapy figures.
           {% endif %}
         </span>
       </span>
     </label>
     {% endfor %}
   </fieldset>
+
+  <label class="field">
+    <span class="field__label">Personal weekly expectation</span>
+    <input
+      type="number"
+      name="weekly_expected_sessions"
+      min="1"
+      max="80"
+      class="field__input"
+      style="width: 6em"
+      value="{{ therapist.weekly_expected_sessions if therapist.weekly_expected_sessions else '' }}"
+    />
+    <span class="field__hint">
+      Leave blank to use the employment type's default. Set it when this person's
+      agreement differs, for example 25 for one full timer and 30 for a colleague on
+      insurance panels.
+    </span>
+  </label>
 
   <label class="field">
     <span class="field__label">Notes</span>

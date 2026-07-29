@@ -32,15 +32,25 @@
       of {{ summary.measured|count }} measured therapists
     </p>
     <p class="kpi-note">
-      Against {{ summary.threshold }} sessions per week.
-      {% if auth.role.is_admin %}<a href="/admin/config">Change it</a>.{% endif %}
+      Each measured against their own expectation.
+      {% if auth.role.is_admin %}<a href="/admin/therapists">Set expectations</a>.{% endif %}
     </p>
   </div>
   <div class="card">
     <p class="kpi-question">Who is close to the line?</p>
     <p class="kpi-value">{{ summary.watch|count }}</p>
-    <p class="kpi-delta">within 20 percent below the threshold</p>
+    <p class="kpi-delta">within 20 percent below their expectation</p>
   </div>
+  {% if summary.over %}
+  <div class="card">
+    <p class="kpi-question">Who is over the part time cap?</p>
+    <p class="kpi-value">{{ summary.over|count }}</p>
+    <p class="kpi-note">
+      The arrangement is being exceeded, which is a scheduling conversation, not a
+      performance one.
+    </p>
+  </div>
+  {% endif %}
   <div class="card">
     <p class="kpi-question">Who is meeting it?</p>
     <p class="kpi-value">{{ summary.ok|count }}</p>
@@ -63,7 +73,8 @@
     <div>
       <h2>How do the therapists compare?</h2>
       <p class="page-head__sub">
-        Sessions per week over the selected range. The dashed line is the threshold.
+        Sessions per week over the selected range. Expectations differ per person,
+        so no single line is drawn.
       </p>
     </div>
   </div>
@@ -74,24 +85,18 @@
     {
       "labels": {{ board | map(attribute=0) | map(attribute="display_name") | list | tojson }},
       "perWeek": {{ board | map(attribute=0) | map(attribute="sessions_per_week") | map("float") | list | tojson }},
-      "threshold": {{ summary.threshold }}
+      "threshold": 0
     }
   </script>
 </div>
 
-<div class="card" style="margin-top: var(--space-4)">
-  <div class="section-head">
-    <div>
-      <h2>Status board</h2>
-      <p class="page-head__sub">Worst first. Click a therapist for their weekly history.</p>
-    </div>
-  </div>
-
+{% macro board_table(pairs) %}
   <table class="data-table">
     <thead>
       <tr>
-        <th>Therapist</th>
+        <th>Provider</th>
         <th>Employment</th>
+        <th class="numeric">Expected</th>
         <th class="numeric">Sessions</th>
         <th class="numeric">Per week</th>
         <th class="numeric">Collected</th>
@@ -101,7 +106,7 @@
       </tr>
     </thead>
     <tbody>
-      {% for row, status in board %}
+      {% for row, status in pairs %}
       <tr>
         <td>
           <a href="/reports/therapist-utilization/{{ row.therapist_id }}?{{ query_string }}"
@@ -109,17 +114,25 @@
           >
         </td>
         <td class="text-muted">{{ row.employment_type.label }}</td>
+        <td class="numeric">
+          {{ config.expectation_for(row.employment_type, row.weekly_expected_sessions).label }}
+        </td>
         <td class="numeric">{{ row.sessions|count }}</td>
         <td class="numeric">{{ row.sessions_per_week }}</td>
         <td class="numeric">{{ row.collected|currency }}</td>
-        <td class="numeric">{{ row.cancellations|count }}</td>
+        <td class="numeric">
+          {{ row.cancellations|count }}{% if row.cancellation_rate is not none %}
+          ({{ row.cancellation_rate }}%){% endif %}
+        </td>
         <td>
           {% if status == "below" %}
-          <span class="pill pill--below">below threshold</span>
+          <span class="pill pill--below">below expectation</span>
+          {% elif status == "over" %}
+          <span class="pill pill--watch">over part time cap</span>
           {% elif status == "watch" %}
           <span class="pill pill--watch">watch</span>
           {% elif status == "ok" %}
-          <span class="pill pill--ok">at threshold</span>
+          <span class="pill pill--ok">meeting it</span>
           {% else %}
           <span class="text-muted">not measured</span>
           {% endif %}
@@ -139,6 +152,24 @@
       {% endfor %}
     </tbody>
   </table>
+{% endmacro %}
+
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="section-head">
+    <div>
+      <h2>Therapy status board</h2>
+      <p class="page-head__sub">
+        Worst first, each against their own expectation. Click a name for the weekly
+        history. The cancellation percentage is cancellations against everything
+        scheduled, which is what makes it comparable at all.
+      </p>
+    </div>
+  </div>
+  {% if board_therapy %}
+  {{ board_table(board_therapy) }}
+  {% else %}
+  <p class="text-muted">No therapists in this range.</p>
+  {% endif %}
 
   <div class="alert alert--warning" style="margin-top: var(--space-3)">
     <p>
@@ -148,12 +179,27 @@
       being supplied by whoever reads it.
     </p>
     <p>
-      Cancellation counts are shown per therapist but recorded cancellation rates vary
-      far more between colleagues than patient behaviour plausibly does, so they are
-      not comparable until recording practice is known to be consistent.
+      A high cancellation percentage can flag someone who needs help setting
+      expectations in therapy, and it can also flag someone who records
+      cancellations more faithfully than their colleagues. Ask before concluding.
     </p>
   </div>
 </div>
+
+{% if board_psychiatry %}
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="section-head">
+    <div>
+      <h2>Psychiatry</h2>
+      <p class="page-head__sub">
+        Broken out as its own category, so medication management is never judged
+        against therapy caseload numbers.
+      </p>
+    </div>
+  </div>
+  {{ board_table(board_psychiatry) }}
+</div>
+{% endif %}
 
 {% endif %}
 {% endblock %}

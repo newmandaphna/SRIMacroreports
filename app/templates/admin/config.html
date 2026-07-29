@@ -27,7 +27,7 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
 
   <label class="field">
-    <span class="field__label">Benefits session threshold, per week</span>
+    <span class="field__label">Default expectation for Full time with benefits, per week</span>
     <input
       type="number"
       name="benefits_session_threshold"
@@ -37,14 +37,23 @@
       value="{{ values.benefits_session_threshold }}"
     />
     <span class="field__hint">
-      This decides which therapists appear in the alert state on the overview, and that
-      number names a real person, so it is worth getting right. It applies to salaried
-      therapists only: percentage based therapists have no session minimum and carry no
-      status at all.
-      {% if values.benefits_session_threshold == defaults.benefits_session_threshold %}
-      <strong>The current value is the placeholder default, not a number the practice
-      has confirmed.</strong>
-      {% endif %}
+      The practice's stated number is 30. This is the default for the with-benefits
+      employment type only: full time without benefits is fixed at 25, part time is a
+      5 to 20 band, and any individual agreement can override all of these on the
+      therapist's own page. The number names a real person, so it is worth getting
+      right.
+    </span>
+  </label>
+
+  <label class="field">
+    <span class="field__label">Payer groups</span>
+    <textarea name="insurance_groups" class="field__input" rows="3"
+      >{% for group in values.insurance_groups.values() | unique %}{{ group }} = {{ values.insurance_groups.items() | selectattr("1", "equalto", group) | map(attribute="0") | join(", ") }}
+{% endfor %}</textarea>
+    <span class="field__hint">
+      One group per line, in the form <code>IBC = KS, PC, IA</code>. Member codes are
+      folded into their group on the payer breakdown and the balance aging table, so
+      one payer is one row. Leave empty for no grouping.
     </span>
   </label>
 

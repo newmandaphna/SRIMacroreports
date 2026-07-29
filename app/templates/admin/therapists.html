@@ -165,13 +165,7 @@
       />
       <span>
         <strong>{{ e.label }}</strong>
-        <span class="choice__hint">
-          {% if e.counts_against_threshold %}
-          Measured against the weekly session threshold.
-          {% else %}
-          No session threshold, so no below threshold status is ever shown.
-          {% endif %}
-        </span>
+        <span class="choice__hint">{{ e.expectation_note }}</span>
       </span>
     </label>
     {% endfor %}

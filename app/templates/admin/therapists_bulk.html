@@ -5,8 +5,9 @@
   <div>
     <h1>Bulk edit therapists</h1>
     <p class="page-head__sub">
-      Update display names and employment types for every therapist in one submission.
-      Existing aliases are not changed here. Use each therapist's detail page to manage them.
+      Update names, employment types, disciplines, and personal weekly expectations
+      for everyone in one submission. Blank expectation means the employment type's
+      default applies. Existing aliases are not changed here.
     </p>
   </div>
   <a href="/admin/therapists" class="button button--quiet">Back to list</a>
@@ -35,6 +36,8 @@
         <tr>
           <th style="min-width: 14rem">Display name</th>
           <th style="min-width: 10rem">Employment type</th>
+          <th style="min-width: 8rem">Discipline</th>
+          <th style="min-width: 6rem">Expected/week</th>
           <th>Current aliases</th>
           <th>Status</th>
         </tr>
@@ -67,6 +70,32 @@
               >{{ e.label }}</option>
               {% endfor %}
             </select>
+          </td>
+          <td>
+            <select
+              name="discipline_{{ t.id }}"
+              class="field__input"
+              style="width: 100%"
+              aria-label="Discipline for {{ t.display_name }}"
+            >
+              {% for d in disciplines %}
+              <option value="{{ d.value }}" {% if t.discipline == d %}selected{% endif %}>
+                {{ d.label }}
+              </option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            <input
+              type="number"
+              name="expected_{{ t.id }}"
+              value="{{ t.weekly_expected_sessions if t.weekly_expected_sessions else '' }}"
+              min="1"
+              max="80"
+              class="field__input"
+              style="width: 5em"
+              aria-label="Personal weekly expectation for {{ t.display_name }}"
+            />
           </td>
           <td>
             {% for a in t.aliases %}
