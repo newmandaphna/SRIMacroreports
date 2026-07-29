@@ -13,6 +13,10 @@ line-length = 100
 target-version = "py311"
 # Vendored agent skill scripts are not application code and follow their own style.
 extend-exclude = [".agents"]
+# The pre-commit hook passes file paths to ruff explicitly, and ruff lints explicit
+# paths even when they are excluded unless this is on. Without it the local gate and
+# CI would disagree about .agents, which is the exact drift this repo tries to avoid.
+force-exclude = true
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "S"]
