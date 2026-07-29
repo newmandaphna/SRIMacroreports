@@ -23,6 +23,7 @@ router = APIRouter(prefix="/admin/config", tags=["admin"])
 
 MAX_THRESHOLD = 200
 MAX_TIMEOUT_MINUTES = 480
+MAX_AUTO_SYNC_DAYS = 30
 
 
 @router.get("", response_class=HTMLResponse)
@@ -52,6 +53,7 @@ async def save_config(
     cpt_exclusion_list: Annotated[str, Form()],
     week_start_day: Annotated[str, Form()] = "monday",
     session_timeout_minutes: Annotated[int, Form()] = 15,
+    auto_sync_days: Annotated[int, Form()] = 0,
 ) -> Response:
     settings = request.app.state.settings
     before = config_store.current_values(db, settings)
@@ -63,6 +65,8 @@ async def save_config(
         error = f"The session timeout must be between 1 and {MAX_TIMEOUT_MINUTES} minutes."
     elif week_start_day not in {"monday", "sunday"}:
         error = "The week must start on Monday or Sunday."
+    elif not 0 <= auto_sync_days <= MAX_AUTO_SYNC_DAYS:
+        error = f"Auto sync must be between 0 (off) and {MAX_AUTO_SYNC_DAYS} days."
 
     if error:
         audit.record(
@@ -102,6 +106,7 @@ async def save_config(
     config_store.set_value(
         db, config_store.SESSION_TIMEOUT, session_timeout_minutes, actor_id=auth.user.id
     )
+    config_store.set_value(db, config_store.AUTO_SYNC_DAYS, auto_sync_days, actor_id=auth.user.id)
 
     after = config_store.current_values(db, settings)
     changes = {k: {"from": before[k], "to": after[k]} for k in after if before[k] != after[k]}

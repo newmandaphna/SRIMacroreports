@@ -13,6 +13,17 @@
 
 {% include "reports/_filters.html" %}
 
+{% if stale_sync_days is not none and stale_sync_days >= 7 %}
+<div class="alert alert--warning no-print" role="status">
+  <p>
+    <strong>The live sheet last synced {{ stale_sync_days }} days ago.</strong>
+    Numbers below stop at that sync.
+    <a href="/admin/sources">Sync now</a>{% if not auto_sync_days %}, or turn on
+    automatic syncing in <a href="/admin/config">Settings</a>{% endif %}.
+  </p>
+</div>
+{% endif %}
+
 {% if totals.visits == 0 %}
 {% include "reports/_empty.html" %}
 {% else %}

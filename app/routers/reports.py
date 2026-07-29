@@ -304,6 +304,24 @@ async def overview(
 
     insight_report = build_insights(db, config=ctx.config, cpt_exclusions=ctx.config.cpt_exclusions)
 
+    # Staleness is an admin's problem to fix, so only admins get nagged. Only live
+    # sheet sources count: an upload source has nothing to go stale against.
+    stale_sync_days = None
+    if auth.role.is_admin:
+        from sqlalchemy import func, select
+
+        from app.models.data_source import DataSource, SourceProvider
+        from app.models.types import utcnow
+
+        newest = db.execute(
+            select(func.max(DataSource.last_synced_at)).where(
+                DataSource.active.is_(True),
+                DataSource.provider == SourceProvider.GOOGLE_SHEETS,
+            )
+        ).scalar()
+        if newest is not None:
+            stale_sync_days = (utcnow() - newest).days
+
     return render(
         request,
         "reports/overview.html",
@@ -317,6 +335,8 @@ async def overview(
             "weekly": weekly,
             "week_choices": WEEK_WINDOW_CHOICES,
             "top_insights": insight_report.top,
+            "stale_sync_days": stale_sync_days,
+            "auto_sync_days": ctx.config.auto_sync_days,
             "therapist_rows": _ranked_for_board(therapist_rows, ctx.config),
             "can_see_utilization": auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
             **ctx.as_template_context(),
