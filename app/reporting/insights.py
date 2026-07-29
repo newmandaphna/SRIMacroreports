@@ -355,6 +355,67 @@ def build_insights(
                 )
             )
 
+    # ---------------------------------------------------------------- looking ahead
+    # A projection is only honest once a full year of seasonal shape exists, so it
+    # unlocks at 52 completed weeks and says so before then. Method: what the same
+    # next four weeks did last year, scaled by how this year has been running
+    # against last year recently. Arithmetic, stated, checkable.
+    if history_weeks >= 52:
+        from app.reporting.compare import last_year, pct_change
+
+        next_start = last_completed_end + timedelta(days=1)
+        next_end = next_start + timedelta(days=27)
+        ahead_ly = queries.totals(
+            db,
+            queries.Filters(
+                start=last_year(next_start),
+                end=last_year(next_end),
+                cpt_exclusions=cpt_exclusions,
+            ),
+        )
+        recent = queries.totals(db, window(12))
+        recent_window = window(12)
+        recent_ly = queries.totals(
+            db,
+            queries.Filters(
+                start=last_year(recent_window.start),
+                end=last_year(recent_window.end),
+                cpt_exclusions=cpt_exclusions,
+            ),
+        )
+        if ahead_ly.sessions > 0 and recent_ly.sessions > 0:
+            ratio = Decimal(recent.sessions) / Decimal(recent_ly.sessions)
+            projected = int((Decimal(ahead_ly.sessions) * ratio).quantize(Decimal("1")))
+            trend_pct = pct_change(Decimal(recent.sessions), Decimal(recent_ly.sessions))
+            insights.append(
+                Insight(
+                    key="projection",
+                    tone="info",
+                    headline=(
+                        f"Looking ahead: roughly {projected} sessions over the next 4 weeks."
+                    ),
+                    detail=(
+                        f"The same four weeks last year held {ahead_ly.sessions} sessions, "
+                        f"scaled by this year running {trend_pct:+}% against last year over "
+                        "the last 12 weeks. A rough bearing, not a promise: one holiday or "
+                        "one hire moves it."
+                    ),
+                )
+            )
+    elif history_weeks >= MIN_TREND_WEEKS:
+        insights.append(
+            Insight(
+                key="projection_locked",
+                tone="info",
+                headline="Projections unlock at a full year of history.",
+                detail=(
+                    f"{history_weeks} completed weeks so far. A forecast needs the same "
+                    "season last year to compare against; uploading last year's quarters "
+                    "on the Data sources page unlocks it immediately."
+                ),
+            )
+        )
+
     # ------------------------------------------------------------------ silent weeks
     all_weeks = queries.by_period(
         db,
