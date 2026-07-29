@@ -19,6 +19,10 @@
 <div class="alert alert--error" role="alert">{{ error }}</div>
 {% endif %}
 
+{% if request.query_params.get('problem') %}
+<div class="alert alert--error" role="alert">{{ request.query_params['problem'] }}</div>
+{% endif %}
+
 <form method="post" action="/admin/config" class="card stack">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
 
@@ -116,6 +120,22 @@
 
   <div class="form-actions">
     <button type="submit" class="button button--primary">Save settings</button>
+  </div>
+</form>
+
+<form method="post" action="/admin/backup" class="card stack" style="margin-top: var(--space-4)">
+  <p class="card__title">Offline backup</p>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <p class="text-muted">
+    Replit keeps point-in-time recovery for a rolling window only, with no snapshots
+    and no export button. This downloads a full pg_dump archive of the database, so a
+    copy can exist somewhere Replit is not. It contains everything, patient names
+    included: the download is recorded in the audit log as a PHI export, and the file
+    belongs on an encrypted drive, not in a downloads folder. Restore with:
+    <code>pg_restore --clean --if-exists --no-owner -d &lt;connection-url&gt; &lt;file&gt;</code>
+  </p>
+  <div class="form-actions">
+    <button type="submit" class="button">Download backup</button>
   </div>
 </form>
 

@@ -67,6 +67,22 @@ wrong merge between two people is invisible once it happens. An unrecognized nam
 rejects to the import errors queue with a suggestion, and you resolve it by adding the
 therapist and its aliases, then syncing again.
 
+### Backups
+
+The database is the only place the full cross-quarter history exists, so it needs
+a story better than hope. There are two layers:
+
+- **Point-in-time recovery**, provided by Replit's managed PostgreSQL: restore to
+  any moment in a rolling window (7 days on the Core plan, 28 on Pro). Replit
+  offers no snapshots and no export button beyond this. Restoring the database
+  does not move the code: roll the app back to the matching checkpoint separately.
+- **Offline copies**, via the **Download backup** button on the admin Settings
+  page. It streams a full `pg_dump` custom-format archive. The file contains PHI,
+  the download is audit logged as a PHI export, and it belongs on an encrypted
+  drive. Restore with
+  `pg_restore --clean --if-exists --no-owner -d <connection-url> <file>`.
+  The Insights page nags when no offline backup has been taken in over a month.
+
 ### Importing historical data
 
 Quarters that predate the live sheet come in as files. On `/admin/sources`, click
