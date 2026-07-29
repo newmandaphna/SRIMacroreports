@@ -100,7 +100,7 @@
         <th class="numeric">Sessions</th>
         <th class="numeric">Per week</th>
         <th class="numeric">Collected</th>
-        <th class="numeric">Cancel %</th>
+        <th class="numeric">Cancellations</th>
         <th>Status</th>
         <th>Context</th>
       </tr>
@@ -121,7 +121,8 @@
         <td class="numeric">{{ row.sessions_per_week }}</td>
         <td class="numeric">{{ row.collected|currency }}</td>
         <td class="numeric">
-          {% if row.cancellation_rate is not none %}{{ row.cancellation_rate }}%{% else %}-{% endif %}
+          {{ row.cancellations|count }}{% if row.cancellation_rate is not none %}
+          ({{ row.cancellation_rate }}%){% endif %}
         </td>
         <td>
           {% if status == "below" %}

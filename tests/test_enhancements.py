@@ -177,8 +177,8 @@ def test_the_board_grades_and_splits_by_discipline(client, clinic):
     assert "Yoe Example" in page
     # Lexi's personal expectation (25) shows in the Expected column.
     assert ">25</td>" in page.replace("\n", "").replace(" ", "")
-    # Cancellation percentage: 1 cancellation over 3 scheduled is 33.3 percent.
-    assert "33.3%" in page
+    # Cancellations show as count and share together: 1 of 3 scheduled.
+    assert "(33.3%)" in page
 
 
 def test_weekly_counts_show_the_split(client, clinic):
