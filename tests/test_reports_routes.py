@@ -397,3 +397,18 @@ def test_overview_shows_the_weekly_counts_section(financial_user, with_data):
 def test_overview_weekly_window_is_selectable_and_forgiving(financial_user, with_data):
     assert financial_user.get(f"/reports?{ALL}&weeks=4").text.count("Week of ") == 4
     assert financial_user.get(f"/reports?{ALL}&weeks=nonsense").text.count("Week of ") == 8
+
+
+def test_default_range_that_misses_the_data_shows_everything(financial_user, with_data):
+    """Nobody picked a period, so an empty dashboard with a show-everything button is
+    a chore: showing everything IS the right default. The imported data is all in
+    April, months before the default four week window."""
+    page = financial_user.get("/reports").text
+    assert "No data in this range" not in page
+    assert "Show everything imported" not in page
+    assert "All time" in page
+
+
+def test_an_explicitly_chosen_range_that_misses_still_says_so(financial_user, with_data):
+    page = financial_user.get("/reports?preset=this_week").text
+    assert "No data in this range" in page
