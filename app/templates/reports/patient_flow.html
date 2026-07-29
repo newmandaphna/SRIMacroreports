@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Patient flow</h1>
+  <p class="page-head__sub">
+    How many people the practice is seeing, how many are new, and how many are
+    drifting away. Counts only: no patient is named anywhere on this page.
+  </p>
+</div>
+
+{% include "reports/_filters.html" %}
+
+{% if summary.unique_patients == 0 %}
+{% include "reports/_empty.html" %}
+{% else %}
+
+<div class="card-grid">
+  <div class="card">
+    <p class="kpi-question">How many people did we see?</p>
+    <p class="kpi-value">{{ summary.unique_patients|count }}</p>
+    <p class="kpi-note">Distinct patients with at least one session in the range.</p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">How many were new?</p>
+    <p class="kpi-value">{{ summary.new_patients|count }}</p>
+    <p class="kpi-note">
+      First ever session falls in this range, judged against the whole record, so a
+      returning patient is never miscounted as new.
+    </p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">How much care per person?</p>
+    <p class="kpi-value">{{ summary.average_sessions }}</p>
+    <p class="kpi-note">Average sessions per patient across the range.</p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">Active caseload right now</p>
+    <p class="kpi-value">{{ summary.current_census|count }}</p>
+    <p class="kpi-note">
+      Seen since {{ summary.census_since.strftime("%-d %b %Y") }}. The
+      {{ lapse_days }} day cutoff is a convention, not a clinical judgement:
+      therapy cadences vary.
+    </p>
+  </div>
+</div>
+
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="section-head">
+    <div>
+      <h2>Patients per period</h2>
+      <p class="page-head__sub">Everyone seen, and the first-timers among them.</p>
+    </div>
+  </div>
+  <div class="chart-frame">
+    <canvas id="patient-flow"></canvas>
+  </div>
+  <script type="application/json" id="patient-flow-data">
+    {
+      "labels": {{ series | map(attribute="label") | list | tojson }},
+      "active": {{ series | map(attribute="active") | list | tojson }},
+      "new": {{ series | map(attribute="new") | list | tojson }}
+    }
+  </script>
+  <table class="data-table" style="margin-top: var(--space-3)">
+    <thead>
+      <tr>
+        <th>Period</th>
+        <th class="numeric">Patients seen</th>
+        <th class="numeric">New patients</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in series %}
+      <tr>
+        <td>{{ p.label }}</td>
+        <td class="numeric">{{ p.active|count }}</td>
+        <td class="numeric">{{ p.new|count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="alert alert--warning" style="margin-top: var(--space-4)">
+  <p>
+    <strong>Deliberately aggregate.</strong> A version of this page that lists actual
+    patients (a referral or discharge worklist) would change the application's
+    privacy posture, and is a decision for the practice owner, not a feature that
+    arrives quietly. See SECURITY.md.
+  </p>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', path='js/charts.js') }}"></script>
+<script src="{{ url_for('static', path='js/reports.js') }}"></script>
+{% endblock %}

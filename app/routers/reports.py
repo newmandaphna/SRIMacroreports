@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 FinancialUser = Annotated[AuthContext, Depends(require_module(Module.FINANCIAL))]
+PatientFlowUser = Annotated[AuthContext, Depends(require_module(Module.PATIENT_FUNNEL))]
 
 
 # --------------------------------------------------------------------------- context
@@ -435,6 +436,37 @@ async def month_review(
                 if chosen < this_month
                 else None
             ),
+            **ctx.as_template_context(),
+        },
+    )
+
+
+@router.get("/patient-flow", response_class=HTMLResponse)
+async def patient_flow(
+    request: Request, db: DbSession, ctx: Ctx, auth: PatientFlowUser
+) -> Response:
+    """Aggregate patient flow. Counts only: no patient is ever named here.
+
+    Gated on the patient_funnel module grant, so access is a deliberate decision
+    per user even though the page shows no identity.
+    """
+    from app.reporting import patients
+
+    series = patients.flow_series(
+        db, ctx.filters, ctx.granularity, week_starts_monday=ctx.config.week_starts_monday
+    )
+    flow_summary = patients.summary(db, ctx.filters, today=today_in(ctx.config.timezone))
+
+    return render(
+        request,
+        "reports/patient_flow.html",
+        {
+            "page_title": "Patient flow",
+            "auth": auth,
+            "active_page": "patient_flow",
+            "series": series,
+            "summary": flow_summary,
+            "lapse_days": patients.LAPSE_DAYS,
             **ctx.as_template_context(),
         },
     )

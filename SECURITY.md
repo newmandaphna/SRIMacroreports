@@ -83,7 +83,11 @@ Two orthogonal axes:
   `room_utilization`, `patient_funnel`.
 
 Financial access does not confer patient level access. The `patient_funnel` grant is separate and
-must be granted explicitly.
+must be granted explicitly. Its first shipped page, patient flow, is deliberately aggregate only:
+distinct and first-time patient counts per period, computed with the identity column confined to
+COUNT(DISTINCT) and never selected as output (see `app/reporting/patients.py` and its test). A
+future version that lists actual patients would change this posture and requires the practice
+owner's explicit sign-off first.
 
 **Enforcement is server side.** Hiding a nav link is a usability choice, never a security control.
 A user who types a URL for a module they lack gets a 403 from the route dependency, and the refusal
@@ -307,8 +311,9 @@ contains one.
 
 Because these views hold no identity, they are deliberately **not** logged as PHI reads. Logging
 them would bury the genuine PHI reads in noise, which is the same failure as not logging at all.
-Patient identity appears only inside the Phase 6 patient funnel, behind its own grant, and in the
-import error review pages (6.2a), which are admin only and are logged as PHI views.
+Patient identity is rendered nowhere in the reports, including the patient flow page, whose
+counts keep the identity column inside aggregates. It appears only in the import error review
+pages (6.2a), which are admin only and are logged as PHI views.
 
 ### 6.4 PHI never reaches logs
 

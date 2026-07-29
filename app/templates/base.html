@@ -33,6 +33,8 @@
           <a href="/reports/therapist-utilization" {% if current_path.startswith('/reports/therapist-utilization') %}aria-current="page"{% endif %}>Utilization</a>
           {% elif module.value == 'room_utilization' and settings.room_utilization_enabled %}
           <a href="/reports/room-utilization" {% if current_path.startswith('/reports/room-utilization') %}aria-current="page"{% endif %}>Rooms</a>
+          {% elif module.value == 'patient_funnel' %}
+          <a href="/reports/patient-flow" {% if current_path.startswith('/reports/patient-flow') %}aria-current="page"{% endif %}>Patients</a>
           {% endif %}
           {% endfor %}
           {% if auth.role.is_admin %}
