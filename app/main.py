@@ -23,6 +23,7 @@ from app.middleware import install_middleware
 from app.models.enums import Module
 from app.routers import (
     admin_audit,
+    admin_backup,
     admin_config,
     admin_sources,
     admin_therapists,
@@ -142,6 +143,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_users.router)
     app.include_router(admin_audit.router)
     app.include_router(admin_sources.router)
+    app.include_router(admin_backup.router)
     app.include_router(admin_config.router)
     app.include_router(admin_therapists.router)
     app.include_router(reports.router)

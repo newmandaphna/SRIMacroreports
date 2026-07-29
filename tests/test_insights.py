@@ -274,3 +274,32 @@ def test_projection_abstains_below_a_year_and_names_the_unlock(client, practice)
     assert "projection" not in keys(report)
     locked = by_key(report, "projection_locked")
     assert "full year" in locked.headline
+
+
+# -------------------------------------------------------------------- backup nag
+
+
+def test_a_record_with_no_offline_backup_is_nagged(client, practice):
+    seed_weeks(client, practice, {n: 15 for n in range(1, 13)})
+    report = insights_for(client)
+    nag = by_key(report, "backup_overdue")
+    assert nag.tone == "watch"
+    assert "ever been taken" in nag.headline
+
+
+def test_a_recent_backup_silences_the_nag(client, practice):
+    from app.models.enums import AuditAction
+    from app.security import audit
+
+    seed_weeks(client, practice, {n: 15 for n in range(1, 13)})
+    with client.app.state.db.session() as db:
+        audit.record(
+            db,
+            action=AuditAction.EXPORT,
+            target_type="database",
+            target_id="backup",
+            actor_label="test",
+            detail={"bytes": 1},
+        )
+    report = insights_for(client)
+    assert "backup_overdue" not in keys(report)

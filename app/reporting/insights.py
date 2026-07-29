@@ -465,6 +465,41 @@ def build_insights(
             )
         )
 
+    # ------------------------------------------------------------- offline backups
+    # Replit's point-in-time recovery covers a rolling window only. Once real data
+    # exists, an offline copy that is older than a month (or has never been taken)
+    # is a quiet risk worth a loud sentence.
+    from app.models.audit import AuditLog
+    from app.models.enums import AuditAction, AuditResult
+    from app.models.types import utcnow
+
+    last_backup = db.execute(
+        select(func.max(AuditLog.occurred_at)).where(
+            AuditLog.action == AuditAction.EXPORT,
+            AuditLog.target_type == "database",
+            AuditLog.result == AuditResult.SUCCESS,
+        )
+    ).scalar()
+    backup_age_days = None if last_backup is None else (utcnow() - last_backup).days
+    if backup_age_days is None or backup_age_days > 30:
+        insights.append(
+            Insight(
+                key="backup_overdue",
+                tone="watch",
+                headline=(
+                    "No offline backup has ever been taken."
+                    if backup_age_days is None
+                    else f"The last offline backup is {backup_age_days} days old."
+                ),
+                detail=(
+                    "The hosted database keeps a short rolling recovery window and "
+                    "nothing else, and it is the only place the full history exists. "
+                    "The Download backup button on the Settings page produces a copy "
+                    "to keep somewhere the hosting is not."
+                ),
+            )
+        )
+
     if len(insights) <= 1 and history_weeks >= MIN_TREND_WEEKS:
         insights.append(
             Insight(
