@@ -107,6 +107,60 @@
   {% endfor %}
 </div>
 
+{% set aging_rows, aging_total = aging %}
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="section-head">
+    <div>
+      <h2>How old is what we're owed?</h2>
+      <p class="page-head__sub">
+        Every open balance, bucketed by the age of the session it sits on and grouped
+        by payer, largest debt first. This table ignores the date filter above: an
+        old balance does not stop being owed because the picker shows April.
+      </p>
+    </div>
+    <a
+      class="button button--quiet no-print"
+      href="/reports/financial/export.csv?table=aging&{{ query_string }}"
+      >Export CSV</a
+    >
+  </div>
+  {% if aging_total.total > 0 %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Payer</th>
+        {% for label in aging_labels %}<th class="numeric">{{ label }}</th>{% endfor %}
+        <th class="numeric">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in aging_rows %}
+      <tr>
+        <td>{{ r.label }}</td>
+        {% for amount in r.buckets %}
+        <td class="numeric">{% if amount > 0 %}{{ amount|currency }}{% else %}-{% endif %}</td>
+        {% endfor %}
+        <td class="numeric"><strong>{{ r.total|currency }}</strong></td>
+      </tr>
+      {% endfor %}
+      <tr>
+        <td><strong>{{ aging_total.label }}</strong></td>
+        {% for amount in aging_total.buckets %}
+        <td class="numeric"><strong>{{ amount|currency }}</strong></td>
+        {% endfor %}
+        <td class="numeric"><strong>{{ aging_total.total|currency }}</strong></td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="kpi-note" style="margin-top: var(--space-2)">
+    Aged by date of service, because the source sheet carries no payment or claim
+    dates. The over 90 column is usually where the follow-up calls live.
+  </p>
+  {% else %}
+  <p class="text-muted">No open balances. Everything billed has been collected.</p>
+  {% endif %}
+</div>
+
 {% endif %}
 {% endblock %}
 

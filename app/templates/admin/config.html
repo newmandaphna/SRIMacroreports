@@ -96,6 +96,24 @@
     </span>
   </label>
 
+  <label class="field">
+    <span class="field__label">Sync the live sheet automatically every N days</span>
+    <input
+      type="number"
+      name="auto_sync_days"
+      min="0"
+      max="30"
+      class="field__input"
+      value="{{ values.auto_sync_days }}"
+    />
+    <span class="field__hint">
+      0 keeps auto sync off. With it on, a background check runs hourly and live
+      syncs any active source whose last sync is older than this. Every automatic
+      run lands in the same sync history and audit log as a manual one, labelled
+      auto-sync. Upload sources are never auto synced; they have no live sheet.
+    </span>
+  </label>
+
   <div class="form-actions">
     <button type="submit" class="button button--primary">Save settings</button>
   </div>

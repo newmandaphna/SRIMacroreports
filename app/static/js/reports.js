@@ -148,6 +148,23 @@
     });
   }
 
+  function drawPatientFlow() {
+    var data = readJson("patient-flow-data");
+    if (!data || !window.SRICharts) {
+      return;
+    }
+    SRICharts.render("patient-flow", {
+      type: "bar",
+      labels: data.labels,
+      valueFormat: "count",
+      forceLegend: true,
+      datasets: [
+        { label: "Patients seen", data: data.active },
+        { label: "New patients", data: data.new, color: SRICharts.palette()[2] },
+      ],
+    });
+  }
+
   function drawSparklines() {
     if (!window.SRICharts) {
       return;
@@ -174,6 +191,7 @@
     drawUtilizationBars();
     drawTherapistHistory();
     drawWeeklyCounts();
+    drawPatientFlow();
     drawSparklines();
   }
 

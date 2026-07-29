@@ -79,7 +79,11 @@ def _run_migrations() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Run migrations, open the database, seed the admin."""
+    """Run migrations, open the database, seed the admin, start the auto-sync loop."""
+    import asyncio
+
+    from app.sync.scheduler import auto_sync_loop
+
     settings: Settings = app.state.settings
     logger.info("Starting SRI Practice Dashboard (environment=%s)", settings.environment)
 
@@ -94,9 +98,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         sync_admin_password(db)
         seed_admin(db, settings)
 
+    # The loop itself checks the admin setting each pass, so it can idle at zero
+    # cost until an admin turns auto sync on. Not started under test: the suite
+    # controls its own syncing.
+    auto_sync_task: asyncio.Task | None = None
+    if settings.environment != "test":
+        auto_sync_task = asyncio.create_task(auto_sync_loop(app))
+
     try:
         yield
     finally:
+        if auto_sync_task is not None:
+            auto_sync_task.cancel()
         app.state.db.dispose()
         logger.info("Shutdown complete")
 

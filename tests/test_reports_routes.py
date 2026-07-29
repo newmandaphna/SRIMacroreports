@@ -226,7 +226,7 @@ def test_htmx_partial_returns_only_the_trend(financial_user, with_data):
 # --------------------------------------------------------------------------- export
 
 
-@pytest.mark.parametrize("table", ["trend", "therapists", "insurance", "location", "cpt"])
+@pytest.mark.parametrize("table", ["trend", "therapists", "insurance", "location", "cpt", "aging"])
 def test_every_table_exports(financial_user, with_data, table):
     response = financial_user.get(f"/reports/financial/export.csv?table={table}&{ALL}")
     assert response.status_code == 200
@@ -412,3 +412,106 @@ def test_default_range_that_misses_the_data_shows_everything(financial_user, wit
 def test_an_explicitly_chosen_range_that_misses_still_says_so(financial_user, with_data):
     page = financial_user.get("/reports?preset=this_week").text
     assert "No data in this range" in page
+
+
+# ---------------------------------------------------------------------------- aging
+
+
+def test_aging_buckets_by_session_age_and_excludes_credits(financial_user, with_data):
+    from datetime import timedelta
+    from decimal import Decimal
+
+    from app.models.data_source import DataSource
+    from app.models.visit import Visit
+    from app.reporting import queries
+    from app.reporting.periods import today_in
+
+    today = today_in("America/New_York")
+
+    with financial_user.app.state.db.session() as db:
+        source = db.execute(select(DataSource)).scalars().first()
+        therapist = db.execute(select(Therapist)).scalars().first()
+
+        def owed(days_ago, balance, ins="AG"):
+            return Visit(
+                source_id=source.id,
+                therapist_id=therapist.id,
+                patient_name=f"Patient AG{days_ago}",
+                patient_name_normalized=f"PATIENT AG{days_ago}",
+                dos=today - timedelta(days=days_ago),
+                cpt="90837",
+                cpt_base="90837",
+                insurance_short=ins,
+                total_paid=Decimal("0.00"),
+                total_due=Decimal(str(balance)),
+                total_balance=Decimal(str(balance)),
+            )
+
+        db.add_all(
+            [
+                owed(10, "100.00"),
+                owed(45, "200.00"),
+                owed(75, "300.00"),
+                owed(120, "400.00"),
+                owed(15, "-50.00"),  # a credit, which must not net against the debt
+            ]
+        )
+
+    with financial_user.app.state.db.session() as db:
+        rows, total = queries.aging_by_insurance(db, today=today)
+
+    ag = next(r for r in rows if r.key == "AG")
+    assert ag.buckets == (
+        Decimal("100.00"),
+        Decimal("200.00"),
+        Decimal("300.00"),
+        Decimal("400.00"),
+    )
+    assert ag.total == Decimal("1000.00")
+    assert total.total >= ag.total  # grand total spans every payer, displayed or not
+
+
+def test_aging_section_renders_on_the_financial_page(financial_user, with_data):
+    """The fixture has no open balances, so the section says so instead of showing
+    an all-zero table. The bucketed table itself is covered by the query test."""
+    page = financial_user.get(f"/reports/financial?{ALL}").text
+    assert "How old is what we" in page
+    assert "No open balances" in page
+
+
+# ----------------------------------------------------------------------- month review
+
+
+def test_month_review_renders_a_chosen_month(financial_user, with_data):
+    page = financial_user.get("/reports/month?month=2026-04").text
+    assert "April 2026 in review" in page
+    assert "Week by week" in page
+    assert "Where the money came from" in page
+
+
+def test_month_review_default_and_garbage_fall_back_to_last_completed_month(
+    financial_user, with_data
+):
+    from datetime import timedelta
+
+    from app.reporting.periods import month_start, today_in
+
+    today = today_in("America/New_York")
+    expected = month_start(month_start(today) - timedelta(days=1))
+    default_page = financial_user.get("/reports/month").text
+    assert expected.strftime("%B %Y") in default_page
+    garbage_page = financial_user.get("/reports/month?month=banana").text
+    assert expected.strftime("%B %Y") in garbage_page
+
+
+def test_month_review_says_when_a_month_holds_nothing(financial_user, with_data):
+    page = financial_user.get("/reports/month?month=2023-06").text
+    assert "Nothing recorded in June 2023" in page
+    assert "historical upload" in page
+
+
+def test_month_review_is_gated_on_the_financial_grant(client, with_data):
+    with client.app.state.db.session() as db:
+        email = make_user(db, email="nomonth@example.invalid", role=Role.VIEWER).email
+    sign_in(client, email)
+    assert client.get("/reports/month").status_code == 403

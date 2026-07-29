@@ -15,7 +15,7 @@ the template, so nothing rounds twice.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import Select, and_, case, func, or_, select
@@ -374,6 +374,69 @@ def _breakdown(
         )
         for r in rows
     ]
+
+
+AGING_BUCKET_LABELS = ("0 to 30 days", "31 to 60 days", "61 to 90 days", "Over 90 days")
+
+
+@dataclass
+class AgingRow:
+    key: str
+    label: str
+    buckets: tuple[Decimal, Decimal, Decimal, Decimal]
+    total: Decimal
+
+
+def aging_by_insurance(
+    db: Session, *, today: date, limit: int = 12
+) -> tuple[list[AgingRow], AgingRow]:
+    """Open balances bucketed by the age of the session they sit on, per payer.
+
+    Deliberately unfiltered by the page's date range: an old balance does not stop
+    being owed because the picker shows April. Aged by date of service, because the
+    source sheet carries no payment or claim dates; say so wherever this renders.
+    Credits (negative balances) are excluded rather than netted, so a payer's old
+    debt cannot hide behind a recent overpayment. Still no patient columns.
+    """
+    b30, b60, b90 = (today - timedelta(days=n) for n in (30, 60, 90))
+    bucket_cases = (
+        case((Visit.dos >= b30, Visit.total_balance), else_=0),
+        case((and_(Visit.dos < b30, Visit.dos >= b60), Visit.total_balance), else_=0),
+        case((and_(Visit.dos < b60, Visit.dos >= b90), Visit.total_balance), else_=0),
+        case((Visit.dos < b90, Visit.total_balance), else_=0),
+    )
+    sums = [func.coalesce(func.sum(expr), 0) for expr in bucket_cases]
+
+    rows = db.execute(
+        select(Visit.insurance_short, *sums, _money(Visit.total_balance))
+        .where(Visit.total_balance > 0)
+        .group_by(Visit.insurance_short)
+        .order_by(func.sum(Visit.total_balance).desc())
+        .limit(limit)
+    ).all()
+
+    # Grand totals over ALL open balances, not just the displayed payers, so the
+    # bottom line never quietly shrinks because a small payer fell off the list.
+    grand = db.execute(
+        select(*sums, _money(Visit.total_balance)).where(Visit.total_balance > 0)
+    ).one()
+
+    payer_rows = [
+        AgingRow(
+            key=r[0] or "",
+            label=r[0] or "Unknown",
+            buckets=tuple(_as_money(v) for v in r[1:5]),
+            total=_as_money(r[5]),
+        )
+        for r in rows
+    ]
+    total_row = AgingRow(
+        key="",
+        label="All payers",
+        buckets=tuple(_as_money(v) for v in grand[0:4]),
+        total=_as_money(grand[4]),
+    )
+    return payer_rows, total_row
 
 
 def by_weekday(db: Session, filters: Filters) -> list[int]:

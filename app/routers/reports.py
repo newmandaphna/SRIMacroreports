@@ -24,7 +24,7 @@ from app import config_store
 from app.config_store import PracticeConfig
 from app.models.enums import AuditAction, Module
 from app.reporting import queries
-from app.reporting.compare import year_over_year
+from app.reporting.compare import last_year, pct_change, year_over_year
 from app.reporting.insights import build_insights
 from app.reporting.metrics import Kpi
 from app.reporting.periods import (
@@ -32,6 +32,7 @@ from app.reporting.periods import (
     DateRange,
     Granularity,
     resolve_range,
+    today_in,
 )
 from app.reporting.weekly import WEEK_WINDOW_CHOICES, parse_week_count, weekly_counts
 from app.security import audit
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 FinancialUser = Annotated[AuthContext, Depends(require_module(Module.FINANCIAL))]
+PatientFlowUser = Annotated[AuthContext, Depends(require_module(Module.PATIENT_FUNNEL))]
 
 
 # --------------------------------------------------------------------------- context
@@ -303,6 +305,24 @@ async def overview(
 
     insight_report = build_insights(db, config=ctx.config, cpt_exclusions=ctx.config.cpt_exclusions)
 
+    # Staleness is an admin's problem to fix, so only admins get nagged. Only live
+    # sheet sources count: an upload source has nothing to go stale against.
+    stale_sync_days = None
+    if auth.role.is_admin:
+        from sqlalchemy import func, select
+
+        from app.models.data_source import DataSource, SourceProvider
+        from app.models.types import utcnow
+
+        newest = db.execute(
+            select(func.max(DataSource.last_synced_at)).where(
+                DataSource.active.is_(True),
+                DataSource.provider == SourceProvider.GOOGLE_SHEETS,
+            )
+        ).scalar()
+        if newest is not None:
+            stale_sync_days = (utcnow() - newest).days
+
     return render(
         request,
         "reports/overview.html",
@@ -316,8 +336,137 @@ async def overview(
             "weekly": weekly,
             "week_choices": WEEK_WINDOW_CHOICES,
             "top_insights": insight_report.top,
+            "stale_sync_days": stale_sync_days,
+            "auto_sync_days": ctx.config.auto_sync_days,
             "therapist_rows": _ranked_for_board(therapist_rows, ctx.config),
             "can_see_utilization": auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
+            **ctx.as_template_context(),
+        },
+    )
+
+
+@router.get("/month", response_class=HTMLResponse)
+async def month_review(
+    request: Request,
+    db: DbSession,
+    ctx: Ctx,
+    auth: FinancialUser,
+    month: str = Query(default=""),
+) -> Response:
+    """One printable page: a month against the month before it and the same month
+    last year. Defaults to the last completed month, because a month in progress
+    compared against full months reads as a collapse that is only the calendar."""
+    from datetime import timedelta
+
+    from app.reporting.periods import month_start
+
+    today = today_in(ctx.config.timezone)
+    this_month = month_start(today)
+    default_month = month_start(this_month - timedelta(days=1))
+
+    try:
+        chosen = month_start(date.fromisoformat(f"{month}-01")) if month else default_month
+    except ValueError:
+        chosen = default_month
+    if chosen > this_month:
+        chosen = default_month
+
+    in_progress = chosen == this_month
+    month_end = (
+        today if in_progress else month_start(chosen + timedelta(days=32)) - timedelta(days=1)
+    )
+
+    def month_totals(start: date, end: date) -> queries.Totals:
+        return queries.totals(
+            db, queries.Filters(start=start, end=end, cpt_exclusions=ctx.config.cpt_exclusions)
+        )
+
+    current = month_totals(chosen, month_end)
+
+    prev_start = month_start(chosen - timedelta(days=1))
+    prev_end = chosen - timedelta(days=1)
+    previous = month_totals(prev_start, prev_end)
+
+    ly_start, ly_end = last_year(chosen), last_year(month_end)
+    same_month_ly = month_totals(ly_start, ly_end)
+
+    weeks = queries.by_period(
+        db,
+        queries.Filters(start=chosen, end=month_end, cpt_exclusions=ctx.config.cpt_exclusions),
+        Granularity.WEEK,
+        week_starts_monday=ctx.config.week_starts_monday,
+    )
+
+    payers = queries.by_insurance(
+        db,
+        queries.Filters(start=chosen, end=month_end, cpt_exclusions=ctx.config.cpt_exclusions),
+        limit=5,
+    )
+
+    def deltas(totals: queries.Totals) -> dict:
+        if totals.visits == 0:
+            return {}
+        return {
+            "sessions": pct_change(current.sessions, totals.sessions),
+            "collected": pct_change(current.collected, totals.collected),
+        }
+
+    return render(
+        request,
+        "reports/month.html",
+        {
+            "page_title": chosen.strftime("%B %Y"),
+            "auth": auth,
+            "active_page": "overview",
+            "month": chosen,
+            "month_end": month_end,
+            "in_progress": in_progress,
+            "totals": current,
+            "previous": previous,
+            "previous_label": prev_start.strftime("%b %Y"),
+            "vs_previous": deltas(previous),
+            "same_month_ly": same_month_ly,
+            "ly_label": ly_start.strftime("%b %Y"),
+            "vs_ly": deltas(same_month_ly),
+            "weeks": weeks,
+            "payers": payers,
+            "prev_month_param": prev_start.strftime("%Y-%m"),
+            "next_month_param": (
+                month_start(chosen + timedelta(days=32)).strftime("%Y-%m")
+                if chosen < this_month
+                else None
+            ),
+            **ctx.as_template_context(),
+        },
+    )
+
+
+@router.get("/patient-flow", response_class=HTMLResponse)
+async def patient_flow(
+    request: Request, db: DbSession, ctx: Ctx, auth: PatientFlowUser
+) -> Response:
+    """Aggregate patient flow. Counts only: no patient is ever named here.
+
+    Gated on the patient_funnel module grant, so access is a deliberate decision
+    per user even though the page shows no identity.
+    """
+    from app.reporting import patients
+
+    series = patients.flow_series(
+        db, ctx.filters, ctx.granularity, week_starts_monday=ctx.config.week_starts_monday
+    )
+    flow_summary = patients.summary(db, ctx.filters, today=today_in(ctx.config.timezone))
+
+    return render(
+        request,
+        "reports/patient_flow.html",
+        {
+            "page_title": "Patient flow",
+            "auth": auth,
+            "active_page": "patient_flow",
+            "series": series,
+            "summary": flow_summary,
+            "lapse_days": patients.LAPSE_DAYS,
             **ctx.as_template_context(),
         },
     )
@@ -395,6 +544,8 @@ async def financial(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUs
             "insurance_rows": queries.by_insurance(db, ctx.filters),
             "location_rows": queries.by_location(db, ctx.filters),
             "cpt_rows": queries.by_cpt(db, ctx.filters),
+            "aging": queries.aging_by_insurance(db, today=today_in(ctx.config.timezone)),
+            "aging_labels": queries.AGING_BUCKET_LABELS,
             "can_see_utilization": auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
             **ctx.as_template_context(),
         },
@@ -430,6 +581,7 @@ EXPORTS: dict[str, str] = {
     "insurance": "Sessions and revenue by insurance",
     "location": "Sessions and revenue by location",
     "cpt": "Sessions and revenue by CPT",
+    "aging": "Open balances by payer and age of session",
 }
 
 
@@ -512,6 +664,13 @@ def _export_rows(
                 for r in rows
             ],
         )
+
+    if table == "aging":
+        rows, total_row = queries.aging_by_insurance(db, today=today_in(ctx.config.timezone))
+        header = ["Payer", *queries.AGING_BUCKET_LABELS, "Total"]
+        body: list[Iterable[object]] = [[r.label, *r.buckets, r.total] for r in rows]
+        body.append([total_row.label, *total_row.buckets, total_row.total])
+        return header, body
 
     if table in {"insurance", "location", "cpt"}:
         builder = {

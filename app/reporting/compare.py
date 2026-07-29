@@ -33,7 +33,7 @@ class YoYRow:
     collected_change: Decimal | None
 
 
-def _last_year(day: date) -> date:
+def last_year(day: date) -> date:
     """The same calendar date a year earlier. 29 Feb maps to 28 Feb."""
     try:
         return day.replace(year=day.year - 1)
@@ -41,7 +41,7 @@ def _last_year(day: date) -> date:
         return day.replace(year=day.year - 1, day=28)
 
 
-def _pct(current, previous) -> Decimal | None:
+def pct_change(current, previous) -> Decimal | None:
     previous = Decimal(str(previous))
     if previous <= ZERO:
         return None
@@ -85,7 +85,7 @@ def year_over_year(
 
     rows: list[YoYRow] = []
     for label, start, end in periods:
-        prev_start, prev_end = _last_year(start), _last_year(end)
+        prev_start, prev_end = last_year(start), last_year(end)
         current = queries.totals(
             db, queries.Filters(start=start, end=end, cpt_exclusions=cpt_exclusions)
         )
@@ -102,10 +102,10 @@ def year_over_year(
                 previous=previous,
                 has_comparison=has_comparison,
                 sessions_change=(
-                    _pct(current.sessions, previous.sessions) if has_comparison else None
+                    pct_change(current.sessions, previous.sessions) if has_comparison else None
                 ),
                 collected_change=(
-                    _pct(current.collected, previous.collected) if has_comparison else None
+                    pct_change(current.collected, previous.collected) if has_comparison else None
                 ),
             )
         )

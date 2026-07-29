@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>{{ month.strftime("%B %Y") }} in review{% if in_progress %}, in progress{% endif %}</h1>
+    <p class="page-head__sub">
+      {{ month.strftime("%-d %b") }} to {{ month_end.strftime("%-d %b %Y") }},
+      set against {{ previous_label }} and against {{ ly_label }}. Built to be printed
+      or saved as a PDF for anyone who never signs in.
+    </p>
+  </div>
+  <div class="no-print" style="display: flex; gap: var(--space-2)">
+    <a class="button button--quiet" href="/reports/month?month={{ prev_month_param }}"
+      >&larr; {{ previous_label }}</a
+    >
+    {% if next_month_param %}
+    <a class="button button--quiet" href="/reports/month?month={{ next_month_param }}">Next &rarr;</a>
+    {% endif %}
+    <button type="button" class="button button--primary" onclick="window.print()">Print</button>
+  </div>
+</div>
+
+{% if totals.visits == 0 %}
+<div class="state">
+  <p class="state__title">Nothing recorded in {{ month.strftime("%B %Y") }}</p>
+  <p>
+    If the practice was open that month, the quarter holding it has not been imported
+    yet. The historical upload on the Data sources page fills it.
+  </p>
+</div>
+{% else %}
+
+{% macro delta_line(label, value) %}
+{% if value is not none %}
+<span class="kpi-delta kpi-delta--{{ 'good' if value >= 0 else 'bad' }}"
+  >{{ '+' if value > 0 }}{{ value }}% vs {{ label }}</span
+>
+{% else %}
+<span class="kpi-delta kpi-delta--neutral">no {{ label }} data</span>
+{% endif %}
+{% endmacro %}
+
+<div class="card-grid">
+  <div class="card">
+    <p class="kpi-question">Sessions</p>
+    <p class="kpi-value">{{ totals.sessions|count }}</p>
+    <p>{{ delta_line(previous_label, vs_previous.get("sessions")) }}</p>
+    <p>{{ delta_line(ly_label, vs_ly.get("sessions")) }}</p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">Collected</p>
+    <p class="kpi-value">{{ totals.collected|money }}</p>
+    <p>{{ delta_line(previous_label, vs_previous.get("collected")) }}</p>
+    <p>{{ delta_line(ly_label, vs_ly.get("collected")) }}</p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">Billed</p>
+    <p class="kpi-value">{{ totals.billed|money }}</p>
+    <p class="kpi-delta">
+      {% if totals.collection_rate is not none %}{{ totals.collection_rate }}% collected{% endif %}
+    </p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">Still owed on this month's sessions</p>
+    <p class="kpi-value">{{ totals.outstanding|money }}</p>
+    <p class="kpi-delta">
+      patient {{ totals.outstanding_patient|money }},
+      insurance {{ totals.outstanding_insurance|money }}
+    </p>
+  </div>
+  <div class="card">
+    <p class="kpi-question">Cancellations</p>
+    <p class="kpi-value">{{ totals.cancellations|count }}</p>
+    <p class="kpi-delta">
+      {% if totals.cancellation_rate is not none %}{{ totals.cancellation_rate }}% of booked,
+      {% endif %}{{ totals.cancellations_with_fee|count }} with a fee
+    </p>
+  </div>
+</div>
+
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="section-head">
+    <div><h2>Week by week</h2></div>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Week</th>
+        <th class="numeric">Sessions</th>
+        <th class="numeric">Collected</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for w in weeks %}
+      <tr>
+        <td>Week of {{ w.label }}</td>
+        <td class="numeric">{{ w.sessions|count }}</td>
+        <td class="numeric">{{ w.collected|currency }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="kpi-note" style="margin-top: var(--space-2)">
+    The first and last weeks can extend past the month's edges; their counts here
+    include only this month's days.
+  </p>
+</div>
+
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="section-head">
+    <div><h2>Where the money came from</h2></div>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Payer</th>
+        <th class="numeric">Sessions</th>
+        <th class="numeric">Collected</th>
+        <th class="numeric">Outstanding</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in payers %}
+      <tr>
+        <td>{{ p.label }}</td>
+        <td class="numeric">{{ p.sessions|count }}</td>
+        <td class="numeric">{{ p.collected|currency }}</td>
+        <td class="numeric">
+          {% if p.outstanding > 0 %}{{ p.outstanding|currency }}{% else %}-{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="text-muted" style="margin-top: var(--space-3)">
+  SRI Practice Dashboard, {{ month.strftime("%B %Y") }} review.
+  Cancellations are not counted as sessions; their fees are counted as revenue.
+</p>
+
+{% endif %}
+{% endblock %}

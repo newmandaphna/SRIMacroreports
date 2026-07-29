@@ -254,3 +254,23 @@ def test_insights_page_renders_the_yoy_section(financial_user, practice):
     page = financial_user.get("/reports/insights").text
     assert "Same time last year" in page
     assert "Nothing to compare yet" in page  # no last-year data seeded
+
+
+# ---------------------------------------------------------------------- projection
+
+
+def test_projection_unlocks_at_a_year_and_states_its_method(client, practice):
+    seed_weeks(client, practice, {n: 10 for n in range(1, 80)})
+    report = insights_for(client)
+    projection = by_key(report, "projection")
+    assert "next 4 weeks" in projection.headline
+    assert "last year" in projection.detail
+    assert "projection_locked" not in keys(report)
+
+
+def test_projection_abstains_below_a_year_and_names_the_unlock(client, practice):
+    seed_weeks(client, practice, {n: 10 for n in range(1, 20)})
+    report = insights_for(client)
+    assert "projection" not in keys(report)
+    locked = by_key(report, "projection_locked")
+    assert "full year" in locked.headline

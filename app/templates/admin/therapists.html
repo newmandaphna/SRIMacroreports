@@ -41,6 +41,20 @@
 </form>
 {% endif %}
 
+{% set unclassified = therapists | selectattr("employment_type.value", "equalto", "other") | list | length %}
+{% if unclassified %}
+<div class="alert alert--warning" role="status">
+  <p>
+    <strong>{{ unclassified }} therapist{{ "" if unclassified == 1 else "s" }} have no
+    employment type yet</strong>, so they carry no status on the utilization board: a
+    person cannot fall short of a target they were never given. Mark each as salaried
+    (measured against the weekly threshold) or percentage (not measured) in
+    <a href="/admin/therapists/bulk">bulk edit</a>. While there, confirm the threshold
+    itself in <a href="/admin/config">Settings</a> if it still shows the placeholder.
+  </p>
+</div>
+{% endif %}
+
 {% if therapists %}
 <div class="card">
   <div style="display: flex; justify-content: flex-end; padding: var(--space-2) var(--space-3) 0">

@@ -26,6 +26,8 @@ BENEFITS_THRESHOLD = "benefits_session_threshold"
 CPT_EXCLUSIONS = "cpt_exclusion_list"
 WEEK_START_DAY = "week_start_day"
 SESSION_TIMEOUT = "session_timeout_minutes"
+# Days between automatic syncs of the live sheet. 0 keeps auto-sync off.
+AUTO_SYNC_DAYS = "auto_sync_days"
 
 # Threshold bands for the utilization status flag, as a fraction of the threshold.
 # At or above the threshold is fine; within this much below it is a watch; further
@@ -42,6 +44,9 @@ class PracticeConfig:
     week_starts_monday: bool
     session_timeout_minutes: int
     timezone: str
+    # 0 means off. Anything above it is how many days may pass before the
+    # background loop syncs the active sources again.
+    auto_sync_days: int = 0
 
     def utilization_status(self, sessions_per_period: Decimal | float | int) -> str:
         """One of ok, watch, below. Alert red is reserved for `below`.
@@ -82,6 +87,7 @@ def load(db: Session, settings: Settings) -> PracticeConfig:
             stored.get(SESSION_TIMEOUT), settings.session_timeout_minutes
         ),
         timezone=settings.timezone,
+        auto_sync_days=_as_int(stored.get(AUTO_SYNC_DAYS), 0),
     )
 
 
@@ -110,4 +116,5 @@ def current_values(db: Session, settings: Settings) -> dict[str, Any]:
         CPT_EXCLUSIONS: list(config.cpt_exclusions),
         WEEK_START_DAY: "monday" if config.week_starts_monday else "sunday",
         SESSION_TIMEOUT: config.session_timeout_minutes,
+        AUTO_SYNC_DAYS: config.auto_sync_days,
     }
