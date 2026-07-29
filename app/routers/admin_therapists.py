@@ -21,6 +21,7 @@ from sqlalchemy import func, select
 from app.models.enums import AuditAction, AuditResult
 from app.models.therapist import (
     AliasSource,
+    Discipline,
     EmploymentType,
     Therapist,
     TherapistAlias,
@@ -53,6 +54,7 @@ def _list_context(db: DbSession) -> dict:
         "therapists": therapists,
         "visit_counts": visit_counts,
         "employment_types": list(EmploymentType),
+        "disciplines": list(Discipline),
     }
 
 
@@ -172,6 +174,19 @@ async def create_therapist(
     return RedirectResponse(f"/admin/therapists/{therapist.id}", status_code=303)
 
 
+def _parse_expected(raw: str) -> int | None:
+    """A personal weekly expectation. Blank means use the type default; anything
+    unparseable or absurd is treated as blank rather than saved as garbage."""
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if 1 <= value <= 80 else None
+
+
 def _split_aliases(raw: str, display_name: str) -> list[str]:
     """Normalized alias list, always including the display name itself."""
     values = [normalize_therapist_name(part) for part in raw.split(",")]
@@ -243,6 +258,7 @@ async def bulk_edit_form(
             "auth": auth,
             "therapists": therapists,
             "employment_types": list(EmploymentType),
+            "disciplines": list(Discipline),
             "just_saved": bool(saved),
         },
     )
@@ -268,18 +284,21 @@ async def bulk_update_therapists(
     # No DB mutations happen here.
     # ------------------------------------------------------------------ phase 1
     errors: list[str] = []
-    # List of (therapist_obj, new_name, new_type, before_name, before_type)
-    proposed: list[tuple[Therapist, str, EmploymentType, str, EmploymentType]] = []
+    # List of (therapist_obj, new_name, new_type, new_discipline, new_expected)
+    proposed: list[tuple[Therapist, str, EmploymentType, Discipline, int | None]] = []
     # Lower-cased names already claimed by earlier rows in this same submission.
     # Checked in addition to the DB so two rows renaming to the same value are
     # caught before any write, not at commit time.
     proposed_names_lower: set[str] = set()
 
     valid_types = {e.value for e in EmploymentType}
+    valid_disciplines = {d.value for d in Discipline}
 
     for therapist in therapists:
         raw_name = str(form.get(f"name_{therapist.id}", "")).strip()
         raw_type = str(form.get(f"employment_{therapist.id}", "")).strip()
+        raw_discipline = str(form.get(f"discipline_{therapist.id}", "")).strip()
+        raw_expected = str(form.get(f"expected_{therapist.id}", "")).strip()
 
         if not raw_name:
             errors.append(f"Name for therapist #{therapist.id} is empty.")
@@ -291,6 +310,12 @@ async def bulk_update_therapists(
 
         new_name = raw_name
         new_type = EmploymentType(raw_type)
+        new_discipline = (
+            Discipline(raw_discipline)
+            if raw_discipline in valid_disciplines
+            else therapist.discipline
+        )
+        new_expected = _parse_expected(raw_expected)
         new_name_lower = new_name.lower()
 
         # Uniqueness check: only needed when the name actually changes.
@@ -313,10 +338,13 @@ async def bulk_update_therapists(
 
         proposed_names_lower.add(new_name_lower)
 
-        if new_name != therapist.display_name or new_type != therapist.employment_type:
-            proposed.append(
-                (therapist, new_name, new_type, therapist.display_name, therapist.employment_type)
-            )
+        if (
+            new_name != therapist.display_name
+            or new_type != therapist.employment_type
+            or new_discipline != therapist.discipline
+            or new_expected != therapist.weekly_expected_sessions
+        ):
+            proposed.append((therapist, new_name, new_type, new_discipline, new_expected))
 
     # ------------------------------------------------------------------ phase 2
     # Only reached when validation found zero errors. Apply all writes atomically.
@@ -339,6 +367,7 @@ async def bulk_update_therapists(
                 "auth": auth,
                 "therapists": therapists_fresh,
                 "employment_types": list(EmploymentType),
+                "disciplines": list(Discipline),
                 "just_saved": False,
                 "errors": errors,
             },
@@ -346,19 +375,26 @@ async def bulk_update_therapists(
         )
 
     changed: list[dict] = []
-    for therapist, new_name, new_type, before_name, before_type in proposed:
+    for therapist, new_name, new_type, new_discipline, new_expected in proposed:
+        before = {
+            "display_name": therapist.display_name,
+            "employment_type": therapist.employment_type.value,
+            "discipline": therapist.discipline.value,
+            "weekly_expected_sessions": therapist.weekly_expected_sessions,
+        }
         therapist.display_name = new_name
         therapist.employment_type = new_type
+        therapist.discipline = new_discipline
+        therapist.weekly_expected_sessions = new_expected
         changed.append(
             {
                 "id": therapist.id,
-                "before": {
-                    "display_name": before_name,
-                    "employment_type": before_type.value,
-                },
+                "before": before,
                 "after": {
                     "display_name": new_name,
                     "employment_type": new_type.value,
+                    "discipline": new_discipline.value,
+                    "weekly_expected_sessions": new_expected,
                 },
             }
         )
@@ -477,6 +513,7 @@ async def therapist_detail(
             "therapist": therapist,
             "visit_count": visit_count,
             "employment_types": list(EmploymentType),
+            "disciplines": list(Discipline),
         },
     )
 
@@ -489,6 +526,8 @@ async def update_therapist(
     therapist_id: int,
     display_name: Annotated[str, Form()],
     employment_type: Annotated[str, Form()],
+    discipline: Annotated[str, Form()] = Discipline.THERAPIST.value,
+    weekly_expected_sessions: Annotated[str, Form()] = "",
     active: Annotated[str, Form()] = "",
     notes: Annotated[str, Form()] = "",
 ) -> Response:
@@ -498,21 +537,29 @@ async def update_therapist(
 
     if employment_type not in {e.value for e in EmploymentType}:
         return RedirectResponse(f"/admin/therapists/{therapist_id}", status_code=303)
+    if discipline not in {d.value for d in Discipline}:
+        discipline = Discipline.THERAPIST.value
 
     before = {
         "display_name": therapist.display_name,
         "employment_type": therapist.employment_type.value,
+        "discipline": therapist.discipline.value,
+        "weekly_expected_sessions": therapist.weekly_expected_sessions,
         "active": therapist.active,
     }
 
     therapist.display_name = display_name.strip() or therapist.display_name
     therapist.employment_type = EmploymentType(employment_type)
+    therapist.discipline = Discipline(discipline)
+    therapist.weekly_expected_sessions = _parse_expected(weekly_expected_sessions)
     therapist.active = bool(active)
     therapist.notes = notes.strip() or None
 
     after = {
         "display_name": therapist.display_name,
         "employment_type": therapist.employment_type.value,
+        "discipline": therapist.discipline.value,
+        "weekly_expected_sessions": therapist.weekly_expected_sessions,
         "active": therapist.active,
     }
 
@@ -567,6 +614,7 @@ async def add_alias(
                     select(func.count(Visit.id)).where(Visit.therapist_id == therapist.id)
                 ).scalar_one(),
                 "employment_types": list(EmploymentType),
+                "disciplines": list(Discipline),
                 "error": (
                     f"{normalized!r} already resolves to a different therapist. Aliases are "
                     "unique so that two people can never be folded into one record."
@@ -619,6 +667,7 @@ async def delete_therapist(
                 "therapist": therapist,
                 "visit_count": visit_count,
                 "employment_types": list(EmploymentType),
+                "disciplines": list(Discipline),
                 "error": (
                     f"Cannot delete {therapist.display_name!r}: "
                     f"{visit_count} imported row(s) are linked to this record. "

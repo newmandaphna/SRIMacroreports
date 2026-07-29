@@ -28,11 +28,25 @@ WEEK_START_DAY = "week_start_day"
 SESSION_TIMEOUT = "session_timeout_minutes"
 # Days between automatic syncs of the live sheet. 0 keeps auto-sync off.
 AUTO_SYNC_DAYS = "auto_sync_days"
+INSURANCE_GROUPS = "insurance_groups"
+
+# Codes the practice bills separately that are one payer in reality. Seeded here,
+# editable in the admin. Maps member code to group name.
+DEFAULT_INSURANCE_GROUPS: dict[str, str] = {"KS": "IBC", "PC": "IBC", "IA": "IBC"}
 
 # Threshold bands for the utilization status flag, as a fraction of the threshold.
 # At or above the threshold is fine; within this much below it is a watch; further
 # below is the alert state, which is the only place alert red is used.
 WATCH_BAND = 0.8
+
+
+@dataclass(frozen=True)
+class Expectation:
+    """What one therapist is measured against, resolved from their own agreement."""
+
+    kind: str  # "threshold", "band", or "none"
+    threshold: int | None = None
+    label: str = "-"
 
 
 @dataclass(frozen=True)
@@ -47,8 +61,18 @@ class PracticeConfig:
     # 0 means off. Anything above it is how many days may pass before the
     # background loop syncs the active sources again.
     auto_sync_days: int = 0
+    # Member insurance code to group name, e.g. KS/PC/IA all belong to IBC. The
+    # breakdowns and the aging table fold members into their group.
+    insurance_groups: dict[str, str] = None  # type: ignore[assignment]
 
-    def utilization_status(self, sessions_per_period: Decimal | float | int) -> str:
+    def payer_group(self, code: str | None) -> str | None:
+        if not code:
+            return None
+        return (self.insurance_groups or {}).get(str(code).strip().upper())
+
+    def utilization_status(
+        self, sessions_per_period: Decimal | float | int, threshold: int | None = None
+    ) -> str:
         """One of ok, watch, below. Alert red is reserved for `below`.
 
         Compares the weekly average as given, without truncating it to a whole
@@ -56,15 +80,68 @@ class PracticeConfig:
         same bucket as one at 19.0, which is a rounding artifact rather than a
         judgement anyone intended to make.
         """
-        if self.benefits_session_threshold <= 0:
+        limit = self.benefits_session_threshold if threshold is None else threshold
+        if limit <= 0:
             return "ok"
         value = Decimal(str(sessions_per_period))
-        threshold = Decimal(self.benefits_session_threshold)
-        if value >= threshold:
+        threshold_value = Decimal(limit)
+        if value >= threshold_value:
             return "ok"
-        if value >= threshold * Decimal(str(WATCH_BAND)):
+        if value >= threshold_value * Decimal(str(WATCH_BAND)):
             return "watch"
         return "below"
+
+    def expectation_for(self, employment_type, override: int | None) -> Expectation:
+        """The expectation one therapist is actually measured against.
+
+        A personal override wins over the employment type's default, because
+        expectations are individual agreements: one full timer may be on 25 while
+        a colleague on insurance panels needs 30.
+        """
+        from app.models.therapist import (
+            FULL_TIME_NO_BENEFITS_EXPECTED,
+            PART_TIME_MAX,
+            PART_TIME_MIN,
+            EmploymentType,
+        )
+
+        if not employment_type.counts_against_threshold:
+            return Expectation(kind="none")
+        if override:
+            return Expectation(kind="threshold", threshold=override, label=str(override))
+        if employment_type is EmploymentType.SALARIED_BENEFITS:
+            t = self.benefits_session_threshold
+            return Expectation(kind="threshold", threshold=t, label=str(t))
+        if employment_type is EmploymentType.FULL_TIME_NO_BENEFITS:
+            t = FULL_TIME_NO_BENEFITS_EXPECTED
+            return Expectation(kind="threshold", threshold=t, label=str(t))
+        return Expectation(
+            kind="band",
+            threshold=PART_TIME_MIN,
+            label=f"{PART_TIME_MIN} to {PART_TIME_MAX}",
+        )
+
+    def status_for(
+        self,
+        employment_type,
+        override: int | None,
+        sessions_per_week: Decimal | float | int,
+    ) -> str:
+        """ok, watch, below, over, or empty for the unmeasured.
+
+        "over" belongs to the part time band only: at or past the cap it is the
+        arrangement being exceeded, which is a different conversation from
+        underperformance and must not wear the same color.
+        """
+        from app.models.therapist import PART_TIME_MAX
+
+        expectation = self.expectation_for(employment_type, override)
+        if expectation.kind == "none":
+            return ""
+        value = Decimal(str(sessions_per_week))
+        if expectation.kind == "band" and value >= PART_TIME_MAX:
+            return "over"
+        return self.utilization_status(value, threshold=expectation.threshold)
 
 
 def load(db: Session, settings: Settings) -> PracticeConfig:
@@ -88,7 +165,18 @@ def load(db: Session, settings: Settings) -> PracticeConfig:
         ),
         timezone=settings.timezone,
         auto_sync_days=_as_int(stored.get(AUTO_SYNC_DAYS), 0),
+        insurance_groups=_as_groups(stored.get(INSURANCE_GROUPS)),
     )
+
+
+def _as_groups(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return dict(DEFAULT_INSURANCE_GROUPS)
+    return {
+        str(code).strip().upper(): str(group).strip().upper()
+        for code, group in value.items()
+        if str(code).strip() and str(group).strip()
+    }
 
 
 def _as_int(value: Any, default: int) -> int:
@@ -117,4 +205,5 @@ def current_values(db: Session, settings: Settings) -> dict[str, Any]:
         WEEK_START_DAY: "monday" if config.week_starts_monday else "sunday",
         SESSION_TIMEOUT: config.session_timeout_minutes,
         AUTO_SYNC_DAYS: config.auto_sync_days,
+        INSURANCE_GROUPS: dict(config.insurance_groups),
     }

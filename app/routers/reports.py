@@ -229,7 +229,10 @@ def build_kpis(db: DbSession, ctx: ReportContext, current: queries.Totals) -> li
             kind="count",
             sparkline=session_spark,
             href=f"/reports/financial?{qs}",
-            note="Cancellations are not counted as sessions.",
+            note=(
+                f"Therapy {current.therapy_sessions:,}, psychiatry "
+                f"{current.psychiatry_sessions:,}. Cancellations are not counted."
+            ),
         ),
         Kpi(
             key="outstanding",
@@ -254,8 +257,8 @@ def build_kpis(db: DbSession, ctx: ReportContext, current: queries.Totals) -> li
             lower_is_better=True,
             href=f"/reports/financial?{qs}#utilization",
             note=(
-                f"Against {ctx.config.benefits_session_threshold} sessions per week, "
-                "salaried therapists only."
+                "Each measured against their own expectation: a personal override, "
+                "or their employment type's default."
             ),
         ),
     ]
@@ -270,8 +273,8 @@ def below_threshold_count(db: DbSession, ctx: ReportContext) -> int:
     return sum(
         1
         for r in rows
-        if r.measured_against_threshold
-        and ctx.config.utilization_status(r.sessions_per_week) == "below"
+        if ctx.config.status_for(r.employment_type, r.weekly_expected_sessions, r.sessions_per_week)
+        == "below"
     )
 
 
@@ -497,16 +500,18 @@ def _ranked_for_board(
 ) -> list[tuple[queries.TherapistRow, str]]:
     """Attach a status to each therapist, worst first.
 
-    Percentage based therapists carry no status at all rather than a passing one,
-    because they have no threshold to meet and a green tick would imply they did.
+    Each person is graded against their own expectation: a personal override if
+    one is set, otherwise their employment type's default. The unmeasured carry
+    no status at all rather than a passing one, because they have no threshold to
+    meet and a green tick would imply they did.
     """
-    order = {"below": 0, "watch": 1, "ok": 2, "": 3}
+    order = {"below": 0, "over": 1, "watch": 2, "ok": 3, "": 4}
     decorated = [
         (
             row,
-            config.utilization_status(row.sessions_per_week)
-            if row.measured_against_threshold
-            else "",
+            config.status_for(
+                row.employment_type, row.weekly_expected_sessions, row.sessions_per_week
+            ),
         )
         for row in rows
     ]
@@ -541,10 +546,16 @@ async def financial(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUs
                 queries.by_therapist(db, ctx.filters, weeks_in_range=ctx.weeks_in_range),
                 ctx.config,
             ),
-            "insurance_rows": queries.by_insurance(db, ctx.filters),
+            "insurance_rows": queries.by_insurance(
+                db, ctx.filters, groups=ctx.config.insurance_groups
+            ),
             "location_rows": queries.by_location(db, ctx.filters),
             "cpt_rows": queries.by_cpt(db, ctx.filters),
-            "aging": queries.aging_by_insurance(db, today=today_in(ctx.config.timezone)),
+            "aging": queries.aging_by_insurance(
+                db,
+                today=today_in(ctx.config.timezone),
+                groups=ctx.config.insurance_groups,
+            ),
             "aging_labels": queries.AGING_BUCKET_LABELS,
             "can_see_utilization": auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
             **ctx.as_template_context(),
@@ -646,18 +657,24 @@ def _export_rows(
         return (
             [
                 "Therapist",
+                "Discipline",
                 "Employment type",
+                "Expected per week",
                 "Sessions",
                 "Sessions per week",
+                "Cancellation rate",
                 "Collected",
                 "Cancellations",
             ],
             [
                 [
                     r.display_name,
+                    r.discipline.label,
                     r.employment_type.label,
+                    ctx.config.expectation_for(r.employment_type, r.weekly_expected_sessions).label,
                     r.sessions,
                     r.sessions_per_week,
+                    f"{r.cancellation_rate}%" if r.cancellation_rate is not None else "",
                     r.collected,
                     r.cancellations,
                 ]
@@ -673,12 +690,11 @@ def _export_rows(
         return header, body
 
     if table in {"insurance", "location", "cpt"}:
-        builder = {
-            "insurance": queries.by_insurance,
-            "location": queries.by_location,
-            "cpt": queries.by_cpt,
-        }[table]
-        rows = builder(db, ctx.filters)
+        if table == "insurance":
+            rows = queries.by_insurance(db, ctx.filters, groups=ctx.config.insurance_groups)
+        else:
+            builder = {"location": queries.by_location, "cpt": queries.by_cpt}[table]
+            rows = builder(db, ctx.filters)
         return (
             [table.title(), "Sessions", "Collected", "Outstanding"],
             [[r.label, r.sessions, r.collected, r.outstanding] for r in rows],

@@ -10,10 +10,10 @@
     <div>
       <h2>Who is below their session threshold?</h2>
       <p class="page-head__sub">
-        Weekly average over the selected range, against
-        {{ config.benefits_session_threshold }} sessions per week.
+        Weekly average over the selected range, each person measured against their
+        own expectation.
         {% if auth.role.is_admin %}
-        <a href="/admin/config">Change the threshold</a>.
+        <a href="/admin/therapists">Set expectations</a>.
         {% endif %}
       </p>
     </div>
@@ -29,10 +29,11 @@
     <thead>
       <tr>
         <th>Therapist</th>
+        <th class="numeric">Expected</th>
         <th class="numeric">Sessions</th>
         <th class="numeric">Per week</th>
         <th class="numeric">Collected</th>
-        <th class="numeric">Cancellations</th>
+        <th class="numeric">Cancel %</th>
         <th>Status</th>
       </tr>
     </thead>
@@ -47,18 +48,28 @@
             >{{ row.display_name }}</a
           >
           {% else %}{{ row.display_name }}{% endif %}
+          {% if row.discipline.value == "psychiatrist" %}
+          <span class="pill pill--neutral">psychiatry</span>
+          {% endif %}
+        </td>
+        <td class="numeric">
+          {{ config.expectation_for(row.employment_type, row.weekly_expected_sessions).label }}
         </td>
         <td class="numeric">{{ row.sessions|count }}</td>
         <td class="numeric">{{ row.sessions_per_week }}</td>
         <td class="numeric">{{ row.collected|currency }}</td>
-        <td class="numeric">{{ row.cancellations|count }}</td>
+        <td class="numeric">
+          {% if row.cancellation_rate is not none %}{{ row.cancellation_rate }}%{% else %}-{% endif %}
+        </td>
         <td>
           {% if status == "below" %}
-          <span class="pill pill--below">below threshold</span>
+          <span class="pill pill--below">below expectation</span>
+          {% elif status == "over" %}
+          <span class="pill pill--watch">over part time cap</span>
           {% elif status == "watch" %}
           <span class="pill pill--watch">watch</span>
           {% elif status == "ok" %}
-          <span class="pill pill--ok">at threshold</span>
+          <span class="pill pill--ok">meeting it</span>
           {% else %}
           <span class="text-muted">{{ row.employment_type.label }}</span>
           {% endif %}
