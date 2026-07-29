@@ -20,6 +20,11 @@
     <p class="kpi-question">How much clinical work did we do?</p>
     <p class="kpi-value">{{ totals.sessions|count }}</p>
     <p class="kpi-delta">sessions, from {{ totals.visits|count }} imported rows</p>
+    <p class="kpi-note">
+      Therapy {{ totals.therapy_sessions|count }}, psychiatry
+      {{ totals.psychiatry_sessions|count }}, split by code: anything beginning 99 is
+      psychiatry.
+    </p>
   </div>
   <div class="card">
     <p class="kpi-question">What did we bill?</p>
