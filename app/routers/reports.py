@@ -32,6 +32,7 @@ from app.reporting.periods import (
     DateRange,
     Granularity,
     resolve_range,
+    today_in,
 )
 from app.reporting.weekly import WEEK_WINDOW_CHOICES, parse_week_count, weekly_counts
 from app.security import audit
@@ -395,6 +396,8 @@ async def financial(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUs
             "insurance_rows": queries.by_insurance(db, ctx.filters),
             "location_rows": queries.by_location(db, ctx.filters),
             "cpt_rows": queries.by_cpt(db, ctx.filters),
+            "aging": queries.aging_by_insurance(db, today=today_in(ctx.config.timezone)),
+            "aging_labels": queries.AGING_BUCKET_LABELS,
             "can_see_utilization": auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
             **ctx.as_template_context(),
         },
@@ -430,6 +433,7 @@ EXPORTS: dict[str, str] = {
     "insurance": "Sessions and revenue by insurance",
     "location": "Sessions and revenue by location",
     "cpt": "Sessions and revenue by CPT",
+    "aging": "Open balances by payer and age of session",
 }
 
 
@@ -512,6 +516,13 @@ def _export_rows(
                 for r in rows
             ],
         )
+
+    if table == "aging":
+        rows, total_row = queries.aging_by_insurance(db, today=today_in(ctx.config.timezone))
+        header = ["Payer", *queries.AGING_BUCKET_LABELS, "Total"]
+        body: list[Iterable[object]] = [[r.label, *r.buckets, r.total] for r in rows]
+        body.append([total_row.label, *total_row.buckets, total_row.total])
+        return header, body
 
     if table in {"insurance", "location", "cpt"}:
         builder = {

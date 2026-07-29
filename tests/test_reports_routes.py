@@ -226,7 +226,7 @@ def test_htmx_partial_returns_only_the_trend(financial_user, with_data):
 # --------------------------------------------------------------------------- export
 
 
-@pytest.mark.parametrize("table", ["trend", "therapists", "insurance", "location", "cpt"])
+@pytest.mark.parametrize("table", ["trend", "therapists", "insurance", "location", "cpt", "aging"])
 def test_every_table_exports(financial_user, with_data, table):
     response = financial_user.get(f"/reports/financial/export.csv?table={table}&{ALL}")
     assert response.status_code == 200
@@ -412,3 +412,68 @@ def test_default_range_that_misses_the_data_shows_everything(financial_user, wit
 def test_an_explicitly_chosen_range_that_misses_still_says_so(financial_user, with_data):
     page = financial_user.get("/reports?preset=this_week").text
     assert "No data in this range" in page
+
+
+# ---------------------------------------------------------------------------- aging
+
+
+def test_aging_buckets_by_session_age_and_excludes_credits(financial_user, with_data):
+    from datetime import timedelta
+    from decimal import Decimal
+
+    from app.models.data_source import DataSource
+    from app.models.visit import Visit
+    from app.reporting import queries
+    from app.reporting.periods import today_in
+
+    today = today_in("America/New_York")
+
+    with financial_user.app.state.db.session() as db:
+        source = db.execute(select(DataSource)).scalars().first()
+        therapist = db.execute(select(Therapist)).scalars().first()
+
+        def owed(days_ago, balance, ins="AG"):
+            return Visit(
+                source_id=source.id,
+                therapist_id=therapist.id,
+                patient_name=f"Patient AG{days_ago}",
+                patient_name_normalized=f"PATIENT AG{days_ago}",
+                dos=today - timedelta(days=days_ago),
+                cpt="90837",
+                cpt_base="90837",
+                insurance_short=ins,
+                total_paid=Decimal("0.00"),
+                total_due=Decimal(str(balance)),
+                total_balance=Decimal(str(balance)),
+            )
+
+        db.add_all(
+            [
+                owed(10, "100.00"),
+                owed(45, "200.00"),
+                owed(75, "300.00"),
+                owed(120, "400.00"),
+                owed(15, "-50.00"),  # a credit, which must not net against the debt
+            ]
+        )
+
+    with financial_user.app.state.db.session() as db:
+        rows, total = queries.aging_by_insurance(db, today=today)
+
+    ag = next(r for r in rows if r.key == "AG")
+    assert ag.buckets == (
+        Decimal("100.00"),
+        Decimal("200.00"),
+        Decimal("300.00"),
+        Decimal("400.00"),
+    )
+    assert ag.total == Decimal("1000.00")
+    assert total.total >= ag.total  # grand total spans every payer, displayed or not
+
+
+def test_aging_section_renders_on_the_financial_page(financial_user, with_data):
+    """The fixture has no open balances, so the section says so instead of showing
+    an all-zero table. The bucketed table itself is covered by the query test."""
+    page = financial_user.get(f"/reports/financial?{ALL}").text
+    assert "How old is what we" in page
+    assert "No open balances" in page
