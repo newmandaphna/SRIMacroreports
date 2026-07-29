@@ -24,6 +24,8 @@ from app import config_store
 from app.config_store import PracticeConfig
 from app.models.enums import AuditAction, Module
 from app.reporting import queries
+from app.reporting.compare import year_over_year
+from app.reporting.insights import build_insights
 from app.reporting.metrics import Kpi
 from app.reporting.periods import (
     PICKER_PRESETS,
@@ -74,6 +76,29 @@ class ReportContext:
             data_min=self.coverage.min_date,
             data_max=self.coverage.max_date,
         )
+
+        # Nobody chose a period, and the default window misses the imported data
+        # entirely (a quarter synced in July whose sessions end in June, say). An
+        # empty dashboard with a "show everything" button is a chore; showing
+        # everything IS the right default. An explicitly picked range that misses
+        # still gets the honest empty state.
+        nothing_chosen = preset is None and start is None and end is None
+        if (
+            nothing_chosen
+            and self.coverage.has_data
+            and self.coverage.max_date is not None
+            and self.coverage.min_date is not None
+            and (
+                self.coverage.max_date < self.range.start or self.coverage.min_date > self.range.end
+            )
+        ):
+            self.range = resolve_range(
+                "all_time",
+                timezone=self.config.timezone,
+                week_starts_monday=self.config.week_starts_monday,
+                data_min=self.coverage.min_date,
+                data_max=self.coverage.max_date,
+            )
 
         self.filters = queries.Filters(
             start=self.range.start,
@@ -276,6 +301,8 @@ async def overview(
         week_starts_monday=ctx.config.week_starts_monday,
     )
 
+    insight_report = build_insights(db, config=ctx.config, cpt_exclusions=ctx.config.cpt_exclusions)
+
     return render(
         request,
         "reports/overview.html",
@@ -288,8 +315,29 @@ async def overview(
             "trend": trend,
             "weekly": weekly,
             "week_choices": WEEK_WINDOW_CHOICES,
+            "top_insights": insight_report.top,
             "therapist_rows": _ranked_for_board(therapist_rows, ctx.config),
             "can_see_utilization": auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
+            **ctx.as_template_context(),
+        },
+    )
+
+
+@router.get("/insights", response_class=HTMLResponse)
+async def insights_page(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser) -> Response:
+    """Plain language findings from the whole history. See app/reporting/insights.py."""
+    report = build_insights(db, config=ctx.config, cpt_exclusions=ctx.config.cpt_exclusions)
+    yoy_rows = year_over_year(db, config=ctx.config, cpt_exclusions=ctx.config.cpt_exclusions)
+    return render(
+        request,
+        "reports/insights.html",
+        {
+            "page_title": "Insights",
+            "auth": auth,
+            "active_page": "insights",
+            "report": report,
+            "yoy_rows": yoy_rows,
+            "yoy_has_any": any(r.has_comparison for r in yoy_rows),
             **ctx.as_template_context(),
         },
     )

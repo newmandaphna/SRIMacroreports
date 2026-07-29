@@ -121,6 +121,19 @@
     };
   }
 
+  /* Hex token to rgba, for muting individual bars (e.g. the in-progress week)
+     without inventing a second palette. */
+  function withAlpha(hex, alpha) {
+    var m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+    if (!m) {
+      return hex;
+    }
+    var n = parseInt(m[1], 16);
+    return (
+      "rgba(" + (n >> 16) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + alpha + ")"
+    );
+  }
+
   function buildDatasets(type, datasets) {
     var colors = palette();
     return datasets.map(function (ds, i) {
@@ -129,8 +142,23 @@
         label: ds.label,
         data: ds.data,
         borderColor: color,
-        backgroundColor: color,
+        // An array mutes individual bars (the in-progress week) without a second hue.
+        backgroundColor: ds.colors || color,
       };
+      if (ds.overlay) {
+        // An analytic line drawn over bars, e.g. a moving average. Solid but thin,
+        // no points: it is context for the bars, not a series competing with them.
+        return Object.assign(common, {
+          type: "line",
+          borderWidth: 2,
+          backgroundColor: "transparent",
+          pointRadius: 0,
+          pointHoverRadius: 3,
+          fill: false,
+          tension: 0.3,
+          order: 0,
+        });
+      }
       if (ds.reference) {
         // A threshold line: dashed, flat, no points, and deliberately quieter than
         // the series it is there to judge.
@@ -260,6 +288,7 @@
     render: render,
     sparkline: sparkline,
     palette: palette,
+    withAlpha: withAlpha,
     formatCurrency: currencyExact.format,
     formatCount: integer.format,
   };

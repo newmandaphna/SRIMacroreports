@@ -19,6 +19,28 @@
 
 {% include "reports/_kpis.html" %}
 
+{% if top_insights %}
+<div class="card" style="margin-top: var(--space-4)">
+  <div class="section-head">
+    <div>
+      <h2>What the record says</h2>
+      <p class="page-head__sub">
+        The most actionable findings from the whole history.
+        <a href="/reports/insights">All insights</a>.
+      </p>
+    </div>
+  </div>
+  <ul style="list-style: none; display: grid; gap: var(--space-2)">
+    {% for insight in top_insights %}
+    <li style="display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap">
+      <span class="pill {{ insight.pill_class }}">{{ insight.tone }}</span>
+      <span>{{ insight.headline }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 <div style="margin-top: var(--space-4)">
   {% include "reports/_trend.html" %}
 </div>

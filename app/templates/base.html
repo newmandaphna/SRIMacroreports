@@ -24,6 +24,7 @@
              that grant gets sent to a page they can actually open. #}
           {% if nav_modules | selectattr("value", "equalto", "financial") | list %}
           <a href="/reports" {% if current_path == '/reports' %}aria-current="page"{% endif %}>Overview</a>
+          <a href="/reports/insights" {% if current_path == '/reports/insights' %}aria-current="page"{% endif %}>Insights</a>
           {% endif %}
           {% for module in nav_modules %}
           {% if module.value == 'financial' %}

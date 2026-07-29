@@ -7,7 +7,7 @@
   {% set body %}
   <p class="kpi-question">{{ kpi.question }}</p>
   <p class="kpi-value">
-    {% if kpi.kind == "currency" %}{{ kpi.value|currency }}{% else %}{{ kpi.value|count }}{% endif %}
+    {% if kpi.kind == "currency" %}{{ kpi.value|money }}{% else %}{{ kpi.value|count }}{% endif %}
   </p>
 
   {% if kpi.has_comparison %}
@@ -16,7 +16,7 @@
     no change
     {% else %}
     <span aria-hidden="true">{{ "▲" if kpi.direction == "up" else "▼" }}</span>
-    {% if kpi.kind == "currency" %}{{ (kpi.delta if kpi.delta > 0 else -kpi.delta)|currency }}
+    {% if kpi.kind == "currency" %}{{ (kpi.delta if kpi.delta > 0 else -kpi.delta)|money }}
     {% else %}{{ (kpi.delta if kpi.delta > 0 else -kpi.delta)|count }}{% endif %}
     {% if kpi.delta_percent is not none %}
     ({{ (kpi.delta_percent if kpi.delta_percent > 0 else -kpi.delta_percent) }}%)
