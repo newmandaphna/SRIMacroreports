@@ -23,21 +23,21 @@
   </div>
   <div class="card">
     <p class="kpi-question">What did we bill?</p>
-    <p class="kpi-value">{{ totals.billed|currency }}</p>
+    <p class="kpi-value">{{ totals.billed|money }}</p>
   </div>
   <div class="card">
     <p class="kpi-question">What came in?</p>
-    <p class="kpi-value">{{ totals.collected|currency }}</p>
+    <p class="kpi-value">{{ totals.collected|money }}</p>
     <p class="kpi-delta">
       {% if totals.collection_rate is not none %}{{ totals.collection_rate }}% of billed{% endif %}
     </p>
   </div>
   <div class="card">
     <p class="kpi-question">What are we still owed?</p>
-    <p class="kpi-value">{{ totals.outstanding|currency }}</p>
+    <p class="kpi-value">{{ totals.outstanding|money }}</p>
     <p class="kpi-delta">
-      patient {{ totals.outstanding_patient|currency }},
-      insurance {{ totals.outstanding_insurance|currency }}
+      patient {{ totals.outstanding_patient|money }},
+      insurance {{ totals.outstanding_insurance|money }}
     </p>
   </div>
   <div class="card">

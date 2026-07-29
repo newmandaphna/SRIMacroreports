@@ -27,6 +27,14 @@ def _currency(value: float | int | None) -> str:
     return f"${value:,.2f}"
 
 
+def _money(value: float | int | None) -> str:
+    """Whole dollars, for headline tiles. Cents on a KPI card are noise that can
+    also overflow the card; the exact figure lives in the tables and exports."""
+    if value is None:
+        return "-"
+    return f"${value:,.0f}"
+
+
 def _count(value: float | int | None) -> str:
     if value is None:
         return "-"
@@ -40,6 +48,7 @@ def _datetime(value: Any, fmt: str = "%Y-%m-%d %H:%M") -> str:
 
 
 templates.env.filters["currency"] = _currency
+templates.env.filters["money"] = _money
 templates.env.filters["count"] = _count
 templates.env.filters["datetime"] = _datetime
 templates.env.filters["urlencode"] = quote_plus

@@ -125,6 +125,14 @@ a {
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.1;
+  /* A long figure shrinks and wraps inside its card rather than escaping it. */
+  overflow-wrap: break-word;
+}
+
+/* Grid items default to min-width auto, which lets a wide figure stretch its card
+   over the neighbours instead of wrapping. */
+.card-grid > * {
+  min-width: 0;
 }
 
 .kpi-delta {
