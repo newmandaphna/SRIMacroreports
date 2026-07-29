@@ -297,7 +297,7 @@ def test_changing_the_threshold_moves_the_status_board(client, with_data):
     )
 
     overview = client.get(f"/reports?{ALL}").text
-    assert "Against 50 sessions per week" in overview
+    assert "their own expectation" in overview
     assert "below threshold" in overview
 
 

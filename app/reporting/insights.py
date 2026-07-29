@@ -179,14 +179,82 @@ def build_insights(
                 )
             )
 
+    # ------------------------------------------------------------ sudden drops
+    # A drop of 20+ sessions week over week gets investigated anyway; save the
+    # investigator the first hour by naming who accounts for it. A zero week from
+    # someone who was busy the week before usually means leave, not decline.
+    if len(weekly_points) >= 2:
+        last_week, prior_week = weekly_points[-1], weekly_points[-2]
+        drop = prior_week.sessions - last_week.sessions
+        if drop >= 20:
+            last_rows = {
+                r.therapist_id: r
+                for r in queries.by_therapist(
+                    db,
+                    queries.Filters(
+                        start=last_week.start,
+                        end=last_week.start + timedelta(days=6),
+                        cpt_exclusions=cpt_exclusions,
+                    ),
+                )
+            }
+            prior_rows = queries.by_therapist(
+                db,
+                queries.Filters(
+                    start=prior_week.start,
+                    end=prior_week.start + timedelta(days=6),
+                    cpt_exclusions=cpt_exclusions,
+                ),
+            )
+            contributors = []
+            for before in prior_rows:
+                after = last_rows.get(before.therapist_id)
+                after_n = after.sessions if after else 0
+                fell = before.sessions - after_n
+                if fell >= 5:
+                    note = " (zero sessions, likely out)" if after_n == 0 else ""
+                    line = f"{before.display_name} {before.sessions} to {after_n}{note}"
+                    contributors.append((fell, line))
+            contributors.sort(reverse=True)
+            named = "; ".join(text for _, text in contributors[:3])
+            explained = sum(n for n, _ in contributors[:3])
+            insights.append(
+                Insight(
+                    key="sessions_drop",
+                    tone="watch",
+                    headline=(
+                        f"Sessions fell by {drop} last week "
+                        f"({prior_week.sessions} to {last_week.sessions})."
+                    ),
+                    detail=(
+                        f"Largest contributors: {named}. These account for {explained} "
+                        "of the drop. A zero week next to a busy one is usually leave "
+                        "or vacation, not decline."
+                        if contributors
+                        else "No single therapist accounts for it: the drop is spread "
+                        "thinly across the roster, which usually means a holiday week "
+                        "or a data gap."
+                    ),
+                )
+            )
+
     # ------------------------------------------------- collection and cancellations
     if history_weeks >= MIN_TREND_WEEKS:
         cmp_weeks = min(12, history_weeks // 2)
         current_totals = queries.totals(db, window(cmp_weeks))
         previous_totals = queries.totals(db, window(cmp_weeks, offset_weeks=cmp_weeks))
 
-        cur_rate = current_totals.collection_rate
-        prev_rate = previous_totals.collection_rate
+        # Collection rate is judged on windows that end five weeks back: young
+        # claims have not had time to pay, and judging them as uncollected reads
+        # as a slump that is only the calendar.
+        MATURITY_WEEKS = 5
+        mature_current = queries.totals(db, window(cmp_weeks, offset_weeks=MATURITY_WEEKS))
+        mature_previous = queries.totals(
+            db, window(cmp_weeks, offset_weeks=MATURITY_WEEKS + cmp_weeks)
+        )
+
+        cur_rate = mature_current.collection_rate
+        prev_rate = mature_previous.collection_rate
         if cur_rate is not None and prev_rate is not None:
             delta = cur_rate - prev_rate
             if delta <= -3:
@@ -200,14 +268,16 @@ def build_insights(
                     key="collection_drift",
                     tone=tone,
                     headline=(
-                        f"Collection rate {cur_rate}% over the last {cmp_weeks} completed "
-                        f"weeks ({delta:+}pts vs the {cmp_weeks} before)."
+                        f"Collection rate {cur_rate}% over {cmp_weeks} weeks ending "
+                        f"{MATURITY_WEEKS} weeks ago ({delta:+}pts vs the {cmp_weeks} before)."
                     ),
                     detail=(
-                        f"${current_totals.collected:,.0f} collected of "
-                        f"${current_totals.billed:,.0f} billed. A falling rate this size "
-                        "usually means a payer slowed down or a billing step is being "
-                        "missed, not that patients stopped paying."
+                        f"${mature_current.collected:,.0f} collected of "
+                        f"${mature_current.billed:,.0f} billed. The newest "
+                        f"{MATURITY_WEEKS} weeks are deliberately left out: young claims "
+                        "have not had time to pay, and judging them would read as a slump "
+                        "that is only the calendar. A real fall this size usually means a "
+                        "payer slowed down or a billing step is being missed."
                     ),
                 )
             )
