@@ -197,3 +197,60 @@ def test_overview_carries_the_top_findings(financial_user, practice):
     page = financial_user.get("/reports?preset=last_12_weeks").text
     assert "What the record says" in page
     assert "All insights" in page
+
+
+# ------------------------------------------------------------------ year over year
+
+
+def seed_on(client, ids, day, count):
+    with client.app.state.db.session() as db:
+        for i in range(count):
+            db.add(
+                Visit(
+                    source_id=ids["source"],
+                    therapist_id=ids["therapist"],
+                    patient_name=f"Patient B{day.isoformat()}x{i}",
+                    patient_name_normalized=f"PATIENT B{day.isoformat()}X{i}",
+                    dos=day,
+                    cpt="90837",
+                    cpt_base="90837",
+                    total_paid=Decimal("150.00"),
+                    total_due=Decimal("150.00"),
+                    total_balance=Decimal("0.00"),
+                )
+            )
+
+
+def yoy_for(client):
+    from app.reporting.compare import year_over_year
+
+    with client.app.state.db.session() as db:
+        config = config_store.load(db, client.app.state.settings)
+        return year_over_year(db, config=config, cpt_exclusions=config.cpt_exclusions)
+
+
+def test_year_over_year_compares_a_period_to_its_own_shadow(client, practice):
+    anchor = today_in("America/New_York") - timedelta(days=30)
+    seed_on(client, practice, anchor, 10)
+    seed_on(client, practice, anchor.replace(year=anchor.year - 1), 5)
+
+    ytd = next(r for r in yoy_for(client) if "year to date" in r.label)
+    assert ytd.has_comparison
+    assert ytd.current.sessions == 10
+    assert ytd.previous.sessions == 5
+    assert ytd.sessions_change == Decimal("100.0")
+
+
+def test_year_over_year_admits_when_last_year_is_missing(client, practice):
+    seed_on(client, practice, today_in("America/New_York") - timedelta(days=30), 10)
+    rows = yoy_for(client)
+    assert all(not r.has_comparison for r in rows)
+    ytd = next(r for r in yoy_for(client) if "year to date" in r.label)
+    assert ytd.sessions_change is None
+
+
+def test_insights_page_renders_the_yoy_section(financial_user, practice):
+    seed_weeks(financial_user, practice, {n: 15 for n in range(1, 13)})
+    page = financial_user.get("/reports/insights").text
+    assert "Same time last year" in page
+    assert "Nothing to compare yet" in page  # no last-year data seeded
