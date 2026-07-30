@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 
+from app import config_store
 from app.models.enums import AuditAction, AuditResult
 from app.models.user import User
 from app.security import audit
@@ -54,7 +55,19 @@ async def login_form(request: Request, db: DbSession, next: str = "/") -> Respon
     # Already signed in? Go where you were going.
     if load_session(db, request.cookies.get(SESSION_COOKIE)):
         return RedirectResponse(_safe_next(next), status_code=303)
-    return render(request, "auth/login.html", {"page_title": "Sign in", "next": next})
+    return render(
+        request,
+        "auth/login.html",
+        {
+            "page_title": "Sign in",
+            "next": next,
+            # No session yet, so nothing has stashed the configured value. Read it here
+            # rather than let the page quote the environment default at people.
+            "session_timeout_minutes": config_store.session_timeout_minutes(
+                db, request.app.state.settings
+            ),
+        },
+    )
 
 
 @router.post("/login")
@@ -276,14 +289,16 @@ async def session_status(request: Request, db: DbSession, settings: SettingsDep)
     if user_session is None:
         return JSONResponse({"authenticated": False, "seconds_remaining": 0})
 
-    remaining = user_session.seconds_until_idle_expiry(settings.session_timeout_minutes)
+    # The configured timeout, so the countdown matches what is actually enforced.
+    timeout = config_store.session_timeout_minutes(db, settings)
+    remaining = user_session.seconds_until_idle_expiry(timeout)
     return JSONResponse(
         {
             "authenticated": remaining > 0,
             "seconds_remaining": remaining,
             "warn_at_seconds": max(
                 0,
-                (settings.session_timeout_minutes - settings.session_warning_minutes) * 60,
+                (timeout - settings.session_warning_minutes) * 60,
             ),
         }
     )
@@ -293,7 +308,8 @@ async def session_status(request: Request, db: DbSession, settings: SettingsDep)
 async def session_extend(request: Request, db: DbSession, settings: SettingsDep) -> JSONResponse:
     """Explicit "keep me signed in" from the warning dialog."""
     user_session = load_session(db, request.cookies.get(SESSION_COOKIE))
-    if user_session is None or user_session.is_idle_expired(settings.session_timeout_minutes):
+    timeout = config_store.session_timeout_minutes(db, settings)
+    if user_session is None or user_session.is_idle_expired(timeout):
         return JSONResponse({"extended": False}, status_code=401)
 
     user_session.last_seen_at = datetime.now(UTC)
@@ -308,7 +324,7 @@ async def session_extend(request: Request, db: DbSession, settings: SettingsDep)
     return JSONResponse(
         {
             "extended": True,
-            "seconds_remaining": settings.session_timeout_minutes * 60,
+            "seconds_remaining": timeout * 60,
         }
     )
 

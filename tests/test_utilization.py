@@ -349,6 +349,47 @@ def test_a_viewer_cannot_write_a_note(viewer, practice):
         assert db.execute(select(UtilizationNote)).scalars().all() == []
 
 
+def test_a_manager_without_the_grant_cannot_write_a_note(client, practice):
+    """Write access without read access. The grant and the role answer different
+    questions, and only the role was being asked.
+
+    A manager who had never been granted therapist utilization got a 403 on the page
+    and a 200 on the POST, so the note landed on a therapist's record and then showed on
+    a board its author could not open.
+    """
+    with client.app.state.db.session() as db:
+        email = make_user(db, email="mgr.nogrant@example.invalid", role=Role.MANAGER).email
+    sign_in(client, email)
+
+    assert (
+        client.get(f"/reports/therapist-utilization/{practice['salaried']}?{ALL}").status_code
+        == 403
+    )
+
+    # A real token, from a page this user can open. A rejected token would give a 403
+    # from the CSRF middleware and prove nothing about the authorization check.
+    token = token_from(client.get("/change-password").text)
+    response = client.post(
+        f"/reports/therapist-utilization/{practice['salaried']}/notes?{ALL}",
+        data={"csrf_token": token, "period": "2026-04-06", "body": "Should not save."},
+    )
+    assert response.status_code == 403
+
+    with client.app.state.db.session() as db:
+        assert db.execute(select(UtilizationNote)).scalars().all() == []
+        denied = (
+            db.execute(
+                select(AuditLog).where(
+                    AuditLog.action == AuditAction.ACCESS_DENIED,
+                    AuditLog.detail.contains("write_without_grant"),
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert denied, "the refusal must be recorded against the module, like a refused read"
+
+
 def test_note_changes_are_audited_with_the_previous_text(manager, practice):
     save_note(manager, practice["salaried"], "2026-04-06", "First version.")
     save_note(manager, practice["salaried"], "2026-04-06", "Second version.")

@@ -75,7 +75,11 @@ def render(
         "all_modules": list(Module),
         "all_roles": list(Role),
         "current_path": request.url.path,
-        "session_timeout_minutes": settings.session_timeout_minutes,
+        # Set by the auth dependency from the stored setting. The environment value
+        # is the fallback for pages reached without a session, such as login.
+        "session_timeout_minutes": getattr(
+            request.state, "session_timeout_minutes", settings.session_timeout_minutes
+        ),
         "session_warning_minutes": settings.session_warning_minutes,
     }
     merged.update(context or {})

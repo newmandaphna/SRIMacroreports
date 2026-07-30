@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
+from app.models.audit import AuditLog
 from app.models.enums import AuditAction, AuditResult, Module, Role
 from app.models.session import UserSession
 from app.models.user import User
@@ -139,6 +140,72 @@ def test_idle_session_expires_server_side(client, viewer):
     response = client.get("/", follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
+
+
+def test_the_configured_timeout_is_the_one_enforced(client, viewer):
+    """The setting existed, was audited when changed, and did nothing.
+
+    Every enforcement point read the environment value, so an admin who shortened the
+    idle timeout on the settings page got an audit entry and no change in behaviour. A
+    security control the interface claims to configure and does not is worse than one
+    it never offered.
+    """
+    from app import config_store
+
+    _, email = viewer
+    sign_in(client, email)
+    assert client.get("/").status_code == 200
+
+    env_timeout = client.app.state.settings.session_timeout_minutes
+    short = 2
+    assert short < env_timeout, "the stored value has to differ from the environment default"
+
+    with client.app.state.db.session() as session:
+        config_store.set_value(session, config_store.SESSION_TIMEOUT, short, actor_id=None)
+        user_session = session.execute(
+            select(UserSession).where(UserSession.revoked_at.is_(None))
+        ).scalar_one()
+        # Idle past the configured timeout, well inside the environment one.
+        user_session.last_seen_at = datetime.now(UTC) - timedelta(minutes=short + 1)
+
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+
+    with client.app.state.db.session() as session:
+        expiry = (
+            session.execute(
+                select(AuditLog)
+                .where(AuditLog.action == AuditAction.SESSION_EXPIRED)
+                .order_by(AuditLog.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert expiry is not None
+    assert f'"idle_timeout_minutes": {short}' in (expiry.detail or ""), (
+        "the audit record must name the timeout actually applied"
+    )
+
+
+def test_a_lengthened_timeout_keeps_a_session_the_environment_would_have_dropped(client, viewer):
+    """The other direction, so the fix is not simply a shorter timeout everywhere."""
+    from app import config_store
+
+    _, email = viewer
+    sign_in(client, email)
+
+    env_timeout = client.app.state.settings.session_timeout_minutes
+    with client.app.state.db.session() as session:
+        config_store.set_value(
+            session, config_store.SESSION_TIMEOUT, env_timeout + 30, actor_id=None
+        )
+        user_session = session.execute(
+            select(UserSession).where(UserSession.revoked_at.is_(None))
+        ).scalar_one()
+        user_session.last_seen_at = datetime.now(UTC) - timedelta(minutes=env_timeout + 1)
+
+    assert client.get("/").status_code == 200
 
 
 def test_activity_resets_the_idle_clock(client, viewer):

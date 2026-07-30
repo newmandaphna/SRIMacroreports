@@ -14,6 +14,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
+from app import config_store
 from app.config import Settings
 from app.models.enums import AuditAction, AuditResult, Module, Role
 from app.models.session import UserSession
@@ -126,7 +127,12 @@ def _current_auth(request: Request, db: Session, settings: Settings) -> AuthCont
     if user_session is None:
         return None
 
-    if user_session.is_idle_expired(settings.session_timeout_minutes):
+    # The configured timeout, not the environment default. Stashed on the request so
+    # the layout can show the same number it is being held to.
+    timeout = config_store.session_timeout_minutes(db, settings)
+    request.state.session_timeout_minutes = timeout
+
+    if user_session.is_idle_expired(timeout):
         revoke(user_session)
         audit.record(
             db,
@@ -135,7 +141,7 @@ def _current_auth(request: Request, db: Session, settings: Settings) -> AuthCont
             target_type="user_session",
             target_id=user_session.id,
             request=request,
-            detail={"idle_timeout_minutes": settings.session_timeout_minutes},
+            detail={"idle_timeout_minutes": timeout},
         )
         return None
 
@@ -261,7 +267,44 @@ def require_module(module: Module) -> Callable[..., AuthContext]:
 
 
 def require_utilization_writer(request: Request, auth: CurrentUser, db: DbSession) -> AuthContext:
-    """Managers and admins may enter utilization data and notes. Viewers may not."""
+    """Managers and admins may enter utilization data and notes. Viewers may not.
+
+    Two independent checks, because they answer different questions. The grant decides
+    whether this person may touch the module at all; the role decides whether they may
+    write in it. Only the role was checked, so a manager who had never been granted
+    therapist utilization could still POST a note onto a therapist's record: write
+    access without read access, and the note then appeared on a board they could not
+    open. The grant check runs first, and records the refusal against the module the
+    same way a refused read does.
+    """
+    allowed, is_emergency = auth.user.can_view(Module.THERAPIST_UTILIZATION)
+    if not allowed:
+        audit.record(
+            db,
+            action=AuditAction.ACCESS_DENIED,
+            result=AuditResult.FAILURE,
+            actor=auth.user,
+            target_type="module",
+            target_id=Module.THERAPIST_UTILIZATION.value,
+            request=request,
+            detail={"path": request.url.path, "reason": "write_without_grant"},
+        )
+        raise AccessDenied(
+            f"You do not have access to the {Module.THERAPIST_UTILIZATION.label} module. "
+            "An administrator can grant it."
+        )
+
+    if is_emergency:
+        audit.record(
+            db,
+            action=AuditAction.EMERGENCY_ACCESS,
+            actor=auth.user,
+            target_type="module",
+            target_id=Module.THERAPIST_UTILIZATION.value,
+            request=request,
+            detail={"path": request.url.path, "reason": "admin_without_grant"},
+        )
+
     if not auth.role.can_write_utilization:
         audit.record(
             db,
