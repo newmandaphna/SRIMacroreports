@@ -141,6 +141,32 @@ def test_no_reporting_query_selects_patient_identity(client, seeded):
     # Guard against the enumeration silently finding nothing.
     assert len(builders) >= 6, f"expected the query builders, found {builders}"
 
+    # The enumeration must actually DRIVE the calls, not merely be counted. It used
+    # to be counted and then ignored in favour of a hardcoded list below, which meant
+    # a builder added later was never exercised and the guard silently stopped
+    # covering it. Anything new in the module now fails here until it is called.
+    called = {
+        "totals",
+        "by_period",
+        "by_therapist",
+        "by_insurance",
+        "by_location",
+        "by_cpt",
+        "by_weekday",
+        "aging_by_insurance",
+        "coverage",
+        "available_locations",
+        "active_therapists",
+        "therapist_history",
+        "notes_for_period",
+        "latest_notes",
+    }
+    uncovered = set(builders) - called
+    assert not uncovered, (
+        "these query builders are not exercised by this guard, so nothing proves they "
+        f"avoid patient columns: {sorted(uncovered)}"
+    )
+
     forbidden = ("patient_name", "patient_code", "patient_name_normalized")
     statements: list[str] = []
 
@@ -162,9 +188,14 @@ def test_no_reporting_query_selects_patient_identity(client, seeded):
             queries.by_insurance(db, filters)
             queries.by_location(db, filters)
             queries.by_cpt(db, filters)
+            queries.by_weekday(db, filters)
+            queries.aging_by_insurance(db, today=date(2026, 4, 30))
             queries.coverage(db)
             queries.available_locations(db)
             queries.active_therapists(db)
+            queries.therapist_history(db, 1, filters, Granularity.WEEK)
+            queries.notes_for_period(db, date(2026, 4, 6), Granularity.WEEK)
+            queries.latest_notes(db, [1])
         finally:
             event.remove(engine, "before_cursor_execute", record)
 
