@@ -307,12 +307,12 @@ def register_routes(app: FastAPI) -> None:
         # Schema integrity — run in a thread so we don't block the event loop
         try:
             engine = request.app.state.db.engine  # reuse the existing engine
-            drift = await asyncio.get_event_loop().run_in_executor(
-                None, _schema_drift, engine
-            )
+            drift = await asyncio.get_event_loop().run_in_executor(None, _schema_drift, engine)
         except Exception:
             logger.exception("Readiness check failed — schema inspection error")
-            return JSONResponse({"status": "degraded", "reason": "schema_check_error"}, status_code=503)
+            return JSONResponse(
+                {"status": "degraded", "reason": "schema_check_error"}, status_code=503
+            )
 
         if drift:
             logger.error("Readiness check failed — schema drift detected: %s", drift)

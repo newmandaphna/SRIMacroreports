@@ -120,9 +120,7 @@ async def auto_sync_loop(app) -> None:
         try:
             with app.state.db.session() as db:
                 ran = run_due_syncs(db, app.state.settings)
-            logger.info(
-                "Auto-sync wake complete: %d source(s) synced this hour", ran
-            )
+            logger.info("Auto-sync wake complete: %d source(s) synced this hour", ran)
         except Exception:
             # The loop must survive anything: a dead scheduler is silent, and
             # silence here means the practice quietly stops getting fresh data.
