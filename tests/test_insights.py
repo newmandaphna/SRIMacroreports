@@ -114,6 +114,80 @@ def test_falling_sessions_are_called_falling(client, practice):
     assert "falling" in momentum.headline
 
 
+def test_trend_findings_unlock_at_exactly_the_stated_number_of_weeks(client, practice):
+    """The gate has to open where the page says it opens.
+
+    History was measured as the span between the first Monday and the last completed
+    Sunday divided by seven. That span is 7n - 1 days for n whole weeks, so the count
+    came back one short and every gate needed one week more than it advertised: the
+    trend findings waited for a ninth week while the page promised eight.
+    """
+    from app.reporting.insights import MIN_TREND_WEEKS
+
+    seed_weeks(client, practice, {n: 10 for n in range(1, MIN_TREND_WEEKS + 1)})
+    report = insights_for(client)
+    assert report.history_weeks == MIN_TREND_WEEKS
+    assert "thin_history" not in keys(report)
+    assert "sessions_momentum" in keys(report)
+
+
+def test_one_week_short_of_the_gate_still_abstains(client, practice):
+    """The other side of the boundary, so the fix is not simply an inflated count."""
+    from app.reporting.insights import MIN_TREND_WEEKS
+
+    seed_weeks(client, practice, {n: 10 for n in range(1, MIN_TREND_WEEKS)})
+    report = insights_for(client)
+    assert report.history_weeks == MIN_TREND_WEEKS - 1
+    assert "thin_history" in keys(report)
+
+
+def test_a_caseload_falling_to_zero_is_the_mover_it_looks_like(client, practice):
+    """The largest possible fall used to be the one fall this could not see.
+
+    Recent rows were filtered to therapists with at least one session, so a caseload
+    that went to nothing dropped out of the comparison entirely and no mover fired.
+    """
+    from app.models.therapist import EmploymentType, Therapist
+
+    with client.app.state.db.session() as db:
+        vanished = Therapist(
+            display_name="Vanished", employment_type=EmploymentType.SALARIED_BENEFITS
+        )
+        db.add(vanished)
+        db.flush()
+        vanished_id = vanished.id
+
+    # The steady therapist keeps the record busy enough for the trend gates to open.
+    seed_weeks(client, practice, {n: 15 for n in range(1, 13)})
+    # The other one works the earlier four weeks and then stops dead.
+    seed_weeks(client, practice, {n: 10 for n in range(5, 9)}, therapist_id=vanished_id)
+
+    report = insights_for(client)
+    assert "mover_down" in keys(report), "a caseload going to zero must be visible"
+    down = by_key(report, "mover_down")
+    assert "Vanished" in down.headline
+    assert "-100" in down.headline
+
+
+def test_a_departed_therapist_is_not_reported_as_a_mover(client, practice):
+    """A resignation is not a finding about somebody's work."""
+    from app.models.therapist import EmploymentType, Therapist
+
+    with client.app.state.db.session() as db:
+        left = Therapist(
+            display_name="Departed", employment_type=EmploymentType.SALARIED_BENEFITS, active=False
+        )
+        db.add(left)
+        db.flush()
+        left_id = left.id
+
+    seed_weeks(client, practice, {n: 15 for n in range(1, 13)})
+    seed_weeks(client, practice, {n: 10 for n in range(5, 9)}, therapist_id=left_id)
+
+    report = insights_for(client)
+    assert "Departed" not in "".join(i.headline for i in report.insights)
+
+
 def test_a_silent_week_in_a_busy_record_is_flagged_as_a_probable_gap(client, practice):
     spec = {n: 15 for n in range(1, 13)}
     del spec[6]  # one week with zero sessions in an otherwise busy record

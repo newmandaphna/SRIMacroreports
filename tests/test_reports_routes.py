@@ -412,6 +412,55 @@ def test_default_range_that_misses_the_data_shows_everything(financial_user, wit
     assert "All time" in page
 
 
+def test_a_comparison_window_with_no_record_is_not_treated_as_a_zero(financial_user, with_data):
+    """Growth from nothing is what the first month of every import used to look like.
+
+    The fixture's data is entirely in April 2026, so the month before it holds no
+    imported rows at all. That is a period the record does not cover, not a period in
+    which the practice collected nothing, and the difference is the whole figure.
+    """
+    page = financial_user.get("/reports?preset=custom&start=2026-04-01&end=2026-04-30").text
+
+    assert "no comparable period" in page
+    assert "nothing to compare against rather than a period of zero" in page
+    assert "▲" not in page, "an empty comparison window must not render as an increase"
+
+
+def test_a_comparison_window_with_data_still_shows_the_change(financial_user, with_data):
+    """The guard must not remove comparisons that exist.
+
+    April holds three sessions and March holds one, so a range covering April compares
+    against a March that is really there.
+    """
+    from datetime import date as _date
+
+    from app.models.data_source import DataSource
+    from app.models.visit import Visit
+
+    with financial_user.app.state.db.session() as db:
+        source = db.execute(select(DataSource)).scalars().first()
+        therapist = db.execute(select(Therapist)).scalars().first()
+        db.add(
+            Visit(
+                source_id=source.id,
+                therapist_id=therapist.id,
+                patient_name="Patient AZ",
+                patient_name_normalized="PATIENT AZ",
+                dos=_date(2026, 3, 10),
+                cpt="90837",
+                cpt_base="90837",
+                insurance_short="KS",
+                total_paid=Decimal("150.00"),
+                total_due=Decimal("150.00"),
+                total_balance=Decimal("0.00"),
+            )
+        )
+
+    page = financial_user.get("/reports?preset=custom&start=2026-04-01&end=2026-04-30").text
+    assert "no comparable period" not in page
+    assert "▲" in page
+
+
 def test_an_explicitly_chosen_range_that_misses_still_says_so(financial_user, with_data):
     page = financial_user.get("/reports?preset=this_week").text
     assert "No data in this range" in page

@@ -210,6 +210,43 @@ def test_drill_in_for_an_unmeasured_therapist_says_so(manager, practice):
     assert "No session threshold applies" in page
 
 
+def test_a_week_the_range_only_partly_covers_is_not_graded(manager, practice):
+    """A part week holds fewer sessions than the week it stands for.
+
+    1 April 2026 is a Wednesday and 28 April is a Tuesday, so the first and last
+    buckets of this range are fragments. Graded against a whole week's expectation they
+    opened and closed the table with red rows about weeks that were mostly outside the
+    range, which is a verdict on the picker rather than on anybody's work.
+    """
+    page = manager.get(f"/reports/therapist-utilization/{practice['salaried']}?{ALL}").text
+
+    assert "in progress" in page
+    # The fully covered week in the middle is still graded, or the fix has just
+    # switched the statuses off.
+    assert ">below<" in page
+
+
+def test_a_range_of_whole_weeks_grades_every_one_of_them(manager, practice):
+    """6 to 12 April is exactly one Monday to Sunday week, so nothing is partial."""
+    page = manager.get(f"/reports/therapist-utilization/{practice['salaried']}?{WEEK1}").text
+    assert "in progress" not in page
+    assert ">below<" in page
+
+
+def test_a_drill_in_range_with_no_rows_says_so_instead_of_grading_zeros(manager, practice):
+    """Zero sessions because the picker missed the data is not zero sessions worked.
+
+    The page used to render zeros and a table of empty weeks, every one of them graded
+    below, which reads as a finding about a real person.
+    """
+    page = manager.get(
+        f"/reports/therapist-utilization/{practice['salaried']}"
+        "?preset=custom&start=2025-01-06&end=2025-01-12&granularity=week"
+    ).text
+    assert "No data in this range" in page
+    assert ">below<" not in page
+
+
 def test_drill_in_on_a_missing_therapist_is_a_404(manager):
     assert manager.get(f"/reports/therapist-utilization/9999?{ALL}").status_code == 404
 
