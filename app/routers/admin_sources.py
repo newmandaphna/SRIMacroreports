@@ -85,7 +85,8 @@ def _sources_context(db: DbSession) -> dict:
     )
     auto_source_ids: set[int] = set(
         db.execute(
-            select(SyncRun.source_id).join(
+            select(SyncRun.source_id)
+            .join(
                 latest_run_subq,
                 and_(
                     SyncRun.source_id == latest_run_subq.c.source_id,
@@ -93,7 +94,9 @@ def _sources_context(db: DbSession) -> dict:
                 ),
             )
             .where(SyncRun.run_by_id.is_(None))
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
     return {
