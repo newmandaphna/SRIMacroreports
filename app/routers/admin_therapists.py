@@ -59,7 +59,7 @@ def _list_context(db: DbSession) -> dict:
 
 
 @router.get("", response_class=HTMLResponse)
-async def list_therapists(
+def list_therapists(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -99,7 +99,7 @@ async def list_therapists(
 
 
 @router.post("/new")
-async def create_therapist(
+def create_therapist(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -253,7 +253,7 @@ def _add_aliases(
 
 
 @router.get("/bulk", response_class=HTMLResponse)
-async def bulk_edit_form(
+def bulk_edit_form(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -436,7 +436,7 @@ async def bulk_update_therapists(
 
 # Registered before the "/{therapist_id}" routes so the literal path is not shadowed.
 @router.post("/seed-roster")
-async def seed_practice_roster(request: Request, db: DbSession, auth: AdminUser) -> Response:
+def seed_practice_roster(request: Request, db: DbSession, auth: AdminUser) -> Response:
     """Create the practice's therapists from its own Valant exports, one click.
 
     Idempotent, and deliberately weaker than the records it creates: an entry is
@@ -509,7 +509,7 @@ async def seed_practice_roster(request: Request, db: DbSession, auth: AdminUser)
 
 
 @router.get("/{therapist_id}", response_class=HTMLResponse)
-async def therapist_detail(
+def therapist_detail(
     request: Request, db: DbSession, auth: AdminUser, therapist_id: int
 ) -> Response:
     therapist = db.get(Therapist, therapist_id)
@@ -540,7 +540,7 @@ async def therapist_detail(
 
 
 @router.post("/{therapist_id}")
-async def update_therapist(
+def update_therapist(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -597,7 +597,7 @@ async def update_therapist(
 
 
 @router.post("/{therapist_id}/aliases")
-async def add_alias(
+def add_alias(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -664,7 +664,7 @@ async def add_alias(
 
 
 @router.post("/{therapist_id}/delete")
-async def delete_therapist(
+def delete_therapist(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -721,7 +721,7 @@ async def delete_therapist(
 
 
 @router.post("/{therapist_id}/aliases/{alias_id}/remove")
-async def remove_alias(
+def remove_alias(
     request: Request,
     db: DbSession,
     auth: AdminUser,

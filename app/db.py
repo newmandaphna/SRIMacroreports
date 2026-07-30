@@ -32,6 +32,17 @@ def create_db_engine(settings: Settings) -> Engine:
         # echo is never enabled: it prints bound parameters, which can carry PHI.
         echo=False,
         pool_pre_ping=True,
+        # The route handlers are synchronous, so they run in Starlette's threadpool and
+        # each one holds a connection for its request. The default pool of five plus ten
+        # overflow sits below that threadpool's width, which would turn a burst of
+        # requests into waits on the pool rather than on the database. Sized above the
+        # threadpool instead, so the limit is the database's own.
+        pool_size=20,
+        max_overflow=30,
+        # A connection waiting on a checkout longer than this is a stuck request, and a
+        # request that hangs forever is worse than one that fails with a message.
+        pool_timeout=30,
+        pool_recycle=1800,
     )
     _verify_connectivity(engine)
     return engine

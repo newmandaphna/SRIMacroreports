@@ -210,8 +210,9 @@
     <p class="text-muted">
       An .xlsx or .csv export goes through exactly the same pipeline as a live sync:
       same column allowlist, same validation, same rejection queue. The file is read
-      in memory and never stored. A dry run validates everything and writes nothing,
-      always worth doing first.
+      in memory and never stored, though a file this size does pass through a temporary
+      file the server deletes as the request ends. A dry run validates everything and
+      writes nothing, always worth doing first.
     </p>
     <label class="field">
       <span class="field__label">File</span>

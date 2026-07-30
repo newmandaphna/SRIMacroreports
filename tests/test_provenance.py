@@ -223,6 +223,51 @@ def test_provider_names_need_the_utilization_grant(client, ledger):
     assert "does not hold" in page
 
 
+def test_the_explanation_names_the_filters_the_query_applied(reader, ledger):
+    """The window said only the dates while the query also narrowed by therapist.
+
+    An explanation that describes a wider population than the figure it explains is
+    the one failure this whole module exists to prevent, and it happened on any page
+    with the filter bar in use.
+    """
+    from sqlalchemy import select as _select
+
+    with reader.app.state.db.session() as db:
+        therapist_id = db.execute(_select(Therapist.id)).scalar_one()
+
+    unfiltered = reader.get(f"/reports/explain/collected?{RANGE}").text
+    assert "limited to" not in unfiltered
+
+    filtered = reader.get(f"/reports/explain/collected?{RANGE}&therapist={therapist_id}").text
+    assert "limited to" in filtered, "a filtered figure must say what it was limited to"
+    # This reader holds the financial grant only, so the therapist is counted, not named.
+    assert "1 selected therapist" in filtered
+    assert "Provenance Example" not in filtered
+
+
+def test_a_reader_with_the_utilization_grant_sees_the_filtered_name(client, ledger):
+    """The count is the same either way; only the naming is gated, as elsewhere."""
+    from sqlalchemy import select as _select
+
+    with client.app.state.db.session() as db:
+        email = make_user(
+            db,
+            email="provutil@example.invalid",
+            role=Role.VIEWER,
+            modules=(Module.FINANCIAL, Module.THERAPIST_UTILIZATION),
+        ).email
+        therapist_id = db.execute(_select(Therapist.id)).scalar_one()
+    sign_in(client, email)
+
+    page = client.get(f"/reports/explain/collected?{RANGE}&therapist={therapist_id}").text
+    assert "limited to Provenance Example" in page
+
+
+def test_a_location_filter_is_named_too(reader):
+    page = reader.get(f"/reports/explain/collected?{RANGE}&location=TH").text
+    assert "limited to TH" in page
+
+
 def test_the_tiles_offer_their_explanations(reader):
     page = reader.get(f"/reports?{RANGE}").text
     for key in ("collected", "sessions", "outstanding", "below_threshold"):

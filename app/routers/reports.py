@@ -5,6 +5,14 @@ viewer without the financial grant gets a 403 from the route, not a hidden nav l
 
 Every query these routes run is aggregate or therapist grain. Nothing here can select
 a patient name or code (see app/reporting/queries.py).
+
+The handlers are plain `def`, not `async def`, throughout this application. They all
+talk to the database through a synchronous driver, and an `async def` handler doing
+blocking work runs ON the event loop: one slow report, or one nine thousand row import,
+stalled every other request in the process, health checks included. A synchronous
+handler is dispatched to a threadpool instead, which is what the blocking work wants.
+Only handlers that genuinely await something, reading an uploaded body or a form, stay
+async.
 """
 
 from __future__ import annotations
@@ -46,6 +54,15 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 
 FinancialUser = Annotated[AuthContext, Depends(require_module(Module.FINANCIAL))]
 PatientFlowUser = Annotated[AuthContext, Depends(require_module(Module.PATIENT_FUNNEL))]
+
+# The practice has about forty clinicians and a handful of locations, so this is far
+# above any real selection and far below a query that hurts.
+MAX_FILTER_VALUES = 200
+
+
+def _capped(values: tuple) -> tuple:
+    """The first MAX_FILTER_VALUES filter values, in the order they arrived."""
+    return tuple(values[:MAX_FILTER_VALUES])
 
 
 # --------------------------------------------------------------------------- context
@@ -103,12 +120,24 @@ class ReportContext:
                 data_max=self.coverage.max_date,
             )
 
+        self.therapists = queries.active_therapists(db)
+        self.locations = queries.available_locations(db)
+
+        # Filter values arrive on the query string, which anybody can hand edit, and
+        # they went into every query on the page unbounded. Nothing can be injected,
+        # because they are bound parameters, but a URL carrying a thousand of them built
+        # a thousand element IN clause on each of the dozen queries a page runs.
+        #
+        # Deliberately NOT filtered to values that exist. A filter naming a therapist or
+        # a location the record does not have narrows to nothing, and the empty state
+        # says so, which is the truth. Dropping the unknown value instead would show the
+        # whole practice under a filter bar claiming to show one person.
         self.filters = queries.Filters(
             start=self.range.start,
             end=self.range.end,
             cpt_exclusions=self.config.cpt_exclusions,
-            therapist_ids=therapist_ids,
-            locations=locations,
+            therapist_ids=_capped(therapist_ids),
+            locations=_capped(locations),
         )
 
         try:
@@ -117,9 +146,6 @@ class ReportContext:
             )
         except ValueError:
             self.granularity = self.range.suggested_granularity()
-
-        self.therapists = queries.active_therapists(db)
-        self.locations = queries.available_locations(db)
 
     @property
     def weeks_in_range(self) -> Decimal:
@@ -299,7 +325,7 @@ def below_threshold_count(db: DbSession, ctx: ReportContext) -> int:
 
 
 @router.get("", response_class=HTMLResponse)
-async def overview(
+def overview(
     request: Request,
     db: DbSession,
     ctx: Ctx,
@@ -367,7 +393,7 @@ async def overview(
 
 
 @router.get("/month", response_class=HTMLResponse)
-async def month_review(
+def month_review(
     request: Request,
     db: DbSession,
     ctx: Ctx,
@@ -464,9 +490,7 @@ async def month_review(
 
 
 @router.get("/explain/{key}", response_class=HTMLResponse)
-async def explain(
-    request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser, key: str
-) -> Response:
+def explain(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser, key: str) -> Response:
     """How one figure was calculated, for the caller's own filters.
 
     The same filters the reader had on the page they came from, so the arithmetic
@@ -504,9 +528,7 @@ async def explain(
 
 
 @router.get("/patient-flow", response_class=HTMLResponse)
-async def patient_flow(
-    request: Request, db: DbSession, ctx: Ctx, auth: PatientFlowUser
-) -> Response:
+def patient_flow(request: Request, db: DbSession, ctx: Ctx, auth: PatientFlowUser) -> Response:
     """Aggregate patient flow. Counts only: no patient is ever named here.
 
     Gated on the patient_funnel module grant, so access is a deliberate decision
@@ -535,7 +557,7 @@ async def patient_flow(
 
 
 @router.get("/insights", response_class=HTMLResponse)
-async def insights_page(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser) -> Response:
+def insights_page(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser) -> Response:
     """Plain language findings from the whole history. See app/reporting/insights.py."""
     report = build_insights(db, config=ctx.config, cpt_exclusions=ctx.config.cpt_exclusions)
     yoy_rows = year_over_year(db, config=ctx.config, cpt_exclusions=ctx.config.cpt_exclusions)
@@ -579,7 +601,7 @@ def _ranked_for_board(
 
 
 @router.get("/financial", response_class=HTMLResponse)
-async def financial(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser) -> Response:
+def financial(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser) -> Response:
     current = queries.totals(db, ctx.filters)
     previous_range = ctx.range.previous()
     previous = queries.totals(
@@ -625,7 +647,7 @@ async def financial(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUs
 
 
 @router.get("/financial/trend", response_class=HTMLResponse)
-async def financial_trend_partial(
+def financial_trend_partial(
     request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser
 ) -> Response:
     """htmx partial: the trend section only, for filter changes without a reload."""
@@ -658,7 +680,7 @@ EXPORTS: dict[str, str] = {
 
 
 @router.get("/financial/export.csv")
-async def export_financial(
+def export_financial(
     request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser, table: str = "trend"
 ) -> Response:
     """CSV for any table on the financial page. Every export is audit logged."""

@@ -36,9 +36,19 @@ class UTCDateTime(TypeDecorator):
         if value.tzinfo is None:
             # Naive input is taken as UTC rather than rejected: the alternative is a
             # 500 on a code path that is almost always a missed `tz=UTC` rather than
-            # a genuine local time.
-            return value
-        return value.astimezone(UTC).replace(tzinfo=None)
+            # a genuine local time. Stamped as UTC, not merely described that way: it
+            # used to be passed through untouched, and a naive value handed to a
+            # timestamptz column is interpreted with the database session's own
+            # TimeZone, so the stored instant moved by whatever that happened to be.
+            value = value.replace(tzinfo=UTC)
+        value = value.astimezone(UTC)
+        if dialect.name == "sqlite":
+            # SQLite has no native timestamp type and hands back a naive value, so the
+            # offset is dropped here on purpose and re-attached on the way out. Every
+            # other dialect keeps the aware value, which leaves no room for the session
+            # TimeZone to reinterpret it.
+            return value.replace(tzinfo=None)
+        return value
 
     def process_result_value(self, value: Any, dialect: Dialect) -> datetime | None:
         if value is None:

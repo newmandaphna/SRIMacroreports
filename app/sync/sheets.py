@@ -74,6 +74,8 @@ class SheetsClient(Protocol):
 
     def read_tab(self, spreadsheet_id: str, tab_name: str, header_row: int) -> SheetData: ...
 
+    def read_headers(self, spreadsheet_id: str, tab_name: str, header_row: int) -> list[str]: ...
+
 
 def extract_spreadsheet_id(url_or_id: str) -> str:
     """Accept a full Google Sheets URL or a bare ID.
@@ -220,6 +222,41 @@ class GoogleSheetsClient:
         assert_not_truncated(len(values), tab_name)
         return build_sheet_data(header_row, values)
 
+    def read_headers(
+        self, spreadsheet_id: str, tab_name: str, header_row: int
+    ) -> list[str]:  # pragma: no cover - network
+        """Just the header row.
+
+        The mapping form only ever needed the column names, and it used to get them by
+        reading the entire tab: fifty thousand rows of patient data pulled over the
+        network, and held in memory, every time an admin opened the source page.
+        """
+        assert_tab_allowed(tab_name)
+        rng = f"'{tab_name}'!A{header_row}:ZZ{header_row}"
+        try:
+            response = (
+                self._client()
+                .spreadsheets()
+                .values()
+                .get(
+                    spreadsheetId=spreadsheet_id,
+                    range=rng,
+                    valueRenderOption="UNFORMATTED_VALUE",
+                    dateTimeRenderOption="FORMATTED_STRING",
+                )
+                .execute()
+            )
+        except Exception as exc:
+            raise SheetsError(_friendly_api_error(exc)) from exc
+
+        rows = response.get("values", [])
+        if not rows:
+            raise SheetsError(
+                f"Row {header_row} of the tab {tab_name!r} is empty, so there are no "
+                "column names to map. Check the source's Header row setting."
+            )
+        return [str(h).strip() if h is not None else "" for h in rows[0]]
+
 
 def _friendly_api_error(exc: Exception) -> str:  # pragma: no cover - network paths
     """Translate a Google API failure into something an admin can act on.
@@ -281,6 +318,10 @@ class DemoSheetsClient:
                 f"Available: {', '.join(self._tabs)}."
             )
         return build_sheet_data(header_row, self._tabs[tab_name])
+
+    def read_headers(self, spreadsheet_id: str, tab_name: str, header_row: int) -> list[str]:
+        """Already in memory, so this is only here to satisfy the protocol."""
+        return self.read_tab(spreadsheet_id, tab_name, header_row).headers
 
 
 def client_for(provider: str, service_account_json: str | None = None) -> SheetsClient:

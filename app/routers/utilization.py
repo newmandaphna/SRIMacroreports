@@ -54,9 +54,7 @@ def _board(db: DbSession, ctx: ReportContext) -> list:
 
 
 @router.get("", response_class=HTMLResponse)
-async def status_board(
-    request: Request, db: DbSession, ctx: Ctx, auth: UtilizationUser
-) -> Response:
+def status_board(request: Request, db: DbSession, ctx: Ctx, auth: UtilizationUser) -> Response:
     board = _board(db, ctx)
     from app.models.therapist import Discipline
 
@@ -95,9 +93,7 @@ def _summarize(board: list, config: PracticeConfig) -> dict:
 
 
 @router.get("/export.csv")
-async def export_board(
-    request: Request, db: DbSession, ctx: Ctx, auth: UtilizationUser
-) -> Response:
+def export_board(request: Request, db: DbSession, ctx: Ctx, auth: UtilizationUser) -> Response:
     board = _board(db, ctx)
 
     audit.record(
@@ -170,7 +166,7 @@ async def export_board(
 # Registered before "/{therapist_id}": FastAPI matches in declaration order, and the
 # parameterized route would otherwise swallow "weekly" and 422 on the int parse.
 @router.get("/weekly", response_class=HTMLResponse)
-async def weekly_session_counts(
+def weekly_session_counts(
     request: Request,
     db: DbSession,
     ctx: Ctx,
@@ -207,7 +203,7 @@ async def weekly_session_counts(
 
 
 @router.get("/{therapist_id}", response_class=HTMLResponse)
-async def therapist_drill_in(
+def therapist_drill_in(
     request: Request, db: DbSession, ctx: Ctx, auth: UtilizationUser, therapist_id: int
 ) -> Response:
     therapist = db.get(Therapist, therapist_id)
@@ -300,7 +296,7 @@ async def therapist_drill_in(
 
 
 @router.post("/{therapist_id}/notes")
-async def save_note(
+def save_note(
     request: Request,
     db: DbSession,
     ctx: Ctx,

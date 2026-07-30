@@ -155,7 +155,7 @@ def _build_grid(db: DbSession, ctx: ReportContext) -> tuple[list[GridRow], list[
 
 
 @router.get("/reports/room-utilization", response_class=HTMLResponse)
-async def room_report(request: Request, db: DbSession, ctx: Ctx, auth: RoomUser) -> Response:
+def room_report(request: Request, db: DbSession, ctx: Ctx, auth: RoomUser) -> Response:
     grid, labels = _build_grid(db, ctx)
     recorded_days = db.execute(select(func.count(RoomUsage.id))).scalar_one()
 
@@ -175,7 +175,7 @@ async def room_report(request: Request, db: DbSession, ctx: Ctx, auth: RoomUser)
 
 
 @router.get("/reports/room-utilization/export.csv")
-async def export_rooms(request: Request, db: DbSession, ctx: Ctx, auth: RoomUser) -> Response:
+def export_rooms(request: Request, db: DbSession, ctx: Ctx, auth: RoomUser) -> Response:
     grid, labels = _build_grid(db, ctx)
 
     audit.record(
@@ -226,7 +226,7 @@ async def export_rooms(request: Request, db: DbSession, ctx: Ctx, auth: RoomUser
 
 
 @router.get("/admin/rooms", response_class=HTMLResponse)
-async def admin_rooms(request: Request, db: DbSession, auth: AdminUser) -> Response:
+def admin_rooms(request: Request, db: DbSession, auth: AdminUser) -> Response:
     return render(
         request,
         "admin/rooms.html",
@@ -247,7 +247,7 @@ def _rooms_context(db: DbSession) -> dict:
 
 
 @router.post("/admin/rooms/new")
-async def create_room(
+def create_room(
     request: Request,
     db: DbSession,
     auth: AdminUser,

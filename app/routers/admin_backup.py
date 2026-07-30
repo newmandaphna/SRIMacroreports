@@ -19,6 +19,7 @@ Restore, against a fresh database:
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 from urllib.parse import quote
@@ -45,8 +46,39 @@ def plain_postgres_url(database_url: str) -> str:
     return f"{scheme.split('+', 1)[0]}://{rest}"
 
 
+def dump_invocation(database_url: str) -> tuple[list[str], dict[str, str]]:
+    """The pg_dump argv and the environment to run it with.
+
+    The password goes in the environment, never in the argv. A connection URL passed
+    as `--dbname=postgresql://user:secret@host/db` is visible in the process list to
+    anything that can read /proc on the host, and on a shared runtime that is not a
+    theoretical audience. PGPASSWORD is the interface libpq offers for exactly this.
+    """
+    from urllib.parse import unquote, urlsplit
+
+    plain = plain_postgres_url(database_url)
+    parts = urlsplit(plain)
+
+    argv = ["pg_dump", "--format=custom", "--no-owner", "--no-privileges"]
+    if parts.hostname:
+        argv.append(f"--host={parts.hostname}")
+    if parts.port:
+        argv.append(f"--port={parts.port}")
+    if parts.username:
+        argv.append(f"--username={unquote(parts.username)}")
+    argv.append(f"--dbname={parts.path.lstrip('/') or 'postgres'}")
+
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    if parts.password:
+        env["PGPASSWORD"] = unquote(parts.password)
+    # Everything this application writes and reads is UTC (app/models/types.py), so the
+    # dump is taken with the same understanding rather than the host's local one.
+    env["PGTZ"] = "UTC"
+    return argv, env
+
+
 @router.post("")
-async def download_backup(request: Request, db: DbSession, auth: AdminUser) -> Response:
+def download_backup(request: Request, db: DbSession, auth: AdminUser) -> Response:
     settings = request.app.state.settings
     if shutil.which("pg_dump") is None:
         return _config_redirect(
@@ -54,18 +86,13 @@ async def download_backup(request: Request, db: DbSession, auth: AdminUser) -> R
             "produced here. See the README's backup section for the alternative."
         )
 
-    command = [
-        "pg_dump",
-        "--format=custom",
-        "--no-owner",
-        "--no-privileges",
-        f"--dbname={plain_postgres_url(settings.database_url)}",
-    ]
+    command, env = dump_invocation(settings.database_url)
     try:
-        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell, URL from settings
+        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell, values from settings
             command,
             capture_output=True,
             timeout=DUMP_TIMEOUT_SECONDS,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return _config_redirect(

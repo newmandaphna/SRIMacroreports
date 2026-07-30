@@ -4,8 +4,15 @@ The database is the system of record and the sheets are only ingestion, so histo
 that predates the current quarterly sheet needs a way in. This is that way: an admin
 uploads an .xlsx or .csv export and it flows through exactly the same pipeline as a
 Google Sheets sync. Same column allowlist, same validation, same alias resolution,
-same rejection queue, same audit trail. The file is parsed in memory and never
-written to disk, so nothing PHI bearing lands in the container's filesystem.
+same rejection queue, same audit trail.
+
+Nothing is stored. Parsing happens in memory and the bytes are dropped when the
+request ends. That is not quite the same as never touching the disk, and it used to
+claim it was: above roughly a megabyte the web server's multipart parser spills the
+request body to an unnamed temporary file, unlinked as soon as it is created, so a
+real quarter's export does pass through the container filesystem for the length of one
+request. Unreachable by name, gone on close, and worth knowing rather than worth
+claiming otherwise.
 """
 
 from __future__ import annotations
@@ -70,6 +77,10 @@ class UploadedWorkbookClient:
         resolved = self._resolve_tab(tab_name)
         assert_tab_allowed(resolved)
         return build_sheet_data(header_row, self._tabs[resolved])
+
+    def read_headers(self, spreadsheet_id: str, tab_name: str, header_row: int) -> list[str]:
+        """The file is already parsed, so this is only here to satisfy the protocol."""
+        return self.read_tab(spreadsheet_id, tab_name, header_row).headers
 
     def _resolve_tab(self, tab_name: str | None) -> str:
         if self._single_table:

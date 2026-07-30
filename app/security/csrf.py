@@ -37,7 +37,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if request.method in SAFE_METHODS or request.url.path in EXEMPT_PATHS:
             return await call_next(request)
 
-        submitted = await _extract_token(request)
+        # The session lookup comes first, deliberately. Extracting the token reads the
+        # request body, and for a multipart upload that means buffering the whole thing
+        # in memory. Doing that before knowing whether there is even a session to
+        # compare against let an unauthenticated caller make the server hold an
+        # arbitrary body for a request it was going to wave through anyway.
         expected = _expected_token(request)
 
         # No session means no token to compare against. The login POST is the normal
@@ -45,6 +49,8 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # through and protected instead by SameSite=Strict plus its own credentials.
         if expected is None:
             return await call_next(request)
+
+        submitted = await _extract_token(request)
 
         if not submitted or not hmac.compare_digest(submitted, expected):
             logger.warning("CSRF rejection on %s %s", request.method, request.url.path)

@@ -82,7 +82,7 @@ def _sources_context(db: DbSession) -> dict:
 
 
 @router.get("", response_class=HTMLResponse)
-async def list_sources(request: Request, db: DbSession, auth: AdminUser) -> Response:
+def list_sources(request: Request, db: DbSession, auth: AdminUser) -> Response:
     recent_runs = (
         db.execute(select(SyncRun).order_by(SyncRun.started_at.desc()).limit(10)).scalars().all()
     )
@@ -100,7 +100,7 @@ async def list_sources(request: Request, db: DbSession, auth: AdminUser) -> Resp
 
 
 @router.post("/new")
-async def create_source(
+def create_source(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -187,7 +187,7 @@ async def create_source(
 # Registered before the "/{source_id}" routes: FastAPI matches in registration
 # order, so a literal path declared after a parameterized one is shadowed by it.
 @router.post("/demo")
-async def create_demo_source(request: Request, db: DbSession, auth: AdminUser) -> Response:
+def create_demo_source(request: Request, db: DbSession, auth: AdminUser) -> Response:
     """One click: a synthetic source with its therapists, ready to sync.
 
     Exists so the whole import path can be demonstrated before any Google credential
@@ -254,9 +254,7 @@ async def create_demo_source(request: Request, db: DbSession, auth: AdminUser) -
 
 
 @router.get("/{source_id}", response_class=HTMLResponse)
-async def source_detail(
-    request: Request, db: DbSession, auth: AdminUser, source_id: int
-) -> Response:
+def source_detail(request: Request, db: DbSession, auth: AdminUser, source_id: int) -> Response:
     source = db.get(DataSource, source_id)
     if source is None:
         return render(
@@ -278,9 +276,13 @@ async def source_detail(
             if source.spreadsheet_id or source.provider is SourceProvider.DEMO:
                 tabs = selectable_tabs(client.list_tabs(source.spreadsheet_id or ""))
             if source.tab_name and source.tab_name in tabs:
-                headers = client.read_tab(
+                # Headers only. This page renders the mapping dropdowns and needs
+                # nothing but the column names, and it used to read the whole tab to
+                # get them: a quarter of patient data over the network, and held in
+                # memory, on every view of an admin page.
+                headers = client.read_headers(
                     source.spreadsheet_id or "", source.tab_name, source.header_row
-                ).headers
+                )
         except SheetsError as exc:
             tab_error = str(exc)
 
@@ -390,9 +392,7 @@ async def update_source(
 
 
 @router.post("/{source_id}/delete")
-async def delete_source(
-    request: Request, db: DbSession, auth: AdminUser, source_id: int
-) -> Response:
+def delete_source(request: Request, db: DbSession, auth: AdminUser, source_id: int) -> Response:
     """Remove a source that was created by mistake or is no longer wanted.
 
     Real session rows are the system of record and are never deleted from here: a
@@ -467,7 +467,7 @@ async def delete_source(
 
 
 @router.post("/{source_id}/sync")
-async def sync_source(
+def sync_source(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -663,7 +663,7 @@ def _lookup_redirect(
 
 
 @router.get("/{source_id}/runs/{run_id}", response_class=HTMLResponse)
-async def run_detail(
+def run_detail(
     request: Request, db: DbSession, auth: AdminUser, source_id: int, run_id: int
 ) -> Response:
     run = db.get(SyncRun, run_id)
@@ -794,7 +794,7 @@ async def run_detail(
 
 
 @router.post("/{source_id}/errors/{error_id}/resolve")
-async def resolve_error(
+def resolve_error(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -826,7 +826,7 @@ async def resolve_error(
 
 
 @router.post("/{source_id}/lookups")
-async def import_lookups(
+def import_lookups(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -884,7 +884,7 @@ async def import_lookups(
 
 
 @router.get("/{source_id}/errors", response_class=HTMLResponse)
-async def source_errors(
+def source_errors(
     request: Request,
     db: DbSession,
     auth: AdminUser,

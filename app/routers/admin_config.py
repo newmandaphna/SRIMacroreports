@@ -27,7 +27,7 @@ MAX_AUTO_SYNC_DAYS = 30
 
 
 @router.get("", response_class=HTMLResponse)
-async def config_form(request: Request, db: DbSession, auth: AdminUser) -> Response:
+def config_form(request: Request, db: DbSession, auth: AdminUser) -> Response:
     settings = request.app.state.settings
     return render(
         request,
@@ -45,7 +45,7 @@ async def config_form(request: Request, db: DbSession, auth: AdminUser) -> Respo
 
 
 @router.post("")
-async def save_config(
+def save_config(
     request: Request,
     db: DbSession,
     auth: AdminUser,

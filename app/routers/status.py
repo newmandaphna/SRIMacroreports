@@ -239,7 +239,7 @@ def build_status(db: DbSession, request: Request, is_admin: bool) -> StatusRepor
 
 
 @router.get("/status", response_class=HTMLResponse)
-async def status_page(request: Request, db: DbSession, auth: CurrentUser) -> Response:
+def status_page(request: Request, db: DbSession, auth: CurrentUser) -> Response:
     report = build_status(db, request, auth.role.is_admin)
     return render(
         request,

@@ -741,10 +741,18 @@ def _load_existing(db: Session, earliest: date | None, latest: date | None) -> d
     encrypted SQLite file is the difference between a sync that takes a second and one
     that takes a minute.
     """
-    stmt = select(Visit)
-    if earliest is not None and latest is not None:
-        stmt = stmt.where(Visit.dos >= earliest, Visit.dos <= latest)
-    visits = db.execute(stmt).scalars().all()
+    if earliest is None or latest is None:
+        # No readable date anywhere in the incoming sheet. The fallback used to be to
+        # load the whole sessions table, every row of every quarter ever imported, as
+        # ORM objects each joining its therapist: the one case where the preload was
+        # unbounded was the case where it was useless. A row with no readable date
+        # rejects before it reaches the upsert, so there is nothing here to match
+        # against and an empty map is both cheaper and correct.
+        return {}
+
+    visits = (
+        db.execute(select(Visit).where(Visit.dos >= earliest, Visit.dos <= latest)).scalars().all()
+    )
     return {(v.therapist_id, v.patient_name_normalized, v.dos, v.cpt): v for v in visits}
 
 

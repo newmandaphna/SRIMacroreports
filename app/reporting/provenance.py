@@ -24,9 +24,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config_store import PracticeConfig
+from app.models.therapist import Therapist
 from app.reporting import queries
 from app.reporting.periods import Granularity
 
@@ -133,11 +135,29 @@ class Derivation:
 # --------------------------------------------------------------------------- text
 
 
-def _window_words(filters: queries.Filters) -> str:
-    return (
+def _window_words(filters: queries.Filters, *, therapist_names: list[str] | None = None) -> str:
+    """The window as the query actually scoped it, filters included.
+
+    The date range was all this said, while the query it describes also applies the
+    therapist and location filters. On a filtered page the explanation therefore
+    described a different population from the figure above it, which is the one thing
+    this module exists to prevent. Named therapists appear only when the reader is
+    allowed to see therapist names at all; otherwise they are counted.
+    """
+    parts = [
         f"{filters.start.strftime('%-d %b %Y')} to {filters.end.strftime('%-d %b %Y')}, "
         "by date of service"
-    )
+    ]
+    if filters.therapist_ids:
+        if therapist_names:
+            parts.append("limited to " + ", ".join(therapist_names))
+        else:
+            count = len(filters.therapist_ids)
+            parts.append(f"limited to {count} selected therapist{'s' if count != 1 else ''}")
+    if filters.locations:
+        named = [loc or "unknown" for loc in filters.locations]
+        parts.append("limited to " + ", ".join(named))
+    return "; ".join(parts)
 
 
 def _exclusion_sentence(filters: queries.Filters) -> str:
@@ -212,7 +232,17 @@ def build_derivation(
         return None
 
     totals = queries.totals(db, filters)
-    window = _window_words(filters)
+    therapist_names = None
+    if may_see_therapists and filters.therapist_ids:
+        therapist_names = [
+            name
+            for name in db.execute(
+                select(Therapist.display_name)
+                .where(Therapist.id.in_(filters.therapist_ids))
+                .order_by(func.lower(Therapist.display_name))
+            ).scalars()
+        ]
+    window = _window_words(filters, therapist_names=therapist_names)
     census = Census(
         imported=totals.visits,
         counted=totals.sessions,

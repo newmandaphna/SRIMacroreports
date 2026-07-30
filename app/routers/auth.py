@@ -51,7 +51,7 @@ GENERIC_LOGIN_ERROR = "Email or password is incorrect."
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_form(request: Request, db: DbSession, next: str = "/") -> Response:
+def login_form(request: Request, db: DbSession, next: str = "/") -> Response:
     # Already signed in? Go where you were going.
     if load_session(db, request.cookies.get(SESSION_COOKIE)):
         return RedirectResponse(_safe_next(next), status_code=303)
@@ -71,7 +71,7 @@ async def login_form(request: Request, db: DbSession, next: str = "/") -> Respon
 
 
 @router.post("/login")
-async def login(
+def login(
     request: Request,
     db: DbSession,
     settings: SettingsDep,
@@ -190,7 +190,7 @@ def _handle_failed_login(
 
 
 @router.post("/logout")
-async def logout(request: Request, db: DbSession, settings: SettingsDep) -> Response:
+def logout(request: Request, db: DbSession, settings: SettingsDep) -> Response:
     user_session = load_session(db, request.cookies.get(SESSION_COOKIE))
     if user_session is not None:
         audit.record(db, action=AuditAction.LOGOUT, actor=user_session.user, request=request)
@@ -202,7 +202,7 @@ async def logout(request: Request, db: DbSession, settings: SettingsDep) -> Resp
 
 
 @router.get("/change-password", response_class=HTMLResponse)
-async def change_password_form(
+def change_password_form(
     request: Request,
     auth: Annotated[AuthContext, Depends(require_authenticated_allow_password_change)],
 ) -> Response:
@@ -218,7 +218,7 @@ async def change_password_form(
 
 
 @router.post("/change-password")
-async def change_password(
+def change_password(
     request: Request,
     db: DbSession,
     auth: Annotated[AuthContext, Depends(require_authenticated_allow_password_change)],
@@ -278,7 +278,7 @@ async def change_password(
 
 
 @router.get("/session/status")
-async def session_status(request: Request, db: DbSession, settings: SettingsDep) -> JSONResponse:
+def session_status(request: Request, db: DbSession, settings: SettingsDep) -> JSONResponse:
     """How long until idle expiry, for the client side warning.
 
     Deliberately does NOT extend the session: polling for the countdown must not be
@@ -305,7 +305,7 @@ async def session_status(request: Request, db: DbSession, settings: SettingsDep)
 
 
 @router.post("/session/extend")
-async def session_extend(request: Request, db: DbSession, settings: SettingsDep) -> JSONResponse:
+def session_extend(request: Request, db: DbSession, settings: SettingsDep) -> JSONResponse:
     """Explicit "keep me signed in" from the warning dialog."""
     user_session = load_session(db, request.cookies.get(SESSION_COOKIE))
     timeout = config_store.session_timeout_minutes(db, settings)

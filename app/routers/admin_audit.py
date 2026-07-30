@@ -38,7 +38,7 @@ def _filtered_query(action: str | None, result: str | None, days: int):
 
 
 @router.get("", response_class=HTMLResponse)
-async def view_audit_log(
+def view_audit_log(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -76,7 +76,7 @@ async def view_audit_log(
 
 
 @router.get("/export.csv")
-async def export_audit_log(
+def export_audit_log(
     request: Request,
     db: DbSession,
     auth: AdminUser,
