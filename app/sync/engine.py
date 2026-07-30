@@ -557,6 +557,10 @@ def _execute(
     # loaded for exactly that window. Cheap: the rows are already in memory.
     incoming_dates = _incoming_date_span(data, positions)
     existing = _load_existing(db, *incoming_dates) if not dry_run else {}
+    # How far forward this sheet reaches, against how far every other source reaches.
+    # Used to tell a later export revising money from an older one reverting it.
+    incoming_end = incoming_dates[1]
+    vintages = _source_vintages(db)
     seen_keys: set[tuple] = set()
 
     for row, row_number in zip(data.rows, data.row_numbers, strict=True):
@@ -627,7 +631,19 @@ def _execute(
             result.rows_inserted += 1
             continue
 
-        _upsert(db, source, run, existing, key, values, therapist_id, result)
+        _upsert(
+            db,
+            source,
+            run,
+            existing,
+            key,
+            values,
+            therapist_id,
+            result,
+            row_ref=row_ref,
+            incoming_end=incoming_end,
+            vintages=vintages,
+        )
 
 
 def _incoming_date_span(
@@ -684,6 +700,49 @@ def _load_existing(db: Session, earliest: date | None, latest: date | None) -> d
     return {(v.therapist_id, v.patient_name_normalized, v.dos, v.cpt): v for v in visits}
 
 
+@dataclass(frozen=True)
+class _SourceVintage:
+    """What we know about how recent another source's account of a visit is.
+
+    `coverage_end` is the latest date of service that source actually contained,
+    observed by its own sync rather than typed in, so it is the one honest ordering
+    signal available. A rolling quarterly export reaches further forward than a
+    historical backfill of an earlier quarter.
+    """
+
+    label: str
+    coverage_end: date | None
+
+
+def _source_vintages(db: Session) -> dict[int, _SourceVintage]:
+    rows = db.execute(select(DataSource.id, DataSource.label, DataSource.coverage_end)).all()
+    return {sid: _SourceVintage(label, end) for sid, label, end in rows}
+
+
+def _money_disagreements(current: Visit, payload: dict[str, Any]) -> list[str]:
+    return sorted(f for f in MONEY_FIELDS if getattr(current, f) != payload.get(f))
+
+
+def _older_owner(
+    current: Visit,
+    source: DataSource,
+    incoming_end: date | None,
+    vintages: dict[int, _SourceVintage],
+) -> _SourceVintage | None:
+    """The source holding this row, when its account is more recent than the incoming one.
+
+    None whenever we have no grounds to call the incoming sheet older: the row came from
+    this same source, either span is unknown, or the incoming sheet reaches at least as
+    far forward.
+    """
+    if current.source_id == source.id or incoming_end is None:
+        return None
+    owner = vintages.get(current.source_id)
+    if owner is None or owner.coverage_end is None:
+        return None
+    return owner if incoming_end < owner.coverage_end else None
+
+
 def _upsert(
     db: Session,
     source: DataSource,
@@ -693,6 +752,10 @@ def _upsert(
     values: dict[str, Any],
     therapist_id: int,
     result: SyncResult,
+    *,
+    row_ref: str,
+    incoming_end: date | None,
+    vintages: dict[int, _SourceVintage],
 ) -> None:
     payload = {k: v for k, v in values.items() if k != "therapist_raw"}
 
@@ -710,6 +773,42 @@ def _upsert(
         return
 
     if current.differs_from(payload):
+        # A visit is global, so the same one arrives on more than one sheet: the
+        # practice's export window rolls back into the previous quarter, and a
+        # historical upload covers ground the live sheet also covers. When two sheets
+        # disagreed about money, whichever synced last won outright, so importing an
+        # old backfill silently reverted collected revenue on every shared row and no
+        # figure, page or log said anything had moved.
+        #
+        # Later sheets legitimately revise money, because payments land after the date
+        # of service. Earlier ones cannot. So an incoming sheet that ends before the
+        # sheet already holding the row is treated as the older account: the stored
+        # figures stand and the disagreement goes to the review queue for a human,
+        # rather than being applied or thrown away.
+        owner = _older_owner(current, source, incoming_end, vintages)
+        disagreements = _money_disagreements(current, payload) if owner else []
+        if owner is not None and disagreements:
+            first = disagreements[0]
+            result.rejections.append(
+                Rejection(
+                    row_ref,
+                    RejectReason.CONFLICTING_SNAPSHOT,
+                    field=first,
+                    raw_value=str(payload.get(first)),
+                    detail=(
+                        f"This row is already recorded from {owner.label!r}, whose data runs "
+                        f"to {owner.coverage_end}, later than this sheet. They disagree on "
+                        + ", ".join(disagreements)
+                        + f" (stored {getattr(current, first)}, this sheet {payload.get(first)}). "
+                        "The stored figures were kept, because an earlier export cannot have "
+                        "seen payments that landed after it. Nothing was changed; check which "
+                        "sheet is right."
+                    ),
+                    patient_hint=values.get("patient_name"),
+                    therapist_hint=values.get("therapist_raw"),
+                )
+            )
+            return
         current.apply(payload)
         current.last_sync_run_id = run.id
         result.rows_updated += 1

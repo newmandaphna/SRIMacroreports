@@ -92,6 +92,37 @@ def test_inactive_and_upload_sources_are_never_due(client, demo_ready):
         assert sources_due(db, now=utcnow(), interval_days=1) == []
 
 
+def test_due_sources_come_back_oldest_first_and_not_at_the_database_s_whim(client, demo_ready):
+    """Order matters because two sheets can hold the same visit.
+
+    Without an ORDER BY the database returns rows however it likes, so when two sources
+    overlap the last one in the pass wins and the shared figure can move between passes
+    with nothing having changed. Oldest sync first, so a pass is repeatable.
+    """
+    from app.sync.demo_data import DEMO_TAB_NAME, Q2_HEADERS
+    from app.sync.engine import suggest_mapping
+
+    headers = [str(h) if h is not None else "" for h in Q2_HEADERS]
+    with client.app.state.db.session() as db:
+        db.get(DataSource, demo_ready).last_synced_at = utcnow() - timedelta(days=30)
+        for label, days in (("Newer", 10), ("Oldest", 90)):
+            db.add(
+                DataSource(
+                    label=label,
+                    provider=SourceProvider.DEMO,
+                    tab_name=DEMO_TAB_NAME,
+                    header_row=1,
+                    column_mapping=suggest_mapping(headers),
+                    active=True,
+                    last_synced_at=utcnow() - timedelta(days=days),
+                )
+            )
+
+    with client.app.state.db.session() as db:
+        due = sources_due(db, now=utcnow(), interval_days=7)
+    assert [s.label for s in due] == ["Oldest", "Demo", "Newer"]
+
+
 def test_a_due_pass_imports_and_audits_as_auto_sync(client, demo_ready):
     with client.app.state.db.session() as db:
         from app import config_store

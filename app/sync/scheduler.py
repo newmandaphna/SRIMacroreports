@@ -34,16 +34,25 @@ CHECK_INTERVAL_SECONDS = 3600
 
 def sources_due(db: Session, *, now: datetime, interval_days: int) -> list[DataSource]:
     """Active, fully mapped, non-upload sources whose last sync is older than the
-    interval. A source that has never synced is due immediately once it is ready."""
+    interval. A source that has never synced is due immediately once it is ready.
+
+    Ordered oldest sync first, so a pass that two sources both overlap resolves the
+    same way every time. Without an ORDER BY the database returns rows in whatever
+    order it likes, and two sheets sharing a row at a quarter boundary then took turns
+    winning between passes: the same figure moved back and forth with no import
+    changing and nothing to point at.
+    """
     if interval_days <= 0:
         return []
     cutoff = now - timedelta(days=interval_days)
     sources = (
         db.execute(
-            select(DataSource).where(
+            select(DataSource)
+            .where(
                 DataSource.active.is_(True),
                 DataSource.provider != SourceProvider.UPLOAD,
             )
+            .order_by(DataSource.last_synced_at.asc().nullsfirst(), DataSource.id.asc())
         )
         .scalars()
         .all()

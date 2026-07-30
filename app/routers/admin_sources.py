@@ -450,6 +450,9 @@ async def sync_source(
     if source is None:
         return RedirectResponse("/admin/sources", status_code=303)
 
+    if not source.active:
+        return _detail_redirect_with_flash(source.id, _INACTIVE_MESSAGE)
+
     dry_run = mode != "live"
 
     try:
@@ -512,6 +515,9 @@ async def upload_workbook(
     if source is None:
         return RedirectResponse("/admin/sources", status_code=303)
 
+    if not source.active:
+        return _detail_redirect_with_flash(source.id, _INACTIVE_MESSAGE)
+
     if not source.is_ready_to_sync:
         return _detail_redirect_with_flash(
             source.id,
@@ -564,6 +570,16 @@ async def upload_workbook(
     )
 
     return RedirectResponse(f"/admin/sources/{source.id}/runs/{result.run_id}", status_code=303)
+
+
+# Auto sync has always skipped inactive sources. The manual buttons did not, so
+# switching a source off stopped the schedule and nothing else: a retired quarter's
+# sheet could still be imported by hand, and an older sheet re-importing over a newer
+# one is exactly how a figure moves without an explanation.
+_INACTIVE_MESSAGE = (
+    "This source is switched off, so it cannot be imported from. Auto sync already "
+    "skips it. Tick Active and save if you want to import from it again."
+)
 
 
 def _detail_redirect_with_flash(source_id: int, message: str) -> Response:

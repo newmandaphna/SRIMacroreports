@@ -496,6 +496,32 @@ def test_the_warning_stays_off_when_the_sheet_cannot_be_read(admin_client, demo)
     assert "Map these first" in page
 
 
+def test_an_inactive_source_refuses_to_sync_by_hand(admin_client, demo):
+    """Off has to mean off. Auto sync already skipped an inactive source; the buttons
+    did not, so switching a finished quarter off stopped the schedule and nothing else,
+    and an old sheet re-imported by hand is how a figure moves with no explanation."""
+    with admin_client.app.state.db.session() as db:
+        db.get(DataSource, demo).active = False
+
+    page = admin_client.get(f"/admin/sources/{demo}").text
+    assert "This source is switched off" in page
+    assert "Sync now" not in page, "the button must not be offered"
+
+    response = admin_client.post(
+        f"/admin/sources/{demo}/sync",
+        data={"csrf_token": token_from(page), "mode": "live"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "problem=" in response.headers["location"], "a direct post must be refused too"
+
+    with admin_client.app.state.db.session() as db:
+        assert (
+            db.execute(select(func.count(SyncRun.id)).where(SyncRun.source_id == demo)).scalar_one()
+            == 0
+        )
+
+
 # ------------------------------------------- systemic failures and error paging
 
 
