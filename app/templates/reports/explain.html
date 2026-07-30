@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head page-head--with-action">
+  <div>
+    <h1>How {{ derivation.title|lower }} is calculated</h1>
+    <p class="page-head__sub">
+      For the exact filters you were looking at, so the arithmetic below produced the
+      number you clicked. This page is a stable address: bookmark it, print it, or
+      send it to whoever asks where the figure came from.
+    </p>
+  </div>
+  <div class="no-print" style="display: flex; gap: var(--space-2)">
+    <button type="button" class="button button--quiet" onclick="window.print()">Print</button>
+    <a href="/reports?{{ query_string }}" class="button button--quiet">Back to overview</a>
+  </div>
+</div>
+
+<div class="card">
+  {% set d = derivation %}
+  {% include "reports/_derivation.html" %}
+</div>
+
+<div class="card no-print" style="margin-top: var(--space-4)">
+  <p class="card__title">Other figures in this window</p>
+  <p class="text-muted">
+    Each one explains itself the same way, for the same date range and filters.
+  </p>
+  <ul class="derivation__index">
+    {% for key in explainable %}
+    {% if key != derivation.key %}
+    <li>
+      <a href="/reports/explain/{{ key }}?{{ query_string }}">{{ titles[key] }}</a>
+    </li>
+    {% endif %}
+    {% endfor %}
+  </ul>
+</div>
+
+<div class="alert alert--warning" style="margin-top: var(--space-4)">
+  <p>
+    <strong>Why this page exists.</strong> The definition and the sum on it come from
+    one place in the code, and a test compares them against real rows every time the
+    project is built. If somebody changes how this figure is worked out and does not
+    update the words, that test fails and the change cannot ship. A wrong explanation
+    would be worse than none, because it teaches you to trust a number you should
+    have questioned.
+  </p>
+</div>
+{% endblock %}

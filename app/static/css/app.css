@@ -301,6 +301,15 @@ a {
   a[href]::after {
     content: "";
   }
+  /* An explanation is evidence, so it prints as plain text on white with no
+     shaded slabs and no table split across a page break. */
+  .derivation table,
+  .derivation__caveats {
+    break-inside: avoid;
+  }
+  .derivation__value {
+    font-size: 1.5rem;
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -684,6 +693,76 @@ a {
 
 .card--link:hover {
   border-color: var(--color-primary);
+}
+
+/* A card that is clickable as a whole without wrapping its body in an anchor,
+   so a second link inside it stays separately clickable. */
+.kpi-card {
+  position: relative;
+}
+
+.card__stretch::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.kpi-how {
+  /* Above the overlay link, so this one wins the click. */
+  position: relative;
+  z-index: 1;
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+}
+
+.kpi-how a {
+  color: var(--color-ink-muted);
+}
+
+.kpi-how a:hover {
+  color: var(--color-primary);
+}
+
+/* The explanation of one figure: how it was calculated, what it counted, and
+   what to watch out for. Deliberately plain, because it is evidence. */
+.derivation__value {
+  font-size: var(--text-3xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0 0 var(--space-3);
+  overflow-wrap: break-word;
+  font-variant-numeric: tabular-nums;
+}
+
+.derivation__heading {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-ink-muted);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.derivation__caveats {
+  margin: 0;
+  padding-left: var(--space-3);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+
+.derivation__caveats li {
+  margin-bottom: var(--space-1);
+}
+
+.derivation__index {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-3);
+  columns: 2;
+}
+
+@media (max-width: 700px) {
+  .derivation__index {
+    columns: 1;
+  }
 }
 
 /* The question the card answers, stated before the number. */

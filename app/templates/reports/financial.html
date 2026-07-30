@@ -20,6 +20,9 @@
     <p class="kpi-question">How much clinical work did we do?</p>
     <p class="kpi-value">{{ totals.sessions|count }}</p>
     <p class="kpi-delta">sessions, from {{ totals.visits|count }} imported rows</p>
+    <p class="kpi-how no-print">
+      <a href="/reports/explain/sessions?{{ query_string }}">How this is calculated</a>
+    </p>
     <p class="kpi-note">
       Therapy {{ totals.therapy_sessions|count }}, psychiatry
       {{ totals.psychiatry_sessions|count }}, split by code: anything beginning 99 is
@@ -29,12 +32,18 @@
   <div class="card">
     <p class="kpi-question">What did we bill?</p>
     <p class="kpi-value">{{ totals.billed|money }}</p>
+    <p class="kpi-how no-print">
+      <a href="/reports/explain/billed?{{ query_string }}">How this is calculated</a>
+    </p>
   </div>
   <div class="card">
     <p class="kpi-question">What came in?</p>
     <p class="kpi-value">{{ totals.collected|money }}</p>
     <p class="kpi-delta">
       {% if totals.collection_rate is not none %}{{ totals.collection_rate }}% of billed{% endif %}
+    </p>
+    <p class="kpi-how no-print">
+      <a href="/reports/explain/collected?{{ query_string }}">How this is calculated</a>
     </p>
   </div>
   <div class="card">
@@ -44,6 +53,9 @@
       patient {{ totals.outstanding_patient|money }},
       insurance {{ totals.outstanding_insurance|money }}
     </p>
+    <p class="kpi-how no-print">
+      <a href="/reports/explain/outstanding?{{ query_string }}">How this is calculated</a>
+    </p>
   </div>
   <div class="card">
     <p class="kpi-question">What does an average session bring in?</p>
@@ -52,6 +64,9 @@
       {% else %}-{% endif %}
     </p>
     <p class="kpi-note">Collected divided by sessions, so cancellation fees lift it.</p>
+    <p class="kpi-how no-print">
+      <a href="/reports/explain/revenue_per_session?{{ query_string }}">How this is calculated</a>
+    </p>
   </div>
 </div>
 
@@ -74,7 +89,12 @@
     <div class="section-head">
       <div>
         <h2>{{ question }}</h2>
-        <p class="page-head__sub">By {{ title|lower }}, highest collected first.</p>
+        <p class="page-head__sub">
+          By {{ title|lower }}, highest collected first.
+          <a class="no-print" href="/reports/explain/sessions?{{ query_string }}"
+            >How these columns are calculated</a
+          >.
+        </p>
       </div>
       <a
         class="button button--quiet no-print"
@@ -160,6 +180,9 @@
   <p class="kpi-note" style="margin-top: var(--space-2)">
     Aged by date of service, because the source sheet carries no payment or claim
     dates. The over 90 column is usually where the follow-up calls live.
+    <a class="no-print" href="/reports/explain/outstanding?{{ query_string }}"
+      >How the outstanding total is calculated</a
+    >.
   </p>
   {% else %}
   <p class="text-muted">No open balances. Everything billed has been collected.</p>

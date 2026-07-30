@@ -34,6 +34,7 @@ from app.reporting.periods import (
     resolve_range,
     today_in,
 )
+from app.reporting.provenance import EXPLAINABLE, TITLES, build_derivation
 from app.reporting.weekly import WEEK_WINDOW_CHOICES, parse_week_count, weekly_counts
 from app.security import audit
 from app.security.deps import AuthContext, DbSession, require_module
@@ -335,6 +336,7 @@ async def overview(
             "active_page": "overview",
             "totals": current,
             "kpis": build_kpis(db, ctx, current),
+            "explainable": EXPLAINABLE,
             "trend": trend,
             "weekly": weekly,
             "week_choices": WEEK_WINDOW_CHOICES,
@@ -444,6 +446,46 @@ async def month_review(
     )
 
 
+@router.get("/explain/{key}", response_class=HTMLResponse)
+async def explain(
+    request: Request, db: DbSession, ctx: Ctx, auth: FinancialUser, key: str
+) -> Response:
+    """How one figure was calculated, for the caller's own filters.
+
+    The same filters the reader had on the page they came from, so the arithmetic
+    shown produced the exact number they clicked. See app/reporting/provenance.py
+    for why the sentence and the sum cannot drift apart.
+    """
+    derivation = build_derivation(
+        db,
+        key,
+        filters=ctx.filters,
+        config=ctx.config,
+        granularity=ctx.granularity,
+        may_see_therapists=auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
+    )
+    if derivation is None:
+        return render(
+            request,
+            "errors/not_found.html",
+            {"page_title": "Not found", "auth": auth},
+            status_code=404,
+        )
+
+    return render(
+        request,
+        "reports/explain.html",
+        {
+            "page_title": f"How {derivation.title} is calculated",
+            "auth": auth,
+            "derivation": derivation,
+            "explainable": EXPLAINABLE,
+            "titles": TITLES,
+            **ctx.as_template_context(),
+        },
+    )
+
+
 @router.get("/patient-flow", response_class=HTMLResponse)
 async def patient_flow(
     request: Request, db: DbSession, ctx: Ctx, auth: PatientFlowUser
@@ -536,6 +578,7 @@ async def financial(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUs
             "active_page": "financial",
             "totals": current,
             "previous_totals": previous,
+            "explainable": EXPLAINABLE,
             "trend": queries.by_period(
                 db,
                 ctx.filters,

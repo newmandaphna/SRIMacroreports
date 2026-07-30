@@ -1,0 +1,110 @@
+{# One figure, explained. The single renderer for a Derivation, so the panel and
+   the standalone page can never say different things about the same number. #}
+
+<div class="derivation">
+  <p class="derivation__value">
+    {% if d.value is none %}
+    <span class="text-muted">not available</span>
+    {% elif d.kind == "money" %}{{ d.value|currency }}
+    {% elif d.kind == "rate" %}{{ d.value }}%
+    {% else %}{{ d.value|count }}{% endif %}
+  </p>
+
+  {% if d.unavailable_because %}
+  <p class="alert alert--warning">{{ d.unavailable_because }}</p>
+  {% endif %}
+
+  <p>{{ d.sentence }}</p>
+  <p class="text-muted">Window: {{ d.window }}.</p>
+
+  {% if not d.agrees %}
+  <div class="alert alert--error" role="alert">
+    <strong>These do not reconcile.</strong> The arithmetic below lands
+    {{ d.discrepancy }} away from the figure above. That is a defect worth reporting,
+    not a rounding artifact.
+  </div>
+  {% endif %}
+
+  {% if d.terms %}
+  <h3 class="derivation__heading">The arithmetic</h3>
+  <table class="data-table">
+    <tbody>
+      {% for term in d.terms %}
+      <tr>
+        <td>{{ term.label }}</td>
+        <td class="numeric">
+          {% if term.kind == "money" %}{{ term.value|currency }}
+          {% elif term.kind == "rate" %}{{ term.value }}%
+          {% else %}{{ term.value|count }}{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if d.census %}
+  <h3 class="derivation__heading">Which rows were counted</h3>
+  <table class="data-table">
+    <tbody>
+      <tr>
+        <td>Rows imported in this window</td>
+        <td class="numeric">{{ d.census.imported|count }}</td>
+      </tr>
+      <tr>
+        <td>Counted as sessions</td>
+        <td class="numeric">{{ d.census.counted|count }}</td>
+      </tr>
+      <tr>
+        <td>Set aside by the excluded code list</td>
+        <td class="numeric">{{ d.census.excluded|count }}</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="text-muted">{{ d.census.excluded_note }}</p>
+  {% if not d.census.reconciles %}
+  <p class="alert alert--error">
+    The counted and set aside rows do not add up to the rows imported. Worth reporting.
+  </p>
+  {% endif %}
+  {% endif %}
+
+  {% if d.components %}
+  <h3 class="derivation__heading">
+    {% if d.components_sum_to_value %}The evidence{% else %}The detail{% endif %}
+  </h3>
+  {% if d.components_note %}<p class="text-muted">{{ d.components_note }}</p>{% endif %}
+  <table class="data-table">
+    <tbody>
+      {% for c in d.components %}
+      <tr>
+        <td>{{ c.label }}</td>
+        <td class="numeric">
+          {% if d.kind == "money" %}{{ c.value|currency }}{% else %}{{ c.value }}{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if d.components_sum_to_value %}
+      <tr>
+        <td><strong>Total, which must equal the figure above</strong></td>
+        <td class="numeric">
+          <strong>
+            {% if d.kind == "money" %}{{ d.recomputed|currency }}
+            {% else %}{{ d.recomputed|count }}{% endif %}
+          </strong>
+        </td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+  {% elif d.components_note %}
+  <p class="text-muted">{{ d.components_note }}</p>
+  {% endif %}
+
+  {% if d.caveats %}
+  <h3 class="derivation__heading">What to watch out for</h3>
+  <ul class="derivation__caveats">
+    {% for caveat in d.caveats %}<li>{{ caveat }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</div>

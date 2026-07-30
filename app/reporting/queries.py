@@ -75,6 +75,18 @@ class Totals:
         return self.sessions - self.psychiatry_sessions
 
     @property
+    def excluded_rows(self) -> int:
+        """Imported rows that were not counted as sessions.
+
+        Exact by construction rather than a second query: every imported row is
+        either a session or excluded by the CPT list. Cancellations are a subset
+        of these, and the rest are the bookkeeping codes. The explanation layer
+        uses this to reconcile its row census, which is how a reader can tell that
+        a figure counted what it claimed to count.
+        """
+        return self.visits - self.sessions
+
+    @property
     def collection_rate(self) -> Decimal | None:
         """Collected as a share of billed. None when nothing was billed."""
         if self.billed <= ZERO:
