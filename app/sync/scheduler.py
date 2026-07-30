@@ -67,48 +67,70 @@ def sources_due(db: Session, *, now: datetime, interval_days: int) -> list[DataS
 def run_due_syncs(db: Session, settings: Settings) -> int:
     """One pass: sync everything due. Returns how many sources were synced.
 
-    A failure on one source is audited and does not stop the others.
+    Each source is its own transaction, committed before the next one starts. The pass
+    used to share one, so the claim that a failure on one source does not stop the
+    others was only half true: an error escaping the engine's own handling rolled the
+    whole transaction back and took every earlier source's imported rows and audit
+    entries with it. A pass interrupted part way through now keeps what it finished.
     """
     config = config_store.load(db, settings)
     due = sources_due(db, now=utcnow(), interval_days=config.auto_sync_days)
+    source_ids = [s.id for s in due]
 
     ran = 0
-    for source in due:
+    for source_id in source_ids:
         try:
-            client = client_for(source.provider, settings.google_service_account_json)
-        except SheetsError as exc:
-            audit.record(
-                db,
-                action=AuditAction.SYNC_RUN,
-                result=AuditResult.FAILURE,
-                actor_label="auto-sync",
-                target_type="data_source",
-                target_id=source.id,
-                detail={"auto": True, "error": str(exc)},
-            )
-            continue
+            ran += _sync_one(db, settings, source_id)
+            db.commit()
+        except Exception:
+            # Contained to this source. The next one starts from a clean transaction
+            # rather than inheriting a broken one.
+            db.rollback()
+            logger.exception("Auto sync of source %s failed; continuing with the rest", source_id)
+    return ran
 
-        result = run_sync(db, source, client, dry_run=False, actor=None)
+
+def _sync_one(db: Session, settings: Settings, source_id: int) -> int:
+    """One source, inside the caller's transaction. Returns 1 if it ran, 0 if it did not."""
+    source = db.get(DataSource, source_id)
+    if source is None or not source.active:
+        # Deleted or switched off since the due list was built.
+        return 0
+
+    try:
+        client = client_for(source.provider, settings.google_service_account_json)
+    except SheetsError as exc:
         audit.record(
             db,
             action=AuditAction.SYNC_RUN,
-            result=AuditResult.SUCCESS if result.ok else AuditResult.FAILURE,
+            result=AuditResult.FAILURE,
             actor_label="auto-sync",
             target_type="data_source",
             target_id=source.id,
-            detail={
-                "auto": True,
-                "mode": result.mode.value,
-                "rows_read": result.rows_read,
-                "inserted": result.rows_inserted,
-                "updated": result.rows_updated,
-                "unchanged": result.rows_unchanged,
-                "rejected": result.rows_rejected,
-                "error": result.error_message,
-            },
+            detail={"auto": True, "error": str(exc)},
         )
-        ran += 1
-    return ran
+        return 0
+
+    result = run_sync(db, source, client, dry_run=False, actor=None)
+    audit.record(
+        db,
+        action=AuditAction.SYNC_RUN,
+        result=AuditResult.SUCCESS if result.ok else AuditResult.FAILURE,
+        actor_label="auto-sync",
+        target_type="data_source",
+        target_id=source.id,
+        detail={
+            "auto": True,
+            "mode": result.mode.value,
+            "rows_read": result.rows_read,
+            "inserted": result.rows_inserted,
+            "updated": result.rows_updated,
+            "unchanged": result.rows_unchanged,
+            "rejected": result.rows_rejected,
+            "error": result.error_message,
+        },
+    )
+    return 1
 
 
 async def auto_sync_loop(app) -> None:

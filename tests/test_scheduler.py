@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app.models.audit import AuditLog
-from app.models.data_source import DataSource, SourceProvider
+from app.models.data_source import DataSource, SourceProvider, SyncRun
 from app.models.enums import AuditAction, Role
 from app.models.types import utcnow
 from app.models.visit import Visit
@@ -157,6 +157,102 @@ def test_a_due_pass_imports_and_audits_as_auto_sync(client, demo_ready):
     # The source is stamped, so the next pass within the interval does nothing.
     with client.app.state.db.session() as db:
         assert run_due_syncs(db, client.app.state.settings) == 0
+
+
+def test_one_source_failing_does_not_undo_the_sources_already_imported(client, demo_ready):
+    """The pass shared one transaction, so the isolation it claimed was half true.
+
+    An error escaping the engine's own handling rolled the whole transaction back and
+    took every earlier source's imported rows and audit entries with it, which is the
+    opposite of "does not stop the others": the others were undone.
+    """
+    from app import config_store
+    from app.sync import scheduler as scheduler_module
+    from app.sync.demo_data import DEMO_TAB_NAME, Q2_HEADERS
+    from app.sync.engine import suggest_mapping
+
+    headers = [str(h) if h is not None else "" for h in Q2_HEADERS]
+    with client.app.state.db.session() as db:
+        config_store.set_value(db, config_store.AUTO_SYNC_DAYS, 7, actor_id=None)
+        doomed = DataSource(
+            label="Doomed",
+            provider=SourceProvider.DEMO,
+            tab_name=DEMO_TAB_NAME,
+            header_row=1,
+            column_mapping=suggest_mapping(headers),
+            active=True,
+            # Synced later than the demo source, so it is second in the pass.
+            last_synced_at=utcnow() - timedelta(days=8),
+        )
+        db.add(doomed)
+        db.flush()
+        doomed_id = doomed.id
+
+    real_run_sync = scheduler_module.run_sync
+
+    def explode_on_the_second(db, source, client_, **kwargs):
+        if source.id == doomed_id:
+            raise RuntimeError("simulated failure that used to take the whole pass down")
+        return real_run_sync(db, source, client_, **kwargs)
+
+    scheduler_module.run_sync = explode_on_the_second
+    try:
+        with client.app.state.db.session() as db:
+            ran = run_due_syncs(db, client.app.state.settings)
+    finally:
+        scheduler_module.run_sync = real_run_sync
+
+    assert ran == 1, "the healthy source must count as having run"
+
+    with client.app.state.db.session() as db:
+        kept = db.execute(
+            select(func.count(Visit.id)).where(Visit.source_id == demo_ready)
+        ).scalar_one()
+    assert kept > 0, "the healthy source's rows were rolled back by its neighbour's failure"
+
+
+def test_a_second_sync_of_the_same_source_refuses_rather_than_competing(client, demo_ready):
+    """Two imports of one sheet at once both decide the same row is new, and the unique
+    constraint then kills whichever writes second: a failed import out of two valid
+    ones. The second now declines, in its own words, with nothing written."""
+    from app.models.data_source import SyncStatus
+    from app.sync.engine import run_sync
+    from app.sync.sheets import DemoSheetsClient
+
+    # Two sessions means two database connections, which is what makes the lock
+    # meaningful: the same transaction may hold it twice over.
+    first = client.app.state.db.session_factory()
+    second = client.app.state.db.session_factory()
+    try:
+        held = run_sync(first, first.get(DataSource, demo_ready), DemoSheetsClient(), dry_run=False)
+        assert held.ok, "the first import must succeed"
+        # Deliberately NOT committed: the first import is still in flight.
+
+        blocked = run_sync(
+            second, second.get(DataSource, demo_ready), DemoSheetsClient(), dry_run=False
+        )
+        assert not blocked.ok
+        assert "Another import of this source is running" in (blocked.error_message or "")
+        assert blocked.rows_inserted == 0
+
+        second.commit()
+        first.commit()
+    finally:
+        second.close()
+        first.close()
+
+    with client.app.state.db.session() as db:
+        refused = (
+            db.execute(
+                select(SyncRun)
+                .where(SyncRun.source_id == demo_ready, SyncRun.status == SyncStatus.FAILED)
+                .order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert refused is not None, "the refusal must be in the history, not silent"
+    assert refused.rows_inserted == 0
 
 
 def test_the_setting_round_trips_through_the_admin_form(client):

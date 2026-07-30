@@ -20,7 +20,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.models.data_source import (
@@ -310,6 +310,30 @@ def _first_overlong_value(values: dict[str, Any]) -> tuple[str, int, int] | None
     return None
 
 
+# Namespace for the advisory locks this application takes, so they cannot collide with
+# a lock some other tool holds on the same database. "SRI1" as an int32.
+_LOCK_NAMESPACE = 0x53524931
+
+
+def _hold_source_lock(db: Session, source_id: int) -> bool:
+    """Claim this source for the current transaction, or report that somebody else has it.
+
+    A transaction scoped lock, so it is released by the commit or rollback that ends the
+    sync and there is no unlock to forget or to run on the wrong connection. Re-entrant
+    within one transaction, so a caller that syncs the same source twice is unaffected.
+
+    The reason it exists: two syncs of one source reading the same sheet at once both
+    look up the existing rows, both decide the same row is new, and the unique
+    constraint then kills whichever writes second, so a scheduled pass overlapping a
+    manual Sync produced a failed import out of two valid ones.
+    """
+    if db.get_bind().dialect.name != "postgresql":  # pragma: no cover - production is PG
+        return True
+    return bool(
+        db.execute(select(func.pg_try_advisory_xact_lock(_LOCK_NAMESPACE, source_id))).scalar_one()
+    )
+
+
 def run_sync(
     db: Session,
     source: DataSource,
@@ -345,6 +369,13 @@ def run_sync(
     # run row, which was flushed before it, while discarding the failed writes.
     savepoint = db.begin_nested()
     try:
+        if not _hold_source_lock(db, source.id):
+            raise SheetsError(
+                "Another import of this source is running right now, so this one did "
+                "nothing rather than compete with it. Wait for that run to finish, "
+                "check the history below, and start again only if it did not do what "
+                "you wanted."
+            )
         _execute(db, source, client, run, result, dry_run=dry_run)
         db.flush()
         savepoint.commit()
@@ -487,8 +518,6 @@ def _supersede_stale_errors(
 
 
 def _count_visits(db: Session, source_id: int) -> int:
-    from sqlalchemy import func
-
     return db.execute(select(func.count(Visit.id)).where(Visit.source_id == source_id)).scalar_one()
 
 
