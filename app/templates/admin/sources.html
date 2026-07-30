@@ -49,6 +49,9 @@
           {% else %}
           <span class="pill pill--neutral">inactive</span>
           {% endif %}
+          {% if s.id in auto_source_ids %}
+          <span class="pill pill--neutral" title="Most recent sync was triggered automatically">auto</span>
+          {% endif %}
           {% if open_errors.get(s.id) %}
           <a href="/admin/sources/{{ s.id }}/errors" class="pill pill--watch"
             >{{ open_errors[s.id] }} to review</a

@@ -73,11 +73,35 @@ def _sources_context(db: DbSession) -> dict:
             .group_by(ImportErrorRow.source_id)
         ).all()
     )
+
+    # Which sources had their most recent live run triggered by auto-sync?
+    # Used to show a small "auto" badge on the sources list.
+    from sqlalchemy import and_
+
+    latest_run_subq = (
+        select(SyncRun.source_id, func.max(SyncRun.id).label("max_id"))
+        .group_by(SyncRun.source_id)
+        .subquery()
+    )
+    auto_source_ids: set[int] = set(
+        db.execute(
+            select(SyncRun.source_id).join(
+                latest_run_subq,
+                and_(
+                    SyncRun.source_id == latest_run_subq.c.source_id,
+                    SyncRun.id == latest_run_subq.c.max_id,
+                ),
+            )
+            .where(SyncRun.run_by_id.is_(None))
+        ).scalars().all()
+    )
+
     return {
         "sources": sources,
         "visit_counts": visit_counts,
         "open_errors": open_errors,
         "total_visits": sum(visit_counts.values()),
+        "auto_source_ids": auto_source_ids,
     }
 
 

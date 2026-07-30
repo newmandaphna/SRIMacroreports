@@ -127,6 +127,47 @@
     </span>
   </label>
 
+  {# Auto-sync status panel — shown outside the label so it doesn't activate the input #}
+  {% if values.auto_sync_days == 0 %}
+    {% if has_ready_sources %}
+    <div class="alert alert--warning" role="status">
+      <strong>Auto-sync is off.</strong>
+      You have active sources ready to sync. Set a value above (try&nbsp;1) to keep
+      them current automatically — the scheduler checks every hour and only runs
+      sources that are overdue.
+    </div>
+    {% endif %}
+  {% else %}
+    <div class="card" style="padding: var(--space-3);">
+      <p class="card__title" style="margin-bottom: var(--space-2);">Auto-sync status</p>
+      {% if last_auto_run is none %}
+        <p>
+          <span class="pill pill--neutral">never run</span>
+          Auto-sync is enabled. No automatic run has happened yet — the scheduler
+          checks every hour and will pick up due sources on its next wake.
+        </p>
+      {% elif last_auto_run.status.value == 'failed' %}
+        <p>
+          <span class="pill pill--below">error</span>
+          Last automatic run on <strong>{{ last_auto_run.started_at|datetime }}</strong> failed
+          {% if last_auto_run.error_message %} — {{ last_auto_run.error_message }}{% endif %}.
+          Check the <a href="/admin/sources">sync history</a> for the full error.
+        </p>
+      {% else %}
+        <p>
+          <span class="pill pill--ok">ok</span>
+          Last automatic run: <strong>{{ last_auto_run.started_at|datetime }}</strong>
+          — {{ last_auto_run.rows_inserted }} added, {{ last_auto_run.rows_updated }} updated,
+          {{ last_auto_run.rows_rejected }} rejected.
+        </p>
+        <p class="field__hint" style="margin-top: var(--space-1);">
+          The scheduler checks every hour and syncs any source whose last sync is
+          older than {{ values.auto_sync_days }}&nbsp;day{{ 's' if values.auto_sync_days != 1 else '' }}.
+        </p>
+      {% endif %}
+    </div>
+  {% endif %}
+
   <div class="form-actions">
     <button type="submit" class="button button--primary">Save settings</button>
   </div>

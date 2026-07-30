@@ -12,8 +12,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from sqlalchemy import select
 
 from app import config_store
+from app.models.data_source import DataSource, SourceProvider, SyncMode, SyncRun
 from app.models.enums import AuditAction, AuditResult
 from app.security import audit
 from app.security.deps import AdminUser, DbSession
@@ -26,9 +28,34 @@ MAX_TIMEOUT_MINUTES = 480
 MAX_AUTO_SYNC_DAYS = 30
 
 
+def _auto_sync_status(db: DbSession) -> tuple:
+    """Return (last_auto_run, has_ready_sources) for the config page status panel."""
+    last_auto_run = db.execute(
+        select(SyncRun)
+        .where(SyncRun.run_by_id.is_(None), SyncRun.mode == SyncMode.LIVE)
+        .order_by(SyncRun.started_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    active_sources = (
+        db.execute(
+            select(DataSource).where(
+                DataSource.active.is_(True),
+                DataSource.provider != SourceProvider.UPLOAD,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    has_ready_sources = any(s.is_ready_to_sync for s in active_sources)
+
+    return last_auto_run, has_ready_sources
+
+
 @router.get("", response_class=HTMLResponse)
 async def config_form(request: Request, db: DbSession, auth: AdminUser) -> Response:
     settings = request.app.state.settings
+    last_auto_run, has_ready_sources = _auto_sync_status(db)
     return render(
         request,
         "admin/config.html",
@@ -40,6 +67,8 @@ async def config_form(request: Request, db: DbSession, auth: AdminUser) -> Respo
                 "benefits_session_threshold": settings.benefits_session_threshold,
                 "cpt_exclusion_list": list(settings.cpt_exclusions),
             },
+            "last_auto_run": last_auto_run,
+            "has_ready_sources": has_ready_sources,
         },
     )
 
@@ -84,6 +113,7 @@ async def save_config(
             request=request,
             detail={"rejected": error},
         )
+        last_auto_run, has_ready_sources = _auto_sync_status(db)
         return render(
             request,
             "admin/config.html",
@@ -96,6 +126,8 @@ async def save_config(
                     "cpt_exclusion_list": list(settings.cpt_exclusions),
                 },
                 "error": error,
+                "last_auto_run": last_auto_run,
+                "has_ready_sources": has_ready_sources,
             },
             status_code=400,
         )
