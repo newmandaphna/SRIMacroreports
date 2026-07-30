@@ -474,6 +474,128 @@ def test_aging_buckets_by_session_age_and_excludes_credits(financial_user, with_
     assert total.total >= ag.total  # grand total spans every payer, displayed or not
 
 
+def test_aging_folds_payer_groups_before_deciding_which_payers_fit(financial_user, with_data):
+    """Slicing to the display limit before folding dropped real payers.
+
+    KS, PC and IA are all IBC. Each took one of the limited rows and then merged into a
+    single IBC row, so a table asked for three payers came back with two and the payer
+    it dropped was a real one displaced by rows that no longer existed by the time it
+    rendered.
+    """
+    from datetime import timedelta
+    from decimal import Decimal
+
+    from app.models.data_source import DataSource
+    from app.models.visit import Visit
+    from app.reporting import queries
+    from app.reporting.periods import today_in
+
+    today = today_in("America/New_York")
+    groups = {"KS": "IBC", "PC": "IBC", "IA": "IBC"}
+
+    with financial_user.app.state.db.session() as db:
+        source = db.execute(select(DataSource)).scalars().first()
+        therapist = db.execute(select(Therapist)).scalars().first()
+
+        def owed(payer, balance):
+            return Visit(
+                source_id=source.id,
+                therapist_id=therapist.id,
+                patient_name=f"Patient AF{payer}",
+                patient_name_normalized=f"PATIENT AF{payer}",
+                dos=today - timedelta(days=10),
+                cpt="90837",
+                cpt_base="90837",
+                insurance_short=payer,
+                total_paid=Decimal("0.00"),
+                total_due=Decimal(str(balance)),
+                total_balance=Decimal(str(balance)),
+            )
+
+        # The three member codes outrank the two independents on their own, so a
+        # pre-fold slice of three keeps only them.
+        db.add_all(
+            [
+                owed("KS", "500.00"),
+                owed("PC", "400.00"),
+                owed("IA", "300.00"),
+                owed("AET", "200.00"),
+                owed("CIG", "100.00"),
+            ]
+        )
+
+    with financial_user.app.state.db.session() as db:
+        rows, _ = queries.aging_by_insurance(db, today=today, limit=3, groups=groups)
+
+    labels = [r.label for r in rows]
+    assert len(rows) == 3, f"asked for three payers and got {labels}"
+    assert labels[0] == "IBC"
+    assert rows[0].total == Decimal("1200.00"), "the member codes must add up, not compete"
+    assert {"AET", "CIG"} <= set(labels), "both independents were displaced by folded rows"
+
+
+def test_aging_honours_the_therapist_filter(financial_user, with_data):
+    """Debt shown beside one therapist's sessions reads as that therapist's debt.
+
+    The date range is deliberately still ignored, because an old balance does not stop
+    being owed when the picker moves. Who and where is a different question from when.
+    """
+    from datetime import timedelta
+    from decimal import Decimal
+
+    from app.models.data_source import DataSource
+    from app.models.therapist import EmploymentType
+    from app.models.visit import Visit
+    from app.reporting import queries
+    from app.reporting.periods import today_in
+
+    today = today_in("America/New_York")
+
+    with financial_user.app.state.db.session() as db:
+        source = db.execute(select(DataSource)).scalars().first()
+        mine = db.execute(select(Therapist)).scalars().first()
+        theirs = Therapist(
+            display_name="Someone Else", employment_type=EmploymentType.SALARIED_BENEFITS
+        )
+        db.add(theirs)
+        db.flush()
+        mine_id, theirs_id = mine.id, theirs.id
+
+        def owed(therapist_id, tag, balance):
+            return Visit(
+                source_id=source.id,
+                therapist_id=therapist_id,
+                patient_name=f"Patient AH{tag}",
+                patient_name_normalized=f"PATIENT AH{tag}",
+                dos=today - timedelta(days=40),
+                cpt="90837",
+                cpt_base="90837",
+                insurance_short="AET",
+                total_paid=Decimal("0.00"),
+                total_due=Decimal(str(balance)),
+                total_balance=Decimal(str(balance)),
+            )
+
+        db.add_all([owed(mine_id, "1", "250.00"), owed(theirs_id, "2", "750.00")])
+
+    with financial_user.app.state.db.session() as db:
+        unfiltered, unfiltered_total = queries.aging_by_insurance(db, today=today)
+        filtered, filtered_total = queries.aging_by_insurance(
+            db,
+            today=today,
+            filters=queries.Filters(
+                start=today, end=today, cpt_exclusions=(), therapist_ids=(mine_id,)
+            ),
+        )
+
+    assert next(r for r in unfiltered if r.key == "AET").total == Decimal("1000.00")
+    assert next(r for r in filtered if r.key == "AET").total == Decimal("250.00")
+    assert filtered_total.total == Decimal("250.00"), (
+        "the grand total must narrow with the rows, or the table cannot add up"
+    )
+    assert unfiltered_total.total >= Decimal("1000.00")
+
+
 def test_aging_section_renders_on_the_financial_page(financial_user, with_data):
     """The fixture has no open balances, so the section says so instead of showing
     an all-zero table. The bucketed table itself is covered by the query test."""
@@ -490,6 +612,18 @@ def test_month_review_renders_a_chosen_month(financial_user, with_data):
     assert "April 2026 in review" in page
     assert "Week by week" in page
     assert "Where the money came from" in page
+
+
+def test_month_review_folds_payer_groups_like_every_other_page(financial_user, with_data):
+    """The fixture bills KS, which is a member code of IBC in the default groups.
+
+    The month page skipped the fold, so the same money read as KS here and IBC on the
+    Financial page. Two names for one payer across two pages of the same practice is a
+    figure that cannot be reconciled by the person reading it.
+    """
+    page = financial_user.get("/reports/month?month=2026-04").text
+    assert "IBC" in page
+    assert ">KS<" not in page
 
 
 def test_month_review_default_and_garbage_fall_back_to_last_completed_month(

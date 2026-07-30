@@ -195,8 +195,16 @@ def _is_session(exclusions: tuple[str, ...]):
     return Visit.cpt_base.notin_(exclusions)
 
 
-def _base_conditions(filters: Filters) -> list:
-    conditions = [Visit.dos >= filters.start, Visit.dos <= filters.end]
+def _population_conditions(filters: Filters) -> list:
+    """Everything the filter bar narrows EXCEPT the date range.
+
+    Separate from the dates because some figures are deliberately computed over the
+    whole record while still belonging to the filtered population: a patient's first
+    ever session, for instance, has to be looked for outside the window or a returning
+    patient reads as new, but it must still be their first session with the therapist
+    the page is filtered to.
+    """
+    conditions = []
     if filters.therapist_ids:
         conditions.append(Visit.therapist_id.in_(filters.therapist_ids))
     if filters.locations:
@@ -207,6 +215,14 @@ def _base_conditions(filters: Filters) -> list:
         else:
             conditions.append(Visit.location_short.in_(filters.locations))
     return conditions
+
+
+def _base_conditions(filters: Filters) -> list:
+    return [
+        Visit.dos >= filters.start,
+        Visit.dos <= filters.end,
+        *_population_conditions(filters),
+    ]
 
 
 def _session_count_expr(exclusions: tuple[str, ...]):
@@ -471,20 +487,31 @@ class AgingRow:
     total: Decimal
 
 
+# Enough payers to fold member codes into their groups before the list is cut down to
+# the displayed length. The real sheet carries about thirty distinct payer codes.
+_AGING_FETCH = 200
+
+
 def aging_by_insurance(
     db: Session,
     *,
     today: date,
     limit: int = 12,
     groups: dict[str, str] | None = None,
+    filters: Filters | None = None,
 ) -> tuple[list[AgingRow], AgingRow]:
     """Open balances bucketed by the age of the session they sit on, per payer.
 
-    Deliberately unfiltered by the page's date range: an old balance does not stop
-    being owed because the picker shows April. Aged by date of service, because the
-    source sheet carries no payment or claim dates; say so wherever this renders.
-    Credits (negative balances) are excluded rather than netted, so a payer's old
-    debt cannot hide behind a recent overpayment. Still no patient columns.
+    Deliberately unfiltered by the page's date RANGE: an old balance does not stop
+    being owed because the picker shows April. The therapist and location filters do
+    apply when given, because those narrow which work is being looked at rather than
+    when: a page filtered to one therapist that showed the whole practice's debt beside
+    that therapist's sessions read as though the debt were theirs.
+
+    Aged by date of service, because the source sheet carries no payment or claim
+    dates; say so wherever this renders. Credits (negative balances) are excluded
+    rather than netted, so a payer's old debt cannot hide behind a recent overpayment.
+    Still no patient columns.
     """
     b30, b60, b90 = (today - timedelta(days=n) for n in (30, 60, 90))
     bucket_cases = (
@@ -494,20 +521,23 @@ def aging_by_insurance(
         case((Visit.dos < b90, Visit.total_balance), else_=0),
     )
     sums = [func.coalesce(func.sum(expr), 0) for expr in bucket_cases]
+    scope = [Visit.total_balance > 0, *(_population_conditions(filters) if filters else [])]
 
+    # Over-fetched on purpose. Slicing to `limit` before folding meant KS, PC and IA
+    # each spent one of the twelve rows and then merged into a single IBC row, so the
+    # table showed fewer payers than it was asked for and the payers it dropped were
+    # real ones displaced by rows that no longer existed.
     rows = db.execute(
         select(Visit.insurance_short, *sums, _money(Visit.total_balance))
-        .where(Visit.total_balance > 0)
+        .where(and_(*scope))
         .group_by(Visit.insurance_short)
         .order_by(func.sum(Visit.total_balance).desc())
-        .limit(limit)
+        .limit(_AGING_FETCH)
     ).all()
 
     # Grand totals over ALL open balances, not just the displayed payers, so the
     # bottom line never quietly shrinks because a small payer fell off the list.
-    grand = db.execute(
-        select(*sums, _money(Visit.total_balance)).where(Visit.total_balance > 0)
-    ).one()
+    grand = db.execute(select(*sums, _money(Visit.total_balance)).where(and_(*scope))).one()
 
     payer_rows = [
         AgingRow(
@@ -533,6 +563,7 @@ def aging_by_insurance(
                     total=target.total + row.total,
                 )
         payer_rows = sorted(folded.values(), key=lambda r: r.total, reverse=True)
+    payer_rows = payer_rows[:limit]
     total_row = AgingRow(
         key="",
         label="All payers",

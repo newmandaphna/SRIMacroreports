@@ -177,6 +177,44 @@ def financial_user(client):
     return client
 
 
+def test_payer_concentration_folds_the_member_codes_into_their_group(client, practice):
+    """The insight that fires exactly when it matters least, before this fix.
+
+    KS, PC and IA are one payer under three member codes. Unfolded, they competed with
+    each other for the top spot, so the practice's dominant payer read as three medium
+    ones and no concentration insight ever fired for it. The case worth knowing about
+    was the case the insight could not see.
+    """
+    with client.app.state.db.session() as db:
+        for weeks_ago in range(1, 13):
+            monday = completed_week_start(weeks_ago)
+            # 9 sessions a week under the three IBC codes, 3 under an independent.
+            for i, payer in enumerate(["KS", "PC", "IA"] * 3 + ["AET"] * 3):
+                db.add(
+                    Visit(
+                        source_id=practice["source"],
+                        therapist_id=practice["therapist"],
+                        patient_name=f"Patient B{weeks_ago}x{i}",
+                        patient_name_normalized=f"PATIENT B{weeks_ago}X{i}",
+                        dos=monday + timedelta(days=i % 5),
+                        cpt="90837",
+                        cpt_base="90837",
+                        insurance_short=payer,
+                        total_paid=Decimal("150.00"),
+                        total_due=Decimal("150.00"),
+                        total_balance=Decimal("0.00"),
+                    )
+                )
+
+    report = insights_for(client)
+    assert "payer_concentration" in keys(report), (
+        "three quarters of revenue under one payer must be visible"
+    )
+    insight = by_key(report, "payer_concentration")
+    assert "IBC" in insight.headline
+    assert "75%" in insight.headline
+
+
 def test_insights_page_renders_for_the_financial_grant(financial_user, practice):
     seed_weeks(financial_user, practice, {n: 15 for n in range(1, 13)})
     page = financial_user.get("/reports/insights")

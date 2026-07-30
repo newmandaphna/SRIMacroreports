@@ -406,6 +406,7 @@ async def month_review(
         db,
         queries.Filters(start=chosen, end=month_end, cpt_exclusions=ctx.config.cpt_exclusions),
         limit=5,
+        groups=ctx.config.insurance_groups,
     )
 
     def deltas(totals: queries.Totals) -> dict:
@@ -598,6 +599,7 @@ async def financial(request: Request, db: DbSession, ctx: Ctx, auth: FinancialUs
                 db,
                 today=today_in(ctx.config.timezone),
                 groups=ctx.config.insurance_groups,
+                filters=ctx.filters,
             ),
             "aging_labels": queries.AGING_BUCKET_LABELS,
             "can_see_utilization": auth.user.can_view(Module.THERAPIST_UTILIZATION)[0],
@@ -726,7 +728,14 @@ def _export_rows(
         )
 
     if table == "aging":
-        rows, total_row = queries.aging_by_insurance(db, today=today_in(ctx.config.timezone))
+        # Same arguments as the page renders with. An export that folds payers
+        # differently from the table it came from is two answers to one question.
+        rows, total_row = queries.aging_by_insurance(
+            db,
+            today=today_in(ctx.config.timezone),
+            groups=ctx.config.insurance_groups,
+            filters=ctx.filters,
+        )
         header = ["Payer", *queries.AGING_BUCKET_LABELS, "Total"]
         body: list[Iterable[object]] = [[r.label, *r.buckets, r.total] for r in rows]
         body.append([total_row.label, *total_row.buckets, total_row.total])

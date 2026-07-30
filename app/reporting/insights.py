@@ -329,7 +329,11 @@ def build_insights(
     # ------------------------------------------------------------- payer concentration
     if history_weeks >= MIN_TREND_WEEKS:
         conc_window = window(min(26, history_weeks))
-        payers = queries.by_insurance(db, conc_window, limit=50)
+        # Folded into the configured payer groups, like everywhere else. Without it KS,
+        # PC and IA competed against each other for the top spot, so the practice's
+        # largest payer could read as three medium ones and no concentration insight
+        # ever fired for it, which is the one case worth knowing about.
+        payers = queries.by_insurance(db, conc_window, limit=50, groups=config.insurance_groups)
         total_collected = sum((p.collected for p in payers), ZERO)
         if payers and total_collected > ZERO:
             top = payers[0]
