@@ -415,6 +415,29 @@ async def delete_source(
             "Deactivate it instead; imported rows are never deleted from here.",
         )
 
+    # A source with no visits can still be carrying the whole account of what went
+    # wrong. The rejections cascade with it, so deleting a sheet whose every row was
+    # refused, which is exactly the sheet an admin is most tempted to delete, silently
+    # destroyed the queue explaining why. Nothing said so, and nothing brought it back.
+    open_rejections = db.execute(
+        select(func.count(ImportErrorRow.id)).where(
+            ImportErrorRow.source_id == source.id,
+            ImportErrorRow.resolved_at.is_(None),
+        )
+    ).scalar_one()
+
+    if open_rejections and source.provider is not SourceProvider.DEMO:
+        return _detail_redirect_with_flash(
+            source.id,
+            f"Not deleted: {open_rejections} rejected row(s) from this source are still "
+            "unreviewed, and they would be deleted with it. Work through the review "
+            "queue first, or deactivate the source and leave the queue intact.",
+        )
+
+    run_count = db.execute(
+        select(func.count(SyncRun.id)).where(SyncRun.source_id == source.id)
+    ).scalar_one()
+
     label = source.label
     audit.record(
         db,
@@ -427,6 +450,11 @@ async def delete_source(
             "deleted": label,
             "provider": source.provider.value,
             "visits_deleted": visit_count,
+            # What went with it. Both cascade, so the log is the only place they survive.
+            "sync_runs_deleted": run_count,
+            "resolved_rejections_deleted": db.execute(
+                select(func.count(ImportErrorRow.id)).where(ImportErrorRow.source_id == source.id)
+            ).scalar_one(),
         },
     )
     db.delete(source)

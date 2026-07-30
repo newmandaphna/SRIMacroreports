@@ -443,12 +443,21 @@ def run_sync(
             run.id,
             last_examined_row=source.header_row + result.rows_read,
             dry_run=dry_run,
+            tab_name=source.tab_name,
+            header_row=source.header_row,
         )
 
     if not dry_run and result.ok:
         source.last_synced_at = utcnow()
-        source.coverage_start = result.date_min
-        source.coverage_end = result.date_max
+        # Only when the run actually read something. A run over an empty tab, or over a
+        # tab an admin has just repointed, has no dates of its own, and writing those
+        # Nones erased the source's recorded coverage while its rows stayed in the
+        # database. The source then claimed to cover nothing, the status page said so,
+        # and the vintage comparison that decides which sheet may revise money lost the
+        # one signal it has.
+        if result.rows_read > 0:
+            source.coverage_start = result.date_min
+            source.coverage_end = result.date_max
         db.flush()
         source.row_count = _count_visits(db, source.id)
 
@@ -462,6 +471,8 @@ def _supersede_stale_errors(
     *,
     last_examined_row: int,
     dry_run: bool,
+    tab_name: str | None,
+    header_row: int,
 ) -> int:
     """Resolve unresolved errors that earlier runs of this source left behind.
 
@@ -469,9 +480,13 @@ def _supersede_stale_errors(
     note naming the run whose account replaced them, so nothing is silently dropped.
     A failed run never supersedes anything, because it did not produce a new account.
 
-    Four deliberate boundaries:
+    Five deliberate boundaries:
     - Only errors at or before `last_examined_row`. The current run's account covers
       exactly the sheet rows it read, no further.
+    - Only errors from runs that read the same tab at the same header row. A row
+      reference is a row NUMBER, and row 5 of one tab is not row 5 of another, so after
+      an admin repointed the tab this resolved another sheet's open rejections on the
+      strength of a read that never looked at them.
     - Only errors from runs with a lower id. Two overlapping syncs must not let the
       older read mark the newer read's account as stale.
     - Only errors whose row reference is a plain row number. One that is not cannot be
@@ -482,15 +497,19 @@ def _supersede_stale_errors(
       fixed rows are still unimported, or every page would call the source fully
       accounted for when its data exists nowhere.
     """
-    stmt = select(ImportErrorRow.id, ImportErrorRow.source_row_ref).where(
-        ImportErrorRow.source_id == source_id,
-        ImportErrorRow.sync_run_id < current_run_id,
-        ImportErrorRow.resolved_at.is_(None),
+    stmt = (
+        select(ImportErrorRow.id, ImportErrorRow.source_row_ref)
+        .join(SyncRun, SyncRun.id == ImportErrorRow.sync_run_id)
+        .where(
+            ImportErrorRow.source_id == source_id,
+            ImportErrorRow.sync_run_id < current_run_id,
+            ImportErrorRow.resolved_at.is_(None),
+            SyncRun.tab_name.is_(None) if tab_name is None else SyncRun.tab_name == tab_name,
+            SyncRun.header_row == header_row,
+        )
     )
     if dry_run:
-        stmt = stmt.join(SyncRun, SyncRun.id == ImportErrorRow.sync_run_id).where(
-            SyncRun.mode == SyncMode.DRY_RUN
-        )
+        stmt = stmt.where(SyncRun.mode == SyncMode.DRY_RUN)
     candidates = db.execute(stmt).all()
     stale_ids = [
         row_id
