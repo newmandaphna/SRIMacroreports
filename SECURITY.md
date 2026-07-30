@@ -307,7 +307,10 @@ query added in a later phase is covered without anyone remembering to add it, an
 proves the assertion is not vacuous by showing what a leaking statement looks like.
 
 Two further consequences, also tested: no report page renders a patient name, and no CSV export
-contains one.
+contains one. The provenance layer (`app/reporting/provenance.py`), which explains how each figure
+was calculated, is held to the same rule: it selects no patient column, and a test asserts that no
+rendered explanation contains a patient name. Provider names inside an explanation are added only
+for a reader holding the therapist utilization grant, decided when the explanation is built.
 
 Because these views hold no identity, they are deliberately **not** logged as PHI reads. Logging
 them would bury the genuine PHI reads in noise, which is the same failure as not logging at all.

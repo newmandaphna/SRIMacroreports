@@ -739,6 +739,49 @@ never creates a therapist.
 
 ---
 
+## 5e. Provenance: every figure explains itself
+
+### A-070 An explanation is generated from the calculation, never written beside it
+
+A reader can open any headline figure and see the definition, the arithmetic, the row
+census, and the caveats (`/reports/explain/<key>`, built by `app/reporting/provenance.py`).
+
+The design decision worth recording is the one that makes it trustworthy. A `Derivation`
+holds two independent expressions of the same number: `value`, read straight off the
+attribute the page prints, and `recomputed`, evaluated from the terms and components the
+explanation states. A parametrized test compares them for every figure across six date
+ranges, including an empty one, a single day, a window holding a credit balance, and one
+with the exclusion list turned off. A change to any calculation that does not also update
+its stated arithmetic turns that test red.
+
+The reason for the belt and braces: a wrong explanation is worse than no explanation,
+because it teaches a reader to trust a number they should have questioned. That test
+already earned its place, catching the exclusion caveat reading the stored configuration
+instead of the filters the query actually applied.
+
+### A-071 Explanations describe the filters, not the configuration
+
+Where the two could differ, the explanation describes what produced the number in front
+of the reader. The CPT exclusion sentence reads `filters.cpt_exclusions`, so a report run
+with a different list explains itself honestly rather than reciting the current setting.
+
+### A-072 Section level for tables, per figure for tiles
+
+Tiles carry their own explanation link. Tables get one explanation per section, because
+the financial page would otherwise carry about 135 links, which is noise rather than
+transparency. Charts get the section treatment too, since a chart point cannot be clicked
+without JavaScript and this application deliberately keeps its pages working without it.
+
+### A-073 Provider names in an explanation follow the utilization grant
+
+The count of providers below their expectation is visible to anyone with the financial
+grant, because it is an aggregate. The names behind it are added only for a reader who
+already holds the therapist utilization grant, decided when the derivation is built rather
+than hidden in the template. A financial only reader sees the counts and a sentence saying
+why the names are absent.
+
+---
+
 ## 6. Conflicts between the build prompt and observed reality
 
 Logged per the rule that the prompt wins but conflicts get flagged.
