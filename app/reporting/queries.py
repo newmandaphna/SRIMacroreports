@@ -130,6 +130,10 @@ class TherapistRow:
     cancellations: int = 0
     weeks_in_range: Decimal = Decimal(1)
     notes: str | None = None
+    # Whether the person is still on the roster. A departed therapist's numbers are
+    # history rather than a finding, so anything that reads a fall as news has to be
+    # able to tell the two apart.
+    active: bool = True
 
     @property
     def sessions_per_week(self) -> Decimal:
@@ -367,6 +371,7 @@ def by_therapist(
             Therapist.employment_type,
             Therapist.discipline,
             Therapist.weekly_expected_sessions,
+            Therapist.active,
             _session_count_expr(filters.cpt_exclusions),
             _money(Visit.total_paid),
             _cancellation_count_expr(),
@@ -378,6 +383,7 @@ def by_therapist(
             Therapist.employment_type,
             Therapist.discipline,
             Therapist.weekly_expected_sessions,
+            Therapist.active,
         )
         .having(or_(Therapist.active.is_(True), func.count(Visit.id) > 0))
         .order_by(func.lower(Therapist.display_name))
@@ -393,9 +399,10 @@ def by_therapist(
             employment_type=EmploymentType(r[2]),
             discipline=Discipline(r[3]),
             weekly_expected_sessions=r[4],
-            sessions=int(r[5] or 0),
-            collected=_as_money(r[6]),
-            cancellations=int(r[7] or 0),
+            active=bool(r[5]),
+            sessions=int(r[6] or 0),
+            collected=_as_money(r[7]),
+            cancellations=int(r[8] or 0),
             weeks_in_range=Decimal(weeks_in_range) if weeks_in_range > 0 else Decimal(1),
         )
         for r in rows

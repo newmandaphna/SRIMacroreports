@@ -15,7 +15,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, Query, Request
@@ -28,7 +28,7 @@ from app.models.therapist import Therapist
 from app.models.types import utcnow
 from app.models.utilization import UtilizationNote
 from app.reporting import queries
-from app.reporting.periods import Granularity, period_start
+from app.reporting.periods import Granularity, next_period, period_start, today_in
 from app.reporting.weekly import WEEK_WINDOW_CHOICES, parse_week_count, weekly_counts
 from app.routers.reports import Ctx, ReportContext, _ranked_for_board
 from app.security import audit
@@ -250,13 +250,31 @@ async def therapist_drill_in(
     )
     measured = expectation.kind != "none"
     graded = measured and ctx.granularity is Granularity.WEEK
+
+    # A bucket the range only partly covers, or one that has not finished happening
+    # yet, holds fewer sessions than the week it stands for. Grading it against a whole
+    # week's expectation marked the current week "below" every Monday and Tuesday, and
+    # any custom range starting mid week opened with a red row for a week that was
+    # mostly outside the range. Those rows are shown, because their sessions are real,
+    # and left ungraded, because the comparison is not.
+    today = today_in(ctx.config.timezone)
+    horizon = min(ctx.filters.end, today)
+
+    def complete(start: date) -> bool:
+        span_end = next_period(start, ctx.granularity) - timedelta(days=1)
+        return start >= ctx.filters.start and span_end <= horizon
+
     periods_with_status = [
         (
             point,
-            ctx.config.status_for(
-                therapist.employment_type,
-                therapist.weekly_expected_sessions,
-                point.sessions,
+            (
+                ctx.config.status_for(
+                    therapist.employment_type,
+                    therapist.weekly_expected_sessions,
+                    point.sessions,
+                )
+                if complete(point.start)
+                else "partial"
             )
             if graded
             else "",

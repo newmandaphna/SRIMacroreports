@@ -30,6 +30,14 @@
 
 {% include "reports/_filters.html" %}
 
+{% if totals.visits == 0 %}
+{# A range holding no imported rows for this person is not a range in which they did
+   nothing. Before this guard the page showed zero sessions, zero collected, and a
+   table of empty weeks every one of which was graded "below", which reads as a
+   finding about a real person's work and is entirely an artefact of the picker. #}
+{% include "reports/_empty.html" %}
+{% else %}
+
 <div class="card-grid">
   <div class="card">
     <p class="kpi-question">How much work in this range?</p>
@@ -114,6 +122,11 @@
           <span class="pill pill--watch">watch</span>
           {% elif status == "ok" %}
           <span class="pill pill--ok">at threshold</span>
+          {% elif status == "partial" %}
+          {# The range covers only part of this week, or the week has not finished.
+             The sessions are real; the comparison to a full week's expectation is
+             not, so no verdict is offered for it. #}
+          <span class="pill pill--neutral" title="Part of this week falls outside the range or has not happened yet">in progress</span>
           {% else %}
           <span class="text-muted">-</span>
           {% endif %}
@@ -153,6 +166,7 @@
   </p>
   {% endif %}
 </div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}

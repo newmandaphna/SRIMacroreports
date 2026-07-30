@@ -193,12 +193,25 @@ Ctx = Annotated[ReportContext, Depends(context_dependency)]
 
 # ------------------------------------------------------------------------------ KPIs
 
+_NO_COMPARISON = (
+    "No comparison: the record holds no imported rows for the preceding period of the "
+    "same length, so there is nothing to compare against rather than a period of zero."
+)
+
 
 def build_kpis(db: DbSession, ctx: ReportContext, current: queries.Totals) -> list[Kpi]:
     previous_range = ctx.range.previous()
     previous = queries.totals(
         db, ctx.filters.replaced(start=previous_range.start, end=previous_range.end)
     )
+
+    # A comparison window holding no imported rows at all is not a period in which the
+    # practice collected nothing. It is a period the record does not cover, which is
+    # the normal state of the first quarter imported and of any range that reaches back
+    # before the earliest source. Treated as a real zero, every card read as growth
+    # from nothing: the first month showed the whole month's revenue as an increase.
+    # None means no comparison, and the cards then show the figure without a delta.
+    comparable = previous if previous.visits > 0 else None
 
     trend = queries.by_period(
         db, ctx.filters, ctx.granularity, week_starts_monday=ctx.config.week_starts_monday
@@ -216,7 +229,8 @@ def build_kpis(db: DbSession, ctx: ReportContext, current: queries.Totals) -> li
             question="What came in the door?",
             label="Revenue collected",
             value=current.collected,
-            previous=previous.collected,
+            previous=comparable.collected if comparable else None,
+            no_comparison_reason=_NO_COMPARISON if comparable is None else None,
             kind="currency",
             sparkline=collected_spark,
             href=f"/reports/financial?{qs}",
@@ -226,7 +240,8 @@ def build_kpis(db: DbSession, ctx: ReportContext, current: queries.Totals) -> li
             question="How much clinical work did we do?",
             label="Sessions",
             value=current.sessions,
-            previous=previous.sessions,
+            previous=comparable.sessions if comparable else None,
+            no_comparison_reason=_NO_COMPARISON if comparable is None else None,
             kind="count",
             sparkline=session_spark,
             href=f"/reports/financial?{qs}",
@@ -240,7 +255,8 @@ def build_kpis(db: DbSession, ctx: ReportContext, current: queries.Totals) -> li
             question="What are we still owed?",
             label="Outstanding",
             value=current.outstanding,
-            previous=previous.outstanding,
+            previous=comparable.outstanding if comparable else None,
+            no_comparison_reason=_NO_COMPARISON if comparable is None else None,
             kind="currency",
             lower_is_better=True,
             href=f"/reports/financial?{qs}",
