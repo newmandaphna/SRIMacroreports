@@ -112,6 +112,14 @@ class Derivation:
             return Decimal(str(self.terms[0].value)) / denominator * scale
         if self.operation == "subtract" and len(self.terms) >= 2:
             return Decimal(str(self.terms[0].value)) - Decimal(str(self.terms[1].value))
+        if self.operation == "count" and self.terms:
+            # A count states its result as its last term, so comparing that against the
+            # printed figure checks the same thing the other operations check: that the
+            # arithmetic shown to the reader and the number above it have not drifted
+            # apart. Without this rule a counted figure recomputed to None, `agrees`
+            # returned True for want of anything to compare, and the drift test passed
+            # over it in silence.
+            return Decimal(str(self.terms[-1].value))
         return None
 
     @property
@@ -400,9 +408,14 @@ def build_derivation(
                 Term("Cancellations with a fee", totals.cancellations_with_fee),
                 Term("Fee money collected", totals.no_show_fee_revenue, "money"),
             ],
-            components=[],
-            components_sum_to_value=False,
-            components_note="",
+            # Per period, so the figure states arithmetic that can be added up. With no
+            # components a summed figure recomputed to None, which made `agrees` true by
+            # default and let the drift test pass over this one without checking it.
+            components=[
+                Component(label, value)
+                for label, value in _no_show_by_period(db, filters, config, granularity)
+            ],
+            components_note="Fee money collected per period. These add up to the total.",
             census=census,
             caveats=[
                 "Real revenue but not clinical revenue, so it is broken out rather than "
@@ -571,6 +584,33 @@ def build_derivation(
         )
 
     return None
+
+
+def _no_show_by_period(
+    db: Session,
+    filters: queries.Filters,
+    config: PracticeConfig,
+    granularity: Granularity,
+) -> list[tuple[str, Decimal]]:
+    """No show fee money per period.
+
+    One small aggregate per bucket rather than a new query builder. The period series is
+    capped, and this runs only when a reader opens this one explanation.
+    """
+    from datetime import timedelta
+
+    from app.reporting.periods import format_period, next_period, period_series
+
+    out: list[tuple[str, Decimal]] = []
+    for start in period_series(
+        filters.start, filters.end, granularity, week_starts_monday=config.week_starts_monday
+    ):
+        end = min(next_period(start, granularity) - timedelta(days=1), filters.end)
+        bucket = filters.replaced(start=max(start, filters.start), end=end)
+        out.append(
+            (format_period(start, granularity), queries.totals(db, bucket).no_show_fee_revenue)
+        )
+    return out
 
 
 def _weeks(filters: queries.Filters) -> Decimal:

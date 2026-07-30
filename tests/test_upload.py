@@ -198,14 +198,25 @@ def test_a_bad_file_flashes_the_error(admin_client, upload_source):
 
 
 def test_a_viewer_cannot_upload(client, upload_source):
+    """Refused by the authorization check, not by a missing CSRF token.
+
+    This posted no token, so the CSRF middleware answered before the route was reached:
+    it passed without exercising the admin guard at all, and accepted 303 as well as
+    403, which is the status a successful upload redirect uses.
+    """
     with client.app.state.db.session() as db:
         email = make_user(db, email="viewer.upload@example.invalid", role=Role.VIEWER).email
     sign_in(client, email)
+
+    token = token_from(client.get("/change-password").text)
     response = client.post(
         f"/admin/sources/{upload_source}/upload",
-        data={"mode": "live"},
+        data={"mode": "live", "csrf_token": token},
         files={"file": ("history.csv", CSV_CONTENT, "text/csv")},
         follow_redirects=False,
     )
-    assert response.status_code in (303, 403)
+    assert response.status_code == 403, (
+        "a viewer must be refused by the admin guard, and a 303 would mean it ran"
+    )
+    assert "administrators" in response.text
     assert visit_count(client, upload_source) == 0

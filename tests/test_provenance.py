@@ -106,6 +106,17 @@ def test_the_stated_arithmetic_reproduces_the_figure(client, ledger, key):
     for name, start, end, exclusions in WINDOWS:
         d = derive(client, key, start, end, exclusions=exclusions)
         assert d is not None, f"{key} produced no derivation"
+
+        # `agrees` is true when there is nothing to compare, which is right for the page
+        # and useless as a guard: two of the ten figures stated no checkable arithmetic
+        # at all and this assertion passed over them in silence. Requiring a recomputed
+        # value makes the exemption impossible to acquire by accident.
+        if d.value is not None:
+            assert d.recomputed is not None, (
+                f"{key} in the {name} window states no arithmetic that can be checked, so "
+                "the agreement assertion below proves nothing about it"
+            )
+
         assert d.agrees, (
             f"{key} in the {name} window: the stated arithmetic gives {d.recomputed} "
             f"but the figure is {d.value}, a gap of {d.discrepancy}"
@@ -128,13 +139,27 @@ def test_the_row_census_reconciles(client, ledger, key):
     assert d.census.reconciles, "counted plus excluded must equal imported"
 
 
-def test_the_guard_catches_a_planted_disagreement(client, ledger):
-    """Prove the drift assertion is not vacuous."""
-    d = derive(client, "collected", date(2026, 4, 1), date(2026, 5, 31))
+@pytest.mark.parametrize("key", EXPLAINABLE)
+def test_the_guard_catches_a_planted_disagreement(client, ledger, key):
+    """Prove the drift assertion is not vacuous, for every figure and not just one.
+
+    It used to plant its disagreement in "collected" alone, which is a sum with
+    components and therefore the best covered case there is. The two figures that
+    recomputed to nothing, and so could never disagree with anything, went unexamined by
+    the very test written to show the guard bites.
+    """
+    d = derive(client, key, date(2026, 4, 1), date(2026, 5, 31))
+    if d.value is None:
+        pytest.skip(f"{key} is unavailable in this window, which it states instead")
+
     assert d.agrees
-    d.value = Decimal(str(d.value)) + Decimal("100.00")
-    assert not d.agrees
-    assert d.discrepancy == Decimal("100.00")
+    original = Decimal(str(d.value))
+    d.value = original + Decimal("100.00")
+    assert not d.agrees, f"{key} cannot be made to disagree, so its guard checks nothing"
+    # Not exactly 100 for a rate, whose printed figure is quantized and whose recomputed
+    # value is not. Close to 100 and far outside the tolerance is the whole claim.
+    assert d.discrepancy is not None
+    assert Decimal("99") < d.discrepancy < Decimal("101")
 
 
 # ------------------------------------------------------------ specific arithmetic

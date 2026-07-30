@@ -26,13 +26,25 @@ def test_the_driver_suffix_is_stripped_for_pg_dump():
 
 
 def test_a_viewer_cannot_download_a_backup(client):
+    """Refused by the authorization check, not by a missing CSRF token.
+
+    This posted no token, so the CSRF middleware answered it before the route was
+    reached: the test passed without ever exercising the admin guard, and would have
+    kept passing if the guard were deleted. It accepted 303 as well as 403, which is
+    the status a successful redirect uses, so half its allowed outcomes were wrong.
+    """
     with client.app.state.db.session() as db:
         email = make_user(db, email="nobackup@example.invalid", role=Role.VIEWER).email
     sign_in(client, email)
-    page = client.get("/reports/therapist-utilization", follow_redirects=False)
-    response = client.post("/admin/backup", data={}, follow_redirects=False)
-    assert response.status_code in (303, 403)
-    assert page is not None  # keep the sign-in exercised
+
+    # A real, session bound token, from a page every signed in user can open.
+    token = token_from(client.get("/change-password").text)
+    response = client.post("/admin/backup", data={"csrf_token": token}, follow_redirects=False)
+
+    assert response.status_code == 403, (
+        "a viewer must be refused by the admin guard, and a 303 would mean it ran"
+    )
+    assert "administrators" in response.text
 
 
 @pytest.mark.skipif(shutil.which("pg_dump") is None, reason="pg_dump not installed")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -109,10 +110,32 @@ def test_identity_stays_inside_aggregates(client, caseload):
         event.remove(engine, "before_cursor_execute", record)
 
     assert statements
-    for statement in statements:
-        if "patient_name_normalized" in statement:
-            assert "count(distinct" in statement or "group by" in statement, statement
-            assert not statement.strip().startswith("select visits.patient_name"), statement
+
+    # The loop below used to be the whole guard, and it could not fail. Nothing asserted
+    # that any statement mentioned the column at all, so a change that stopped this
+    # module touching patient identity, or a rename, would have left the loop skipping
+    # every statement and the test passing while proving nothing. And the forbidden
+    # prefix it looked for was "select visits.patient_name" when the table is `sessions`,
+    # so even a statement that did select the column outright could not have tripped it.
+    touching = [s for s in statements if "patient_name_normalized" in s]
+    assert touching, (
+        "no statement mentioned the patient identity column, so this guard checked "
+        "nothing. Either the module stopped using it, in which case say so here, or the "
+        "column was renamed and this test needs the new name."
+    )
+
+    for statement in touching:
+        assert "count(distinct" in statement or "group by" in statement, statement
+
+        # The real rule: the column may appear in a WHERE clause, in a GROUP BY, or
+        # inside COUNT(DISTINCT ...), but never as a selected output column. Checked
+        # against every select list in the statement, subqueries included, rather than
+        # against a guessed prefix of the whole string.
+        select_lists = re.findall(r"\bselect\b(.*?)\bfrom\b", statement, re.S)
+        assert select_lists, f"could not find a select list to check in: {statement}"
+        for select_list in select_lists:
+            bare = re.sub(r"count\s*\(\s*distinct.*?\)", "", select_list, flags=re.S)
+            assert "patient_name" not in bare, f"patient identity is a selected column: {statement}"
 
 
 @pytest.fixture

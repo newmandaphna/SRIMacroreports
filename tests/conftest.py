@@ -287,7 +287,16 @@ def make_user(
 
 
 def sign_in(test_client: TestClient, email: str, password: str = KNOWN_PASSWORD):
-    """Sign in and leave the session cookie on the client."""
+    """Sign in and leave the session cookie on the client.
+
+    Any existing session cookie is dropped first, and that is load bearing rather than
+    tidiness. The login POST carries no CSRF token, which the middleware allows only
+    when there is no session to bind a token to. Signing a second user in on a client
+    that already held a session was therefore rejected with a 403, silently, and the
+    previous user stayed signed in: a test that meant to check what a viewer cannot do
+    ran as the admin from the fixture and passed while proving the opposite.
+    """
+    test_client.cookies.delete("sri_session")
     return test_client.post(
         "/login",
         data={"email": email, "password": password},

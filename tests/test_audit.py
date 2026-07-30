@@ -53,24 +53,54 @@ def test_deleting_a_record_raises(client):
             session.delete(entry)
 
 
-def test_the_orm_has_no_bulk_edit_path_either(client):
-    """A bulk UPDATE or DELETE bypasses per instance events, so check it explicitly.
+def test_a_bulk_statement_really_does_bypass_the_orm_guard(client):
+    """Demonstrate the gap rather than describe it.
 
-    SQLAlchemy Core statements do reach the database. The mitigation is that no such
-    statement exists anywhere in the application, which this test documents by
-    demonstrating what one would do if someone added it.
+    The ORM event guard fires per instance, so a Core UPDATE or DELETE goes straight to
+    the database. That is a real limit on the immutability claim, and the compensating
+    control is `test_no_audit_mutation_in_application_code` below, which fails the build
+    if such a statement ever appears in the source.
+
+    This test used to end with `assert update is not None and delete is not None`, which
+    asserts only that two imported names exist. It could not fail for any reason
+    connected to the audit log, so the gap it claimed to document was undocumented and a
+    future ORM level fix would not have shown up here at all.
     """
     with client.app.state.db.session() as session:
         audit.record(session, action=AuditAction.SYNC_RUN, actor_label="test")
 
     with client.app.state.db.session() as session:
-        before = session.execute(select(AuditLog)).scalars().all()
-        assert len(before) == 1
+        assert len(session.execute(select(AuditLog)).scalars().all()) == 1
 
-    # Documented gap: a hand written bulk statement is not caught by ORM events. The
-    # control is that the codebase contains none, which test_no_audit_mutation_in_code
-    # below enforces at the source level.
-    assert update is not None and delete is not None
+    # Inside a savepoint, rolled back, so the demonstration leaves no mark.
+    session = client.app.state.db.session_factory()
+    try:
+        savepoint = session.begin_nested()
+        bulk_update = session.execute(
+            update(AuditLog)
+            .values(actor_label="rewritten")
+            .execution_options(synchronize_session=False)
+        )
+        bulk_delete = session.execute(delete(AuditLog).execution_options(synchronize_session=False))
+        savepoint.rollback()
+    finally:
+        session.rollback()
+        session.close()
+
+    assert bulk_update.rowcount == 1, (
+        "a Core UPDATE was refused, which would mean the guard now covers bulk "
+        "statements. Good news, and this test and its docstring need rewriting."
+    )
+    assert bulk_delete.rowcount == 1, (
+        "a Core DELETE was refused, which would mean the guard now covers bulk "
+        "statements. Good news, and this test and its docstring need rewriting."
+    )
+
+    # The row survives, because the demonstration was rolled back.
+    with client.app.state.db.session() as session:
+        surviving = session.execute(select(AuditLog)).scalars().all()
+    assert len(surviving) == 1
+    assert surviving[0].actor_label == "test"
 
 
 def test_no_audit_mutation_in_application_code():
