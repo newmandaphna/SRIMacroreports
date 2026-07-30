@@ -203,6 +203,132 @@ def test_re_syncing_either_quarter_changes_nothing(client, quarters):
     assert len(stored(client)) == 3
 
 
+# ------------------------------------- when the two sheets disagree about the money
+
+
+class RevisedClient:
+    """Like TwoQuarterClient, but each tab's rows are supplied by the test.
+
+    Needed because the interesting case is the shared visit carrying a different
+    amount on each sheet, which is the normal state of affairs: insurance pays weeks
+    after the date of service, so an export taken earlier shows less collected on the
+    same visit than one taken later.
+    """
+
+    def __init__(self, tabs: dict[str, list[list[object]]]) -> None:
+        self._tabs = tabs
+
+    def list_tabs(self, spreadsheet_id: str) -> list[str]:
+        return list(self._tabs)
+
+    def read_tab(self, spreadsheet_id: str, tab_name: str, header_row: int) -> SheetData:
+        rows = self._tabs[tab_name]
+        return SheetData(
+            headers=list(HEADERS),
+            rows=[list(r) for r in rows],
+            row_numbers=list(range(2, 2 + len(rows))),
+        )
+
+
+def partly_paid_row(dos: str) -> list[object]:
+    """The same visit as visit_row, exported before the insurance payment landed."""
+    return _row(
+        "HALVORSEN", "Patient AA", "PATAA", dos, "90837", "AET", 1, "", 15.0, 15.0, 160.0, 0.0
+    )
+
+
+def sync_with(client, source_id: int, tabs: dict[str, list[list[object]]]):
+    with client.app.state.db.session() as db:
+        source = db.get(DataSource, source_id)
+        return run_sync(db, source, RevisedClient(tabs), dry_run=False)
+
+
+def shared_visit(client) -> Visit:
+    return next(v for v in stored(client) if v.dos == date(2026, 6, 30))
+
+
+def test_an_older_sheet_cannot_revert_money_a_newer_one_recorded(client, quarters):
+    """The silent reversion: importing history used to overwrite current figures.
+
+    Q3's export runs to 6 July and records the insurance payment on the 30 June visit.
+    Q2's export stopped on 30 June, before that payment landed, so it still shows the
+    $160 outstanding. Whichever sheet synced last simply won, so backfilling Q2 wiped
+    $156.05 of collected revenue off a visit and nothing recorded that it had moved.
+    """
+    from app.models.data_source import RejectReason
+
+    tabs = {"Q2 Snapshot": [partly_paid_row(JUNE_30)], "Q3 Snapshot": Q3_ROWS}
+
+    sync_with(client, quarters["Q3 2026"], tabs)
+    assert shared_visit(client).total_paid == PER_VISIT
+
+    older = sync_with(client, quarters["Q2 2026"], tabs)
+
+    assert shared_visit(client).total_paid == PER_VISIT, (
+        "the earlier export reverted a payment it could not have seen"
+    )
+    assert older.rows_updated == 0
+
+    conflicts = [r for r in older.rejections if r.reason is RejectReason.CONFLICTING_SNAPSHOT]
+    assert len(conflicts) == 1, "a figure kept over another sheet's must be reviewable"
+    assert "Q3 2026" in (conflicts[0].detail or ""), "the message must name the other sheet"
+    assert "total_paid" in (conflicts[0].detail or "")
+
+
+def test_a_newer_sheet_may_still_revise_money(client, quarters):
+    """The guard must not freeze the first figure a visit ever had.
+
+    Payments landing after the date of service is the whole reason the money on a visit
+    changes, and the later export is the one that saw them. Reversed order from the test
+    above: Q2 lands the incomplete figure first, and Q3 must be allowed to correct it.
+    """
+    from app.models.data_source import RejectReason
+
+    tabs = {"Q2 Snapshot": [partly_paid_row(JUNE_30)], "Q3 Snapshot": Q3_ROWS}
+
+    sync_with(client, quarters["Q2 2026"], tabs)
+    assert shared_visit(client).total_paid == Decimal("15.00")
+
+    newer = sync_with(client, quarters["Q3 2026"], tabs)
+
+    assert shared_visit(client).total_paid == PER_VISIT, "the later export must be allowed to win"
+    assert newer.rows_updated == 1
+    assert not [r for r in newer.rejections if r.reason is RejectReason.CONFLICTING_SNAPSHOT]
+
+
+def test_a_source_re_exported_may_always_revise_its_own_rows(client, quarters):
+    """A source superseding itself is a correction, not a conflict, whatever its span."""
+    from app.models.data_source import RejectReason
+
+    sync_with(client, quarters["Q3 2026"], {"Q3 Snapshot": Q3_ROWS})
+    again = sync_with(
+        client,
+        quarters["Q3 2026"],
+        {"Q3 Snapshot": [partly_paid_row(JUNE_30), visit_row(JULY_06)]},
+    )
+
+    assert shared_visit(client).total_paid == Decimal("15.00")
+    assert not [r for r in again.rejections if r.reason is RejectReason.CONFLICTING_SNAPSHOT]
+
+
+def test_an_older_sheet_still_fills_gaps_the_newer_one_never_covered(client, quarters):
+    """Refusing a reversion must not refuse the backfill itself, which is the point of
+    importing history: rows the newer sheet never held have nothing to conflict with."""
+    sync_with(client, quarters["Q3 2026"], {"Q3 Snapshot": Q3_ROWS})
+    older = sync_with(
+        client,
+        quarters["Q2 2026"],
+        {"Q2 Snapshot": [visit_row(JUNE_29), partly_paid_row(JUNE_30)]},
+    )
+
+    assert older.rows_inserted == 1, "29 June exists on no other sheet and must land"
+    assert {v.dos for v in stored(client)} == {
+        date(2026, 6, 29),
+        date(2026, 6, 30),
+        date(2026, 7, 6),
+    }
+
+
 def test_provenance_records_where_a_visit_was_first_seen(client, quarters):
     """source_id and source_row_ref are the sheet and row a visit arrived on, and they
     stay that way. Reporting never reads either (A-022)."""

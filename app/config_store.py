@@ -169,6 +169,19 @@ def load(db: Session, settings: Settings) -> PracticeConfig:
     )
 
 
+def session_timeout_minutes(db: Session, settings: Settings) -> int:
+    """The idle timeout actually in force, in minutes.
+
+    A narrow lookup rather than a full `load`, because this runs on every
+    authenticated request. It has to come from the database: the admin settings page
+    offers this field and audits changes to it, while every enforcement point read the
+    environment value, so setting it did nothing at all. A security control the
+    interface claims to configure and does not is worse than no control offered.
+    """
+    row = db.get(AppConfig, SESSION_TIMEOUT)
+    return _as_int(row.value if row is not None else None, settings.session_timeout_minutes)
+
+
 def _as_groups(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         return dict(DEFAULT_INSURANCE_GROUPS)

@@ -496,6 +496,123 @@ def test_the_warning_stays_off_when_the_sheet_cannot_be_read(admin_client, demo)
     assert "Map these first" in page
 
 
+def test_deleting_a_source_will_not_take_an_unreviewed_queue_with_it(admin_client, demo):
+    """The sheet an admin most wants to delete is the one whose every row was refused.
+
+    Rejections cascade with the source, so deleting it destroyed the entire account of
+    what was wrong. Nothing said so and nothing brought it back. A source with no
+    imported rows could therefore delete a review queue of thousands.
+    """
+    from app.models.data_source import RejectReason, SyncMode, SyncStatus
+
+    with admin_client.app.state.db.session() as db:
+        source = db.get(DataSource, demo)
+        # Not the demo provider: that one is deletable by design, synthetic throughout.
+        source.provider = SourceProvider.UPLOAD
+        run = SyncRun(source_id=demo, mode=SyncMode.LIVE, status=SyncStatus.SUCCESS)
+        db.add(run)
+        db.flush()
+        db.add(
+            ImportErrorRow(
+                sync_run_id=run.id,
+                source_id=demo,
+                reason=RejectReason.UNKNOWN_THERAPIST,
+                raw_value="SOMEBODY NEW",
+                source_row_ref="7",
+            )
+        )
+
+    response = admin_client.post(
+        f"/admin/sources/{demo}/delete",
+        data={"csrf_token": csrf(admin_client, demo)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "problem=" in response.headers["location"]
+
+    with admin_client.app.state.db.session() as db:
+        assert db.get(DataSource, demo) is not None
+        assert (
+            db.execute(
+                select(func.count(ImportErrorRow.id)).where(ImportErrorRow.source_id == demo)
+            ).scalar_one()
+            == 1
+        )
+
+
+def test_a_source_whose_queue_is_reviewed_can_still_be_deleted(admin_client, demo):
+    """The guard must not make a mistaken source permanent. Reviewing the queue, or
+    never having one, still leaves the source deletable."""
+    from app.models.data_source import RejectReason, SyncMode, SyncStatus
+    from app.models.types import utcnow
+
+    with admin_client.app.state.db.session() as db:
+        db.get(DataSource, demo).provider = SourceProvider.UPLOAD
+        run = SyncRun(source_id=demo, mode=SyncMode.LIVE, status=SyncStatus.SUCCESS)
+        db.add(run)
+        db.flush()
+        db.add(
+            ImportErrorRow(
+                sync_run_id=run.id,
+                source_id=demo,
+                reason=RejectReason.UNKNOWN_THERAPIST,
+                raw_value="SOMEBODY NEW",
+                source_row_ref="7",
+                resolved_at=utcnow(),
+                resolution_note="Not a therapist, a totals row.",
+            )
+        )
+
+    response = admin_client.post(
+        f"/admin/sources/{demo}/delete",
+        data={"csrf_token": csrf(admin_client, demo)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        assert db.get(DataSource, demo) is None
+        entry = (
+            db.execute(
+                select(AuditLog)
+                .where(AuditLog.action == AuditAction.DATA_SOURCE_CHANGED)
+                .order_by(AuditLog.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert entry is not None
+    # The counts have to survive somewhere, because the rows themselves do not.
+    assert "sync_runs_deleted" in (entry.detail or "")
+    assert "resolved_rejections_deleted" in (entry.detail or "")
+
+
+def test_an_inactive_source_refuses_to_sync_by_hand(admin_client, demo):
+    """Off has to mean off. Auto sync already skipped an inactive source; the buttons
+    did not, so switching a finished quarter off stopped the schedule and nothing else,
+    and an old sheet re-imported by hand is how a figure moves with no explanation."""
+    with admin_client.app.state.db.session() as db:
+        db.get(DataSource, demo).active = False
+
+    page = admin_client.get(f"/admin/sources/{demo}").text
+    assert "This source is switched off" in page
+    assert "Sync now" not in page, "the button must not be offered"
+
+    response = admin_client.post(
+        f"/admin/sources/{demo}/sync",
+        data={"csrf_token": token_from(page), "mode": "live"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "problem=" in response.headers["location"], "a direct post must be refused too"
+
+    with admin_client.app.state.db.session() as db:
+        assert (
+            db.execute(select(func.count(SyncRun.id)).where(SyncRun.source_id == demo)).scalar_one()
+            == 0
+        )
+
+
 # ------------------------------------------- systemic failures and error paging
 
 

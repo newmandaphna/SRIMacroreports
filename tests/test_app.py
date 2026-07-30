@@ -36,6 +36,76 @@ def test_security_headers_present(client):
     assert "no-store" in headers["Cache-Control"]
 
 
+def test_middleware_runs_in_the_intended_order(client):
+    """Nothing pinned this, and the order was wrong.
+
+    Starlette applies the last added first, so the list below is outermost first. CSRF
+    was added after everything else and therefore ran ahead of the host and scheme
+    guards: a request with a forged Host, or one arriving over plain HTTP that was about
+    to be redirected, had its form parsed and could drive an audit write first. Host and
+    scheme are the cheapest rejections there are and belong outside everything. Security
+    headers stay outside CSRF so a refused request still carries them on the way out.
+    """
+    from app.middleware import SecurityHeadersMiddleware
+    from app.security.csrf import CSRFMiddleware
+
+    installed = [m.cls for m in client.app.user_middleware]
+    assert installed.index(SecurityHeadersMiddleware) < installed.index(CSRFMiddleware), (
+        "CSRF must run inside the security headers, so a refusal is still given them"
+    )
+
+
+def test_production_installs_the_host_and_scheme_guards_outermost(env, monkeypatch):
+    """The production-only middleware had no test at all, so nothing proved it was
+    installed, let alone that it sat outside the rest."""
+    from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+    from app.config import load_settings
+    from app.main import create_app
+    from app.middleware import SecurityHeadersMiddleware
+    from app.security.csrf import CSRFMiddleware
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("DEBUG", "false")
+    settings = load_settings()
+    assert settings.is_production is True
+
+    installed = [m.cls for m in create_app(settings).user_middleware]
+    order = [
+        TrustedHostMiddleware,
+        HTTPSRedirectMiddleware,
+        SecurityHeadersMiddleware,
+        CSRFMiddleware,
+    ]
+    for middleware in order:
+        assert middleware in installed, f"{middleware.__name__} is not installed in production"
+    positions = [installed.index(m) for m in order]
+    assert positions == sorted(positions), (
+        f"middleware order is wrong: {[m.__name__ for m in installed]}"
+    )
+
+
+def test_production_sets_strict_transport_security(env, monkeypatch):
+    """HSTS is production only, so the ordinary client can never show it is set."""
+    from fastapi.testclient import TestClient
+
+    from app.config import load_settings
+    from app.main import create_app
+
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("DEBUG", "false")
+    app = create_app(load_settings())
+
+    # base_url is https so the redirect middleware lets the request through, and the
+    # Host is one the trusted-host list accepts.
+    with TestClient(app, base_url="https://sri.replit.app") as production:
+        headers = production.get("/healthz").headers
+
+    assert "max-age=" in headers.get("Strict-Transport-Security", "")
+    assert headers["X-Frame-Options"] == "DENY"
+
+
 def test_no_api_docs_exposed(client):
     for path in ("/docs", "/redoc", "/openapi.json"):
         assert client.get(path).status_code == 404

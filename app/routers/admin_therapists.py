@@ -59,7 +59,7 @@ def _list_context(db: DbSession) -> dict:
 
 
 @router.get("", response_class=HTMLResponse)
-async def list_therapists(
+def list_therapists(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -99,7 +99,7 @@ async def list_therapists(
 
 
 @router.post("/new")
-async def create_therapist(
+def create_therapist(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -198,6 +198,27 @@ def _split_aliases(raw: str, display_name: str) -> list[str]:
     return seen
 
 
+def _visits_for(db: DbSession, therapist_id: int) -> int:
+    return db.execute(
+        select(func.count(Visit.id)).where(Visit.therapist_id == therapist_id)
+    ).scalar_one()
+
+
+def _shadowed_therapist(db: DbSession, alias: str, owner_id: int) -> Therapist | None:
+    """A different therapist whose display name this alias would start shadowing.
+
+    The resolver matches an alias before a display name, so attaching a name that is
+    already somebody's display name silently re-points every future import of that
+    name. `_first_alias_conflict` only looks at the alias table and cannot see this.
+    """
+    return db.execute(
+        select(Therapist).where(
+            func.upper(Therapist.display_name) == alias.upper(),
+            Therapist.id != owner_id,
+        )
+    ).scalar_one_or_none()
+
+
 def _first_alias_conflict(
     db: DbSession, aliases: list[str], *, owner_id: int | None = None
 ) -> str | None:
@@ -232,7 +253,7 @@ def _add_aliases(
 
 
 @router.get("/bulk", response_class=HTMLResponse)
-async def bulk_edit_form(
+def bulk_edit_form(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -415,7 +436,7 @@ async def bulk_update_therapists(
 
 # Registered before the "/{therapist_id}" routes so the literal path is not shadowed.
 @router.post("/seed-roster")
-async def seed_practice_roster(request: Request, db: DbSession, auth: AdminUser) -> Response:
+def seed_practice_roster(request: Request, db: DbSession, auth: AdminUser) -> Response:
     """Create the practice's therapists from its own Valant exports, one click.
 
     Idempotent, and deliberately weaker than the records it creates: an entry is
@@ -488,7 +509,7 @@ async def seed_practice_roster(request: Request, db: DbSession, auth: AdminUser)
 
 
 @router.get("/{therapist_id}", response_class=HTMLResponse)
-async def therapist_detail(
+def therapist_detail(
     request: Request, db: DbSession, auth: AdminUser, therapist_id: int
 ) -> Response:
     therapist = db.get(Therapist, therapist_id)
@@ -519,7 +540,7 @@ async def therapist_detail(
 
 
 @router.post("/{therapist_id}")
-async def update_therapist(
+def update_therapist(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -576,7 +597,7 @@ async def update_therapist(
 
 
 @router.post("/{therapist_id}/aliases")
-async def add_alias(
+def add_alias(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -592,6 +613,12 @@ async def add_alias(
         return RedirectResponse(f"/admin/therapists/{therapist_id}", status_code=303)
 
     conflict = _first_alias_conflict(db, [normalized], owner_id=therapist.id)
+    shadowed = None if conflict else _shadowed_therapist(db, normalized, therapist.id)
+    if shadowed is not None and _visits_for(db, shadowed.id) > 0:
+        # Aliases win over display names in the resolver, so this would quietly
+        # re-point every future import of that name and change the identity of the
+        # other therapist's historical rows. Same failure as moving an alias.
+        conflict = normalized
     if conflict:
         audit.record(
             db,
@@ -637,7 +664,7 @@ async def add_alias(
 
 
 @router.post("/{therapist_id}/delete")
-async def delete_therapist(
+def delete_therapist(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -694,7 +721,7 @@ async def delete_therapist(
 
 
 @router.post("/{therapist_id}/aliases/{alias_id}/remove")
-async def remove_alias(
+def remove_alias(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -702,16 +729,62 @@ async def remove_alias(
     alias_id: int,
 ) -> Response:
     entry = db.get(TherapistAlias, alias_id)
-    if entry is not None and entry.therapist_id == therapist_id:
-        removed = entry.alias
-        db.delete(entry)
+    if entry is None or entry.therapist_id != therapist_id:
+        return RedirectResponse(f"/admin/therapists/{therapist_id}", status_code=303)
+
+    # Visit identity includes therapist_id, so an alias that has attributed imported
+    # rows cannot simply move. Removing it here and adding it to somebody else changes
+    # the identity of every historical row without touching the rows, and the next
+    # sync of the UNCHANGED sheet then inserts a second copy of all of them: sessions
+    # and money double, both therapists read wrong at once, and the duplicates are
+    # indistinguishable from real rows. This is the two click correction an admin
+    # reaches for when they mean "these belong to the other person", so it has to be
+    # refused rather than trusted. delete_therapist already guards the same way.
+    therapist = db.get(Therapist, therapist_id)
+    visit_count = _visits_for(db, therapist_id)
+    if visit_count > 0:
         audit.record(
             db,
             action=AuditAction.MANUAL_EDIT,
+            result=AuditResult.FAILURE,
             actor=auth.user,
             target_type="therapist",
             target_id=therapist_id,
             request=request,
-            detail={"alias_removed": removed},
+            detail={"alias_removal_refused": entry.alias, "visits": visit_count},
         )
+        return render(
+            request,
+            "admin/therapist_detail.html",
+            {
+                "page_title": therapist.display_name if therapist else "Therapist",
+                "auth": auth,
+                "therapist": therapist,
+                "visit_count": visit_count,
+                "employment_types": list(EmploymentType),
+                "disciplines": list(Discipline),
+                "error": (
+                    f"Cannot remove the alias {entry.alias!r}: {visit_count} imported rows "
+                    "are attributed to this therapist, and imported rows are identified "
+                    "partly by who delivered them. Moving the alias to somebody else "
+                    "would make the next sync insert a second copy of every one of those "
+                    "rows. To stop this name importing here, deactivate the therapist "
+                    "instead; to move the work to another person, that needs a "
+                    "reassignment step this application does not have yet."
+                ),
+            },
+            status_code=409,
+        )
+
+    removed = entry.alias
+    db.delete(entry)
+    audit.record(
+        db,
+        action=AuditAction.MANUAL_EDIT,
+        actor=auth.user,
+        target_type="therapist",
+        target_id=therapist_id,
+        request=request,
+        detail={"alias_removed": removed},
+    )
     return RedirectResponse(f"/admin/therapists/{therapist_id}", status_code=303)

@@ -109,7 +109,7 @@ def _sources_context(db: DbSession) -> dict:
 
 
 @router.get("", response_class=HTMLResponse)
-async def list_sources(request: Request, db: DbSession, auth: AdminUser) -> Response:
+def list_sources(request: Request, db: DbSession, auth: AdminUser) -> Response:
     recent_runs = (
         db.execute(select(SyncRun).order_by(SyncRun.started_at.desc()).limit(10)).scalars().all()
     )
@@ -127,7 +127,7 @@ async def list_sources(request: Request, db: DbSession, auth: AdminUser) -> Resp
 
 
 @router.post("/new")
-async def create_source(
+def create_source(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -214,7 +214,7 @@ async def create_source(
 # Registered before the "/{source_id}" routes: FastAPI matches in registration
 # order, so a literal path declared after a parameterized one is shadowed by it.
 @router.post("/demo")
-async def create_demo_source(request: Request, db: DbSession, auth: AdminUser) -> Response:
+def create_demo_source(request: Request, db: DbSession, auth: AdminUser) -> Response:
     """One click: a synthetic source with its therapists, ready to sync.
 
     Exists so the whole import path can be demonstrated before any Google credential
@@ -281,9 +281,7 @@ async def create_demo_source(request: Request, db: DbSession, auth: AdminUser) -
 
 
 @router.get("/{source_id}", response_class=HTMLResponse)
-async def source_detail(
-    request: Request, db: DbSession, auth: AdminUser, source_id: int
-) -> Response:
+def source_detail(request: Request, db: DbSession, auth: AdminUser, source_id: int) -> Response:
     source = db.get(DataSource, source_id)
     if source is None:
         return render(
@@ -305,9 +303,13 @@ async def source_detail(
             if source.spreadsheet_id or source.provider is SourceProvider.DEMO:
                 tabs = selectable_tabs(client.list_tabs(source.spreadsheet_id or ""))
             if source.tab_name and source.tab_name in tabs:
-                headers = client.read_tab(
+                # Headers only. This page renders the mapping dropdowns and needs
+                # nothing but the column names, and it used to read the whole tab to
+                # get them: a quarter of patient data over the network, and held in
+                # memory, on every view of an admin page.
+                headers = client.read_headers(
                     source.spreadsheet_id or "", source.tab_name, source.header_row
-                ).headers
+                )
         except SheetsError as exc:
             tab_error = str(exc)
 
@@ -417,9 +419,7 @@ async def update_source(
 
 
 @router.post("/{source_id}/delete")
-async def delete_source(
-    request: Request, db: DbSession, auth: AdminUser, source_id: int
-) -> Response:
+def delete_source(request: Request, db: DbSession, auth: AdminUser, source_id: int) -> Response:
     """Remove a source that was created by mistake or is no longer wanted.
 
     Real session rows are the system of record and are never deleted from here: a
@@ -442,6 +442,29 @@ async def delete_source(
             "Deactivate it instead; imported rows are never deleted from here.",
         )
 
+    # A source with no visits can still be carrying the whole account of what went
+    # wrong. The rejections cascade with it, so deleting a sheet whose every row was
+    # refused, which is exactly the sheet an admin is most tempted to delete, silently
+    # destroyed the queue explaining why. Nothing said so, and nothing brought it back.
+    open_rejections = db.execute(
+        select(func.count(ImportErrorRow.id)).where(
+            ImportErrorRow.source_id == source.id,
+            ImportErrorRow.resolved_at.is_(None),
+        )
+    ).scalar_one()
+
+    if open_rejections and source.provider is not SourceProvider.DEMO:
+        return _detail_redirect_with_flash(
+            source.id,
+            f"Not deleted: {open_rejections} rejected row(s) from this source are still "
+            "unreviewed, and they would be deleted with it. Work through the review "
+            "queue first, or deactivate the source and leave the queue intact.",
+        )
+
+    run_count = db.execute(
+        select(func.count(SyncRun.id)).where(SyncRun.source_id == source.id)
+    ).scalar_one()
+
     label = source.label
     audit.record(
         db,
@@ -454,6 +477,11 @@ async def delete_source(
             "deleted": label,
             "provider": source.provider.value,
             "visits_deleted": visit_count,
+            # What went with it. Both cascade, so the log is the only place they survive.
+            "sync_runs_deleted": run_count,
+            "resolved_rejections_deleted": db.execute(
+                select(func.count(ImportErrorRow.id)).where(ImportErrorRow.source_id == source.id)
+            ).scalar_one(),
         },
     )
     db.delete(source)
@@ -466,7 +494,7 @@ async def delete_source(
 
 
 @router.post("/{source_id}/sync")
-async def sync_source(
+def sync_source(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -476,6 +504,9 @@ async def sync_source(
     source = db.get(DataSource, source_id)
     if source is None:
         return RedirectResponse("/admin/sources", status_code=303)
+
+    if not source.active:
+        return _detail_redirect_with_flash(source.id, _INACTIVE_MESSAGE)
 
     dry_run = mode != "live"
 
@@ -539,6 +570,9 @@ async def upload_workbook(
     if source is None:
         return RedirectResponse("/admin/sources", status_code=303)
 
+    if not source.active:
+        return _detail_redirect_with_flash(source.id, _INACTIVE_MESSAGE)
+
     if not source.is_ready_to_sync:
         return _detail_redirect_with_flash(
             source.id,
@@ -591,6 +625,16 @@ async def upload_workbook(
     )
 
     return RedirectResponse(f"/admin/sources/{source.id}/runs/{result.run_id}", status_code=303)
+
+
+# Auto sync has always skipped inactive sources. The manual buttons did not, so
+# switching a source off stopped the schedule and nothing else: a retired quarter's
+# sheet could still be imported by hand, and an older sheet re-importing over a newer
+# one is exactly how a figure moves without an explanation.
+_INACTIVE_MESSAGE = (
+    "This source is switched off, so it cannot be imported from. Auto sync already "
+    "skips it. Tick Active and save if you want to import from it again."
+)
 
 
 def _detail_redirect_with_flash(source_id: int, message: str) -> Response:
@@ -646,7 +690,7 @@ def _lookup_redirect(
 
 
 @router.get("/{source_id}/runs/{run_id}", response_class=HTMLResponse)
-async def run_detail(
+def run_detail(
     request: Request, db: DbSession, auth: AdminUser, source_id: int, run_id: int
 ) -> Response:
     run = db.get(SyncRun, run_id)
@@ -777,7 +821,7 @@ async def run_detail(
 
 
 @router.post("/{source_id}/errors/{error_id}/resolve")
-async def resolve_error(
+def resolve_error(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -809,7 +853,7 @@ async def resolve_error(
 
 
 @router.post("/{source_id}/lookups")
-async def import_lookups(
+def import_lookups(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -867,7 +911,7 @@ async def import_lookups(
 
 
 @router.get("/{source_id}/errors", response_class=HTMLResponse)
-async def source_errors(
+def source_errors(
     request: Request,
     db: DbSession,
     auth: AdminUser,

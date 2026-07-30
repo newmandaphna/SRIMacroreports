@@ -88,9 +88,13 @@ a story better than hope. There are two layers:
 Quarters that predate the live sheet come in as files. On `/admin/sources`, click
 **Create upload source**, check the prefilled column mapping, then upload the
 quarter's `.xlsx` or `.csv` export. The file goes through exactly the same pipeline as
-a live sync, same column allowlist, same validation, same rejection queue, and is read
-in memory without ever being written to disk. Because the database is the system of
-record, everything imported stays queryable forever, whichever source it arrived from.
+a live sync, same column allowlist, same validation, same rejection queue. Nothing is
+kept: the upload exists only for the duration of the request. Above about a megabyte
+the web server spills the body to an unnamed temporary file, unlinked the moment it is
+created and gone when the request ends, so a quarter's export does touch the container
+filesystem briefly even though no file is ever stored. Because the database is the
+system of record, everything imported stays queryable forever, whichever source it
+arrived from.
 
 ### Trying the import without credentials
 

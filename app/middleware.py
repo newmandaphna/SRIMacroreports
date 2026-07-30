@@ -67,7 +67,24 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 def install_middleware(app: FastAPI, settings: Settings) -> None:
-    """Install middleware in the correct order and register error handlers."""
+    """Install middleware in the correct order and register error handlers.
+
+    Starlette applies the LAST added first, so this reads inside out. The intended
+    order on the way in is:
+
+      TrustedHost, HTTPSRedirect, SecurityHeaders, CSRF
+
+    CSRF used to be added last and so ran outermost, ahead of the host and scheme
+    guards. That put a database write (the audit record for a refusal) and a full read
+    of the request body behind neither of them: a request with a forged Host, or one
+    arriving over plain HTTP that was about to be redirected, had its form parsed and
+    could drive an audit write first. Host and scheme are the cheapest possible
+    rejections and belong outside everything. Security headers stay outside CSRF, so a
+    refused request still carries them on the way out.
+    """
+    from app.security.csrf import CSRFMiddleware
+
+    app.add_middleware(CSRFMiddleware)
     app.add_middleware(SecurityHeadersMiddleware, production=settings.is_production)
 
     if settings.is_production:

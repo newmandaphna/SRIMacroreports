@@ -18,7 +18,12 @@ from app.models.audit import AuditLog
 from app.models.enums import AuditAction, AuditResult
 from app.models.user import User
 
-MAX_DETAIL_CHARS = 2000
+# Bounded so one entry cannot grow without limit, but generous enough for the largest
+# detail any caller writes. The largest is a utilization note edit, which records the
+# text before and the text after: two notes of up to 2,000 characters each. At the
+# previous 2,000 that record was cut in half every time, so exactly the entry whose
+# purpose is to make an edit recoverable was the entry guaranteed not to be.
+MAX_DETAIL_CHARS = 8000
 
 
 def client_ip(request: Request | None) -> str | None:
@@ -42,7 +47,22 @@ def _detail_to_text(detail: dict[str, Any] | str | None) -> str | None:
     text = detail if isinstance(detail, str) else json.dumps(detail, sort_keys=True, default=str)
     # Backstop. Callers must not put PHI in detail in the first place, but a filter
     # parameter that happens to carry a patient name should not survive to the table.
-    return scrub(text)[:MAX_DETAIL_CHARS]
+    cleaned = scrub(text)
+    if len(cleaned) <= MAX_DETAIL_CHARS:
+        return cleaned
+
+    # Clipping happened silently, in the middle of the JSON, so a reader got a record
+    # that would not parse and had no way to know it was incomplete. It now says so and
+    # stays valid JSON, which is the difference between a short record and a broken one.
+    overhead = 120
+    return json.dumps(
+        {
+            "clipped": True,
+            "original_chars": len(cleaned),
+            "detail": cleaned[: MAX_DETAIL_CHARS - overhead],
+        },
+        sort_keys=True,
+    )
 
 
 def record(

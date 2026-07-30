@@ -7,6 +7,7 @@ uses, because that is the shape the scrubber has to catch.
 from __future__ import annotations
 
 import logging
+import logging.config
 
 from app.logging_setup import REDACTED, PHIScrubbingFilter, configure_logging, scrub
 
@@ -72,3 +73,67 @@ def test_traceback_locals_are_scrubbed(capsys):
         logging.getLogger("test.scrub").exception("import failed")
     captured = capsys.readouterr().out
     assert "Patientaf" not in captured
+
+
+# --------------------------------------------------- the holes the sweep found
+
+
+def test_sqlalchemy_batched_bind_names_are_scrubbed():
+    """A real quarterly import batches its inserts, so SQLAlchemy names its bound
+    parameters patient_name__0, patient_code__0 and so on. The key pattern used to
+    require a word boundary immediately after the key name, which those suffixes
+    break, so a database error during a batched insert put every patient code in
+    the batch into the log in the clear."""
+    text = "{'patient_name__0': 'Testcase Patientag', 'patient_code__0': 'PATAG'}"
+    cleaned = scrub(text)
+    assert "PATAG" not in cleaned
+    assert "Patientag" not in cleaned
+
+
+def test_the_normalized_column_name_is_scrubbed():
+    """patient_name_normalized is a real column, and it holds a patient name."""
+    cleaned = scrub("patient_name_normalized=SOMEBODY REAL")
+    assert "SOMEBODY REAL" not in cleaned
+
+
+def test_a_patient_code_has_no_fallback_pattern_so_the_key_must_match():
+    """Names are also caught by the surname pattern, which depends on the sheet's
+    Surname,Given format. A patient code has no such shape, so if the key pattern
+    misses it nothing else will."""
+    for key in ("patient_code", "patient_code__0", "patient_code_normalized"):
+        assert "PATAH" not in scrub(f"{{'{key}': 'PATAH'}}"), key
+
+
+def test_uvicorn_loggers_cannot_bypass_the_scrubber():
+    """uvicorn ships its own handlers with propagation off, so a traceback logged
+    through them printed unscrubbed next to the scrubbed copy. Reaching the
+    deployment log is exactly the path that matters on Replit."""
+    import uvicorn.config
+
+    logging.config.dictConfig(uvicorn.config.LOGGING_CONFIG)
+    configure_logging("INFO")
+
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logger = logging.getLogger(name)
+        assert logger.propagate, f"{name} does not propagate to the scrubbed root handler"
+        assert logger.handlers == [], f"{name} keeps a handler that bypasses the root"
+        # Asserted on the logger, not on its (now absent) handlers: a loop over an
+        # empty list would pass without checking anything, which is the shape of
+        # vacuous test this sweep was run to find.
+        assert any(isinstance(f, PHIScrubbingFilter) for f in logger.filters), (
+            f"{name} has no scrubbing filter of its own"
+        )
+
+
+def test_uvicorn_output_is_scrubbed_end_to_end(capsys):
+    import uvicorn.config
+
+    logging.config.dictConfig(uvicorn.config.LOGGING_CONFIG)
+    configure_logging("INFO")
+    logging.getLogger("uvicorn.error").error(
+        "insert failed: {'patient_code__0': 'PATAI', 'patient_name__0': 'Testcase Patientai'}"
+    )
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "PATAI" not in combined
+    assert "Patientai" not in combined

@@ -117,7 +117,12 @@ def build_insights(
         )
 
     first_week = week_start(coverage.min_date, wsm)
-    history_weeks = max(0, (last_completed_end - first_week).days // 7)
+    # Inclusive of both ends. The span from the first week's Monday to the last
+    # completed week's Sunday is 7n - 1 days for n whole weeks, so dividing it by 7
+    # returned n - 1 and every gate on this count needed one week more history than it
+    # asked for: the trend findings unlocked at nine weeks rather than eight, and the
+    # projection at fifty three rather than fifty two.
+    history_weeks = max(0, ((last_completed_end - first_week).days + 1) // 7)
 
     def window(weeks: int, *, offset_weeks: int = 0) -> queries.Filters:
         end = last_completed_end - timedelta(weeks=offset_weeks)
@@ -329,7 +334,11 @@ def build_insights(
     # ------------------------------------------------------------- payer concentration
     if history_weeks >= MIN_TREND_WEEKS:
         conc_window = window(min(26, history_weeks))
-        payers = queries.by_insurance(db, conc_window, limit=50)
+        # Folded into the configured payer groups, like everywhere else. Without it KS,
+        # PC and IA competed against each other for the top spot, so the practice's
+        # largest payer could read as three medium ones and no concentration insight
+        # ever fired for it, which is the one case worth knowing about.
+        payers = queries.by_insurance(db, conc_window, limit=50, groups=config.insurance_groups)
         total_collected = sum((p.collected for p in payers), ZERO)
         if payers and total_collected > ZERO:
             top = payers[0]
@@ -378,10 +387,15 @@ def build_insights(
 
     # -------------------------------------------------------------- therapist movers
     if history_weeks >= MIN_TREND_WEEKS:
+        # Not filtered to therapists with sessions this window. Excluding them dropped
+        # the largest possible fall, a caseload going to zero, out of the comparison
+        # entirely: the one mover most worth surfacing was the one this could not see.
+        # Still-on-the-roster only, because a departed therapist's fall to zero is a
+        # resignation rather than a finding about their work.
         recent_rows = {
             r.therapist_id: r
             for r in queries.by_therapist(db, window(4), weeks_in_range=4)
-            if r.sessions > 0
+            if r.sessions > 0 or r.active
         }
         prior_rows = {
             r.therapist_id: r

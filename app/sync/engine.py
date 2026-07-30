@@ -20,7 +20,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.models.data_source import (
@@ -272,7 +272,66 @@ def extract_row(
         "source_row_ref": row_ref,
         **money,
     }
+
+    too_long = _first_overlong_value(values)
+    if too_long is not None:
+        field_name, limit, actual = too_long
+        return None, Rejection(
+            row_ref,
+            RejectReason.VALUE_TOO_LONG,
+            field=field_name,
+            raw_value=str(values[field_name])[:120],
+            detail=(
+                f"{actual} characters, but the {field_name} column holds {limit}. "
+                "Shorten the cell in the source and sync again."
+            ),
+            patient_hint=patient_raw,
+            therapist_hint=therapist_raw,
+        )
+
     return values, None
+
+
+def _first_overlong_value(values: dict[str, Any]) -> tuple[str, int, int] | None:
+    """The first value the database would refuse for being too long, if any.
+
+    Reads the limits off the model's own columns rather than repeating them, so a
+    column that grows or shrinks cannot leave this check describing the old schema.
+    Without it, one over-long cell (a 21 character note, a long payer name) failed
+    at flush time and took the whole import with it, valid rows included.
+    """
+    for field_name, value in values.items():
+        if not isinstance(value, str):
+            continue
+        column = Visit.__table__.columns.get(field_name)
+        limit = getattr(getattr(column, "type", None), "length", None)
+        if limit and len(value) > limit:
+            return field_name, limit, len(value)
+    return None
+
+
+# Namespace for the advisory locks this application takes, so they cannot collide with
+# a lock some other tool holds on the same database. "SRI1" as an int32.
+_LOCK_NAMESPACE = 0x53524931
+
+
+def _hold_source_lock(db: Session, source_id: int) -> bool:
+    """Claim this source for the current transaction, or report that somebody else has it.
+
+    A transaction scoped lock, so it is released by the commit or rollback that ends the
+    sync and there is no unlock to forget or to run on the wrong connection. Re-entrant
+    within one transaction, so a caller that syncs the same source twice is unaffected.
+
+    The reason it exists: two syncs of one source reading the same sheet at once both
+    look up the existing rows, both decide the same row is new, and the unique
+    constraint then kills whichever writes second, so a scheduled pass overlapping a
+    manual Sync produced a failed import out of two valid ones.
+    """
+    if db.get_bind().dialect.name != "postgresql":  # pragma: no cover - production is PG
+        return True
+    return bool(
+        db.execute(select(func.pg_try_advisory_xact_lock(_LOCK_NAMESPACE, source_id))).scalar_one()
+    )
 
 
 def run_sync(
@@ -299,17 +358,48 @@ def run_sync(
 
     result = SyncResult(run_id=run.id, mode=mode)
 
+    # The row writes happen inside a savepoint, and the flush that sends them to the
+    # database happens INSIDE this handler on purpose.
+    #
+    # Without both, a database level rejection (a cell too long for its column, a
+    # value the type refuses) surfaced on a later flush, after this handler had
+    # closed. The whole transaction then rolled back and took the sync run, every
+    # recorded rejection and the audit entry with it, so an import that destroyed a
+    # quarter's upload left no trace that it had ever run. The savepoint keeps the
+    # run row, which was flushed before it, while discarding the failed writes.
+    savepoint = db.begin_nested()
     try:
+        if not _hold_source_lock(db, source.id):
+            raise SheetsError(
+                "Another import of this source is running right now, so this one did "
+                "nothing rather than compete with it. Wait for that run to finish, "
+                "check the history below, and start again only if it did not do what "
+                "you wanted."
+            )
         _execute(db, source, client, run, result, dry_run=dry_run)
+        db.flush()
+        savepoint.commit()
     except SheetsError as exc:
+        savepoint.rollback()
         result.error_message = str(exc)
     except Exception:
+        savepoint.rollback()
         logger.exception("Sync failed for source %s", source.id)
-        result.error_message = "The import failed unexpectedly. The error has been logged."
+        result.error_message = (
+            "The import failed unexpectedly and nothing was written. The error has "
+            "been logged with a correlation id."
+        )
 
     run.status = SyncStatus.FAILED if result.error_message else SyncStatus.SUCCESS
     run.error_message = result.error_message
     run.finished_at = utcnow()
+    # A failed run wrote nothing, whatever the in flight counters had reached before
+    # the savepoint was rolled back. Reporting rows inserted on a FAILED run would
+    # send an admin looking for data that is not there.
+    if result.error_message:
+        result.rows_inserted = 0
+        result.rows_updated = 0
+        result.rows_unchanged = 0
     run.rows_read = result.rows_read
     run.rows_inserted = result.rows_inserted
     run.rows_updated = result.rows_updated
@@ -353,12 +443,21 @@ def run_sync(
             run.id,
             last_examined_row=source.header_row + result.rows_read,
             dry_run=dry_run,
+            tab_name=source.tab_name,
+            header_row=source.header_row,
         )
 
     if not dry_run and result.ok:
         source.last_synced_at = utcnow()
-        source.coverage_start = result.date_min
-        source.coverage_end = result.date_max
+        # Only when the run actually read something. A run over an empty tab, or over a
+        # tab an admin has just repointed, has no dates of its own, and writing those
+        # Nones erased the source's recorded coverage while its rows stayed in the
+        # database. The source then claimed to cover nothing, the status page said so,
+        # and the vintage comparison that decides which sheet may revise money lost the
+        # one signal it has.
+        if result.rows_read > 0:
+            source.coverage_start = result.date_min
+            source.coverage_end = result.date_max
         db.flush()
         source.row_count = _count_visits(db, source.id)
 
@@ -372,6 +471,8 @@ def _supersede_stale_errors(
     *,
     last_examined_row: int,
     dry_run: bool,
+    tab_name: str | None,
+    header_row: int,
 ) -> int:
     """Resolve unresolved errors that earlier runs of this source left behind.
 
@@ -379,9 +480,13 @@ def _supersede_stale_errors(
     note naming the run whose account replaced them, so nothing is silently dropped.
     A failed run never supersedes anything, because it did not produce a new account.
 
-    Four deliberate boundaries:
+    Five deliberate boundaries:
     - Only errors at or before `last_examined_row`. The current run's account covers
       exactly the sheet rows it read, no further.
+    - Only errors from runs that read the same tab at the same header row. A row
+      reference is a row NUMBER, and row 5 of one tab is not row 5 of another, so after
+      an admin repointed the tab this resolved another sheet's open rejections on the
+      strength of a read that never looked at them.
     - Only errors from runs with a lower id. Two overlapping syncs must not let the
       older read mark the newer read's account as stale.
     - Only errors whose row reference is a plain row number. One that is not cannot be
@@ -392,15 +497,19 @@ def _supersede_stale_errors(
       fixed rows are still unimported, or every page would call the source fully
       accounted for when its data exists nowhere.
     """
-    stmt = select(ImportErrorRow.id, ImportErrorRow.source_row_ref).where(
-        ImportErrorRow.source_id == source_id,
-        ImportErrorRow.sync_run_id < current_run_id,
-        ImportErrorRow.resolved_at.is_(None),
+    stmt = (
+        select(ImportErrorRow.id, ImportErrorRow.source_row_ref)
+        .join(SyncRun, SyncRun.id == ImportErrorRow.sync_run_id)
+        .where(
+            ImportErrorRow.source_id == source_id,
+            ImportErrorRow.sync_run_id < current_run_id,
+            ImportErrorRow.resolved_at.is_(None),
+            SyncRun.tab_name.is_(None) if tab_name is None else SyncRun.tab_name == tab_name,
+            SyncRun.header_row == header_row,
+        )
     )
     if dry_run:
-        stmt = stmt.join(SyncRun, SyncRun.id == ImportErrorRow.sync_run_id).where(
-            SyncRun.mode == SyncMode.DRY_RUN
-        )
+        stmt = stmt.where(SyncRun.mode == SyncMode.DRY_RUN)
     candidates = db.execute(stmt).all()
     stale_ids = [
         row_id
@@ -428,8 +537,6 @@ def _supersede_stale_errors(
 
 
 def _count_visits(db: Session, source_id: int) -> int:
-    from sqlalchemy import func
-
     return db.execute(select(func.count(Visit.id)).where(Visit.source_id == source_id)).scalar_one()
 
 
@@ -467,12 +574,41 @@ def _execute(
             + ". The tab layout may have changed; check the column mapping."
         )
 
+    # A mapped column whose header text changed in the sheet used to vanish silently:
+    # build_column_index cannot find it, so the field simply never enters the position
+    # map, every cell reads as blank, and blank money means zero by design. Renaming
+    # "Total paid" to "Paid total" produced a SUCCESS run with no rejections and rows
+    # reading total_due 175.00 against total_paid 0.00. Revenue read zero while billed
+    # read the full amount. Only the four required fields were guarded; the other
+    # fourteen, which is every money column, were not.
+    #
+    # Refusing the run is the right default for money. An unmapped column is a
+    # deliberate choice and stays silent; a mapped column that has gone missing is
+    # drift, and drift gets a FAILED run with an actionable message.
+    vanished = {field for field, header in source.column_mapping.items() if header} - set(positions)
+    vanished &= set(IMPORT_ALLOWLIST)
+    if vanished:
+        raise SheetsError(
+            "These columns are mapped but no longer present in the sheet: "
+            + ", ".join(
+                f"{field} (expected header {source.column_mapping[field]!r})"
+                for field in sorted(vanished)
+            )
+            + ". The tab layout may have changed; check the column mapping. Nothing was "
+            "imported, because a missing money column would otherwise read as zero on "
+            "every row."
+        )
+
     resolver = AliasResolver(db)
 
     # Pre-pass for the date span of the incoming sheet, so the existing rows can be
     # loaded for exactly that window. Cheap: the rows are already in memory.
     incoming_dates = _incoming_date_span(data, positions)
     existing = _load_existing(db, *incoming_dates) if not dry_run else {}
+    # How far forward this sheet reaches, against how far every other source reaches.
+    # Used to tell a later export revising money from an older one reverting it.
+    incoming_end = incoming_dates[1]
+    vintages = _source_vintages(db)
     seen_keys: set[tuple] = set()
 
     for row, row_number in zip(data.rows, data.row_numbers, strict=True):
@@ -543,7 +679,19 @@ def _execute(
             result.rows_inserted += 1
             continue
 
-        _upsert(db, source, run, existing, key, values, therapist_id, result)
+        _upsert(
+            db,
+            source,
+            run,
+            existing,
+            key,
+            values,
+            therapist_id,
+            result,
+            row_ref=row_ref,
+            incoming_end=incoming_end,
+            vintages=vintages,
+        )
 
 
 def _incoming_date_span(
@@ -593,11 +741,62 @@ def _load_existing(db: Session, earliest: date | None, latest: date | None) -> d
     encrypted SQLite file is the difference between a sync that takes a second and one
     that takes a minute.
     """
-    stmt = select(Visit)
-    if earliest is not None and latest is not None:
-        stmt = stmt.where(Visit.dos >= earliest, Visit.dos <= latest)
-    visits = db.execute(stmt).scalars().all()
+    if earliest is None or latest is None:
+        # No readable date anywhere in the incoming sheet. The fallback used to be to
+        # load the whole sessions table, every row of every quarter ever imported, as
+        # ORM objects each joining its therapist: the one case where the preload was
+        # unbounded was the case where it was useless. A row with no readable date
+        # rejects before it reaches the upsert, so there is nothing here to match
+        # against and an empty map is both cheaper and correct.
+        return {}
+
+    visits = (
+        db.execute(select(Visit).where(Visit.dos >= earliest, Visit.dos <= latest)).scalars().all()
+    )
     return {(v.therapist_id, v.patient_name_normalized, v.dos, v.cpt): v for v in visits}
+
+
+@dataclass(frozen=True)
+class _SourceVintage:
+    """What we know about how recent another source's account of a visit is.
+
+    `coverage_end` is the latest date of service that source actually contained,
+    observed by its own sync rather than typed in, so it is the one honest ordering
+    signal available. A rolling quarterly export reaches further forward than a
+    historical backfill of an earlier quarter.
+    """
+
+    label: str
+    coverage_end: date | None
+
+
+def _source_vintages(db: Session) -> dict[int, _SourceVintage]:
+    rows = db.execute(select(DataSource.id, DataSource.label, DataSource.coverage_end)).all()
+    return {sid: _SourceVintage(label, end) for sid, label, end in rows}
+
+
+def _money_disagreements(current: Visit, payload: dict[str, Any]) -> list[str]:
+    return sorted(f for f in MONEY_FIELDS if getattr(current, f) != payload.get(f))
+
+
+def _older_owner(
+    current: Visit,
+    source: DataSource,
+    incoming_end: date | None,
+    vintages: dict[int, _SourceVintage],
+) -> _SourceVintage | None:
+    """The source holding this row, when its account is more recent than the incoming one.
+
+    None whenever we have no grounds to call the incoming sheet older: the row came from
+    this same source, either span is unknown, or the incoming sheet reaches at least as
+    far forward.
+    """
+    if current.source_id == source.id or incoming_end is None:
+        return None
+    owner = vintages.get(current.source_id)
+    if owner is None or owner.coverage_end is None:
+        return None
+    return owner if incoming_end < owner.coverage_end else None
 
 
 def _upsert(
@@ -609,6 +808,10 @@ def _upsert(
     values: dict[str, Any],
     therapist_id: int,
     result: SyncResult,
+    *,
+    row_ref: str,
+    incoming_end: date | None,
+    vintages: dict[int, _SourceVintage],
 ) -> None:
     payload = {k: v for k, v in values.items() if k != "therapist_raw"}
 
@@ -626,6 +829,42 @@ def _upsert(
         return
 
     if current.differs_from(payload):
+        # A visit is global, so the same one arrives on more than one sheet: the
+        # practice's export window rolls back into the previous quarter, and a
+        # historical upload covers ground the live sheet also covers. When two sheets
+        # disagreed about money, whichever synced last won outright, so importing an
+        # old backfill silently reverted collected revenue on every shared row and no
+        # figure, page or log said anything had moved.
+        #
+        # Later sheets legitimately revise money, because payments land after the date
+        # of service. Earlier ones cannot. So an incoming sheet that ends before the
+        # sheet already holding the row is treated as the older account: the stored
+        # figures stand and the disagreement goes to the review queue for a human,
+        # rather than being applied or thrown away.
+        owner = _older_owner(current, source, incoming_end, vintages)
+        disagreements = _money_disagreements(current, payload) if owner else []
+        if owner is not None and disagreements:
+            first = disagreements[0]
+            result.rejections.append(
+                Rejection(
+                    row_ref,
+                    RejectReason.CONFLICTING_SNAPSHOT,
+                    field=first,
+                    raw_value=str(payload.get(first)),
+                    detail=(
+                        f"This row is already recorded from {owner.label!r}, whose data runs "
+                        f"to {owner.coverage_end}, later than this sheet. They disagree on "
+                        + ", ".join(disagreements)
+                        + f" (stored {getattr(current, first)}, this sheet {payload.get(first)}). "
+                        "The stored figures were kept, because an earlier export cannot have "
+                        "seen payments that landed after it. Nothing was changed; check which "
+                        "sheet is right."
+                    ),
+                    patient_hint=values.get("patient_name"),
+                    therapist_hint=values.get("therapist_raw"),
+                )
+            )
+            return
         current.apply(payload)
         current.last_sync_run_id = run.id
         result.rows_updated += 1

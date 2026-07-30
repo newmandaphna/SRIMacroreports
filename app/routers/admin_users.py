@@ -36,7 +36,7 @@ def generate_temporary_password() -> str:
 
 
 @router.get("", response_class=HTMLResponse)
-async def list_users(request: Request, db: DbSession, auth: AdminUser) -> Response:
+def list_users(request: Request, db: DbSession, auth: AdminUser) -> Response:
     users = db.execute(select(User).order_by(User.is_active.desc(), User.email)).scalars().all()
 
     live_counts = dict(
@@ -60,7 +60,7 @@ async def list_users(request: Request, db: DbSession, auth: AdminUser) -> Respon
 
 
 @router.get("/new", response_class=HTMLResponse)
-async def new_user_form(request: Request, auth: AdminUser) -> Response:
+def new_user_form(request: Request, auth: AdminUser) -> Response:
     return render(
         request,
         "admin/user_form.html",
@@ -69,7 +69,7 @@ async def new_user_form(request: Request, auth: AdminUser) -> Response:
 
 
 @router.post("/new")
-async def create_user(
+def create_user(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -165,9 +165,7 @@ def _apply_grants(db: DbSession, user: User, modules: list[str], *, actor_id: in
 
 
 @router.get("/{user_id}", response_class=HTMLResponse)
-async def edit_user_form(
-    request: Request, db: DbSession, auth: AdminUser, user_id: int
-) -> Response:
+def edit_user_form(request: Request, db: DbSession, auth: AdminUser, user_id: int) -> Response:
     user = db.get(User, user_id)
     if user is None:
         return render(
@@ -184,7 +182,7 @@ async def edit_user_form(
 
 
 @router.post("/{user_id}")
-async def update_user(
+def update_user(
     request: Request,
     db: DbSession,
     auth: AdminUser,
@@ -306,9 +304,7 @@ def _active_admin_count(db: DbSession) -> int:
 
 
 @router.post("/{user_id}/deactivate")
-async def deactivate_user(
-    request: Request, db: DbSession, auth: AdminUser, user_id: int
-) -> Response:
+def deactivate_user(request: Request, db: DbSession, auth: AdminUser, user_id: int) -> Response:
     user = db.get(User, user_id)
     if user is None:
         return RedirectResponse("/admin/users", status_code=303)
@@ -333,9 +329,7 @@ async def deactivate_user(
 
 
 @router.post("/{user_id}/reactivate")
-async def reactivate_user(
-    request: Request, db: DbSession, auth: AdminUser, user_id: int
-) -> Response:
+def reactivate_user(request: Request, db: DbSession, auth: AdminUser, user_id: int) -> Response:
     user = db.get(User, user_id)
     if user is not None and not user.is_active:
         user.is_active = True
@@ -351,9 +345,7 @@ async def reactivate_user(
 
 
 @router.post("/{user_id}/reset-password")
-async def reset_password(
-    request: Request, db: DbSession, auth: AdminUser, user_id: int
-) -> Response:
+def reset_password(request: Request, db: DbSession, auth: AdminUser, user_id: int) -> Response:
     user = db.get(User, user_id)
     if user is None:
         return RedirectResponse("/admin/users", status_code=303)

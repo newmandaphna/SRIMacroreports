@@ -23,7 +23,12 @@ from sqlalchemy.orm import Session
 
 from app.models.visit import Visit
 from app.reporting.periods import Granularity, format_period, next_period, period_series
-from app.reporting.queries import Filters, _base_conditions, _is_session
+from app.reporting.queries import (
+    Filters,
+    _base_conditions,
+    _is_session,
+    _population_conditions,
+)
 
 # A patient with no session in this many days is counted as lapsed. A judgement
 # call, not a clinical fact: therapy cadences vary, so the page says the number.
@@ -65,10 +70,18 @@ def _new_patients(db: Session, filters: Filters) -> int:
 
     First-ever is computed over the whole record, not the window, so a returning
     patient can never be miscounted as new because the picker starts late.
+
+    The therapist and location filters still apply, though, and that is the part that
+    was missing: the subquery looked at every session in the practice, so filtering the
+    page to one therapist narrowed the patient count beside it and left this one
+    counting the whole practice's new patients. On a one therapist view new could
+    exceed active, which is arithmetically impossible for the same population. First
+    ever now means first ever within the filtered population, which is also what a
+    reader of a filtered page means by it.
     """
     first_visit = (
         select(func.min(Visit.dos).label("first_dos"))
-        .where(_is_session(filters.cpt_exclusions))
+        .where(_is_session(filters.cpt_exclusions), *_population_conditions(filters))
         .group_by(Visit.patient_name_normalized)
         .subquery()
     )

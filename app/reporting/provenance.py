@@ -24,9 +24,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config_store import PracticeConfig
+from app.models.therapist import Therapist
 from app.reporting import queries
 from app.reporting.periods import Granularity
 
@@ -110,6 +112,14 @@ class Derivation:
             return Decimal(str(self.terms[0].value)) / denominator * scale
         if self.operation == "subtract" and len(self.terms) >= 2:
             return Decimal(str(self.terms[0].value)) - Decimal(str(self.terms[1].value))
+        if self.operation == "count" and self.terms:
+            # A count states its result as its last term, so comparing that against the
+            # printed figure checks the same thing the other operations check: that the
+            # arithmetic shown to the reader and the number above it have not drifted
+            # apart. Without this rule a counted figure recomputed to None, `agrees`
+            # returned True for want of anything to compare, and the drift test passed
+            # over it in silence.
+            return Decimal(str(self.terms[-1].value))
         return None
 
     @property
@@ -133,11 +143,29 @@ class Derivation:
 # --------------------------------------------------------------------------- text
 
 
-def _window_words(filters: queries.Filters) -> str:
-    return (
+def _window_words(filters: queries.Filters, *, therapist_names: list[str] | None = None) -> str:
+    """The window as the query actually scoped it, filters included.
+
+    The date range was all this said, while the query it describes also applies the
+    therapist and location filters. On a filtered page the explanation therefore
+    described a different population from the figure above it, which is the one thing
+    this module exists to prevent. Named therapists appear only when the reader is
+    allowed to see therapist names at all; otherwise they are counted.
+    """
+    parts = [
         f"{filters.start.strftime('%-d %b %Y')} to {filters.end.strftime('%-d %b %Y')}, "
         "by date of service"
-    )
+    ]
+    if filters.therapist_ids:
+        if therapist_names:
+            parts.append("limited to " + ", ".join(therapist_names))
+        else:
+            count = len(filters.therapist_ids)
+            parts.append(f"limited to {count} selected therapist{'s' if count != 1 else ''}")
+    if filters.locations:
+        named = [loc or "unknown" for loc in filters.locations]
+        parts.append("limited to " + ", ".join(named))
+    return "; ".join(parts)
 
 
 def _exclusion_sentence(filters: queries.Filters) -> str:
@@ -212,7 +240,17 @@ def build_derivation(
         return None
 
     totals = queries.totals(db, filters)
-    window = _window_words(filters)
+    therapist_names = None
+    if may_see_therapists and filters.therapist_ids:
+        therapist_names = [
+            name
+            for name in db.execute(
+                select(Therapist.display_name)
+                .where(Therapist.id.in_(filters.therapist_ids))
+                .order_by(func.lower(Therapist.display_name))
+            ).scalars()
+        ]
+    window = _window_words(filters, therapist_names=therapist_names)
     census = Census(
         imported=totals.visits,
         counted=totals.sessions,
@@ -370,9 +408,14 @@ def build_derivation(
                 Term("Cancellations with a fee", totals.cancellations_with_fee),
                 Term("Fee money collected", totals.no_show_fee_revenue, "money"),
             ],
-            components=[],
-            components_sum_to_value=False,
-            components_note="",
+            # Per period, so the figure states arithmetic that can be added up. With no
+            # components a summed figure recomputed to None, which made `agrees` true by
+            # default and let the drift test pass over this one without checking it.
+            components=[
+                Component(label, value)
+                for label, value in _no_show_by_period(db, filters, config, granularity)
+            ],
+            components_note="Fee money collected per period. These add up to the total.",
             census=census,
             caveats=[
                 "Real revenue but not clinical revenue, so it is broken out rather than "
@@ -541,6 +584,33 @@ def build_derivation(
         )
 
     return None
+
+
+def _no_show_by_period(
+    db: Session,
+    filters: queries.Filters,
+    config: PracticeConfig,
+    granularity: Granularity,
+) -> list[tuple[str, Decimal]]:
+    """No show fee money per period.
+
+    One small aggregate per bucket rather than a new query builder. The period series is
+    capped, and this runs only when a reader opens this one explanation.
+    """
+    from datetime import timedelta
+
+    from app.reporting.periods import format_period, next_period, period_series
+
+    out: list[tuple[str, Decimal]] = []
+    for start in period_series(
+        filters.start, filters.end, granularity, week_starts_monday=config.week_starts_monday
+    ):
+        end = min(next_period(start, granularity) - timedelta(days=1), filters.end)
+        bucket = filters.replaced(start=max(start, filters.start), end=end)
+        out.append(
+            (format_period(start, granularity), queries.totals(db, bucket).no_show_fee_revenue)
+        )
+    return out
 
 
 def _weeks(filters: queries.Filters) -> Decimal:

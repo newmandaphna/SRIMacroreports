@@ -27,6 +27,9 @@ class Kpi:
     note: str | None = None
     # True when a fall is the good direction, as with outstanding balances.
     lower_is_better: bool = False
+    # Why this card carries no comparison, when the absence is worth explaining.
+    # A card that simply never has one (a current headcount, say) leaves it None.
+    no_comparison_reason: str | None = None
 
     @property
     def delta(self) -> Decimal | int | None:

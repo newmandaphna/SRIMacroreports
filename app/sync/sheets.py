@@ -38,6 +38,24 @@ _SPREADSHEET_ID_PATTERNS = (
 MAX_ROWS = 50_000
 
 
+def assert_not_truncated(row_count: int, tab_name: str) -> None:
+    """Refuse a read that hit the cap rather than importing part of a sheet.
+
+    Every read path asks for one row more than the cap. Coming back with that many
+    means the sheet has at least MAX_ROWS rows of its own, so what was read is a
+    prefix of unknown completeness. Importing it would report SUCCESS over a partial
+    quarter, and the supersession pass would then resolve the rejections belonging to
+    rows nobody looked at.
+    """
+    if row_count > MAX_ROWS:
+        raise SheetsError(
+            f"The tab {tab_name!r} holds more than {MAX_ROWS:,} rows, which is more than "
+            "this application reads in one pass. Nothing was imported, because importing "
+            "part of a sheet and calling it a success is worse than refusing. Split the "
+            "tab by quarter and import each one."
+        )
+
+
 class SheetsError(RuntimeError):
     """Anything that stopped us reading the source. Message is safe to show an admin."""
 
@@ -55,6 +73,8 @@ class SheetsClient(Protocol):
     def list_tabs(self, spreadsheet_id: str) -> list[str]: ...
 
     def read_tab(self, spreadsheet_id: str, tab_name: str, header_row: int) -> SheetData: ...
+
+    def read_headers(self, spreadsheet_id: str, tab_name: str, header_row: int) -> list[str]: ...
 
 
 def extract_spreadsheet_id(url_or_id: str) -> str:
@@ -179,7 +199,9 @@ class GoogleSheetsClient:
         self, spreadsheet_id: str, tab_name: str, header_row: int
     ) -> SheetData:  # pragma: no cover - network
         assert_tab_allowed(tab_name)
-        rng = f"'{tab_name}'!A1:ZZ{MAX_ROWS}"
+        # One past the cap on purpose, so a sheet that reaches it is detectable
+        # rather than silently trimmed. See assert_not_truncated.
+        rng = f"'{tab_name}'!A1:ZZ{MAX_ROWS + 1}"
         try:
             response = (
                 self._client()
@@ -196,7 +218,44 @@ class GoogleSheetsClient:
         except Exception as exc:
             raise SheetsError(_friendly_api_error(exc)) from exc
 
-        return build_sheet_data(header_row, response.get("values", []))
+        values = response.get("values", [])
+        assert_not_truncated(len(values), tab_name)
+        return build_sheet_data(header_row, values)
+
+    def read_headers(
+        self, spreadsheet_id: str, tab_name: str, header_row: int
+    ) -> list[str]:  # pragma: no cover - network
+        """Just the header row.
+
+        The mapping form only ever needed the column names, and it used to get them by
+        reading the entire tab: fifty thousand rows of patient data pulled over the
+        network, and held in memory, every time an admin opened the source page.
+        """
+        assert_tab_allowed(tab_name)
+        rng = f"'{tab_name}'!A{header_row}:ZZ{header_row}"
+        try:
+            response = (
+                self._client()
+                .spreadsheets()
+                .values()
+                .get(
+                    spreadsheetId=spreadsheet_id,
+                    range=rng,
+                    valueRenderOption="UNFORMATTED_VALUE",
+                    dateTimeRenderOption="FORMATTED_STRING",
+                )
+                .execute()
+            )
+        except Exception as exc:
+            raise SheetsError(_friendly_api_error(exc)) from exc
+
+        rows = response.get("values", [])
+        if not rows:
+            raise SheetsError(
+                f"Row {header_row} of the tab {tab_name!r} is empty, so there are no "
+                "column names to map. Check the source's Header row setting."
+            )
+        return [str(h).strip() if h is not None else "" for h in rows[0]]
 
 
 def _friendly_api_error(exc: Exception) -> str:  # pragma: no cover - network paths
@@ -259,6 +318,10 @@ class DemoSheetsClient:
                 f"Available: {', '.join(self._tabs)}."
             )
         return build_sheet_data(header_row, self._tabs[tab_name])
+
+    def read_headers(self, spreadsheet_id: str, tab_name: str, header_row: int) -> list[str]:
+        """Already in memory, so this is only here to satisfy the protocol."""
+        return self.read_tab(spreadsheet_id, tab_name, header_row).headers
 
 
 def client_for(provider: str, service_account_json: str | None = None) -> SheetsClient:

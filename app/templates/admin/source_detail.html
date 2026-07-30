@@ -201,11 +201,18 @@
   >
     <p class="card__title">Upload a file</p>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    {% if not source.active %}
+    <p class="text-muted">
+      This source is switched off, so it will not accept a file. Tick <em>Active</em>
+      above and save first.
+    </p>
+    {% else %}
     <p class="text-muted">
       An .xlsx or .csv export goes through exactly the same pipeline as a live sync:
       same column allowlist, same validation, same rejection queue. The file is read
-      in memory and never stored. A dry run validates everything and writes nothing,
-      always worth doing first.
+      in memory and never stored, though a file this size does pass through a temporary
+      file the server deletes as the request ends. A dry run validates everything and
+      writes nothing, always worth doing first.
     </p>
     <label class="field">
       <span class="field__label">File</span>
@@ -217,11 +224,18 @@
         Import
       </button>
     </div>
+    {% endif %}
   </form>
   {% else %}
   <div class="card">
     <p class="card__title">Sync</p>
-    {% if source.is_ready_to_sync %}
+    {% if not source.active %}
+    <p class="text-muted">
+      This source is switched off. Auto sync already skips it, so leaving the buttons
+      here meant off applied to the schedule and not to the person pressing them. Tick
+      <em>Active</em> above and save to import from it again.
+    </p>
+    {% elif source.is_ready_to_sync %}
     <p class="text-muted">
       A dry run reads and validates everything and writes no session rows. Always worth
       running first on a new quarter.

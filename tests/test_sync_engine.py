@@ -571,7 +571,7 @@ def test_supersession_stops_at_the_last_row_the_run_examined(client, demo_source
     from app.sync.engine import _supersede_stale_errors
 
     with client.app.state.db.session() as db:
-        early_run = SyncRun(source_id=demo_source, mode=SyncMode.LIVE)
+        early_run = SyncRun(source_id=demo_source, mode=SyncMode.LIVE, tab_name="T", header_row=1)
         db.add(early_run)
         db.flush()
         for ref in ("3", "5000", None):
@@ -583,13 +583,19 @@ def test_supersession_stops_at_the_last_row_the_run_examined(client, demo_source
                     source_row_ref=ref,
                 )
             )
-        current = SyncRun(source_id=demo_source, mode=SyncMode.LIVE)
+        current = SyncRun(source_id=demo_source, mode=SyncMode.LIVE, tab_name="T", header_row=1)
         db.add(current)
         db.flush()
 
         # The current run examined sheet rows up to 100 only.
         n = _supersede_stale_errors(
-            db, demo_source, current.id, last_examined_row=100, dry_run=False
+            db,
+            demo_source,
+            current.id,
+            last_examined_row=100,
+            dry_run=False,
+            tab_name="T",
+            header_row=1,
         )
         assert n == 1
 
@@ -603,6 +609,125 @@ def test_supersession_stops_at_the_last_row_the_run_examined(client, demo_source
     assert sorted(r.source_row_ref or "none" for r in remaining) == ["5000", "none"]
 
 
+def test_a_read_of_one_tab_does_not_resolve_another_tabs_rejections(client, demo_source):
+    """A row reference is a row NUMBER, and row 3 of one tab is not row 3 of another.
+
+    An admin who repointed a source at a different tab, or moved its header row, made
+    the next run resolve the previous tab's open rejections on the strength of a read
+    that never looked at them. The queue emptied and the sheet was still wrong.
+    """
+    from app.models.data_source import SyncRun
+    from app.sync.engine import _supersede_stale_errors
+
+    with client.app.state.db.session() as db:
+        old_tab = SyncRun(
+            source_id=demo_source, mode=SyncMode.LIVE, tab_name="Q2 Snapshot", header_row=1
+        )
+        db.add(old_tab)
+        db.flush()
+        db.add(
+            ImportErrorRow(
+                sync_run_id=old_tab.id,
+                source_id=demo_source,
+                reason=RejectReason.MISSING_DOS,
+                source_row_ref="3",
+            )
+        )
+        repointed = SyncRun(
+            source_id=demo_source, mode=SyncMode.LIVE, tab_name="Q3 Snapshot", header_row=1
+        )
+        db.add(repointed)
+        db.flush()
+
+        assert (
+            _supersede_stale_errors(
+                db,
+                demo_source,
+                repointed.id,
+                last_examined_row=9999,
+                dry_run=False,
+                tab_name="Q3 Snapshot",
+                header_row=1,
+            )
+            == 0
+        )
+
+        moved_header = SyncRun(
+            source_id=demo_source, mode=SyncMode.LIVE, tab_name="Q2 Snapshot", header_row=4
+        )
+        db.add(moved_header)
+        db.flush()
+        assert (
+            _supersede_stale_errors(
+                db,
+                demo_source,
+                moved_header.id,
+                last_examined_row=9999,
+                dry_run=False,
+                tab_name="Q2 Snapshot",
+                header_row=4,
+            )
+            == 0
+        ), "moving the header row renumbers every row, so the references do not line up"
+
+        still_open = (
+            db.execute(select(ImportErrorRow).where(ImportErrorRow.resolved_at.is_(None)))
+            .scalars()
+            .all()
+        )
+    assert len(still_open) == 1
+
+
+def test_a_run_that_read_nothing_leaves_the_recorded_coverage_alone(client, demo_source):
+    """Coverage is what the source is known to contain, and an empty read knows nothing.
+
+    Writing the empty run's Nones erased it while the rows stayed in the database: the
+    source claimed to cover nothing, and the vintage comparison that decides which
+    sheet may revise money lost the only signal it has.
+    """
+    from app.models.data_source import DataSource
+    from app.sync.engine import run_sync
+    from app.sync.sheets import DemoSheetsClient
+
+    with client.app.state.db.session() as db:
+        first = run_sync(db, db.get(DataSource, demo_source), DemoSheetsClient(), dry_run=False)
+    assert first.ok
+
+    with client.app.state.db.session() as db:
+        source = db.get(DataSource, demo_source)
+        covered = (source.coverage_start, source.coverage_end)
+        assert covered[0] is not None, "the first sync must have recorded a span"
+        # Point the header row past the end of the tab's data, so the next run reads
+        # a header and no rows at all.
+        source.header_row = 1
+        source.column_mapping = dict(source.column_mapping)
+
+    class EmptyTab:
+        """A tab with headers and nothing under them."""
+
+        def list_tabs(self, spreadsheet_id):
+            return ["Q2 Snapshot (demo)"]
+
+        def read_tab(self, spreadsheet_id, tab_name, header_row):
+            from app.sync.demo_data import Q2_HEADERS
+            from app.sync.sheets import SheetData
+
+            return SheetData(
+                headers=[str(h) if h is not None else "" for h in Q2_HEADERS],
+                rows=[],
+                row_numbers=[],
+            )
+
+    with client.app.state.db.session() as db:
+        second = run_sync(db, db.get(DataSource, demo_source), EmptyTab(), dry_run=False)
+    assert second.ok
+    assert second.rows_read == 0
+
+    with client.app.state.db.session() as db:
+        source = db.get(DataSource, demo_source)
+        assert (source.coverage_start, source.coverage_end) == covered
+
+
 def test_an_older_read_never_supersedes_a_newer_account(client, demo_source):
     """With two overlapping syncs, the run with the lower id may finish second. Its
     read is still the older one, so it must not mark the newer list as stale."""
@@ -610,8 +735,8 @@ def test_an_older_read_never_supersedes_a_newer_account(client, demo_source):
     from app.sync.engine import _supersede_stale_errors
 
     with client.app.state.db.session() as db:
-        older = SyncRun(source_id=demo_source, mode=SyncMode.LIVE)
-        newer = SyncRun(source_id=demo_source, mode=SyncMode.LIVE)
+        older = SyncRun(source_id=demo_source, mode=SyncMode.LIVE, tab_name="T", header_row=1)
+        newer = SyncRun(source_id=demo_source, mode=SyncMode.LIVE, tab_name="T", header_row=1)
         db.add_all([older, newer])
         db.flush()
         db.add(
@@ -626,7 +751,13 @@ def test_an_older_read_never_supersedes_a_newer_account(client, demo_source):
         # The older run finishes second and tries to supersede.
         assert (
             _supersede_stale_errors(
-                db, demo_source, older.id, last_examined_row=9999, dry_run=False
+                db,
+                demo_source,
+                older.id,
+                last_examined_row=9999,
+                dry_run=False,
+                tab_name="T",
+                header_row=1,
             )
             == 0
         )

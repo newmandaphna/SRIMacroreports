@@ -24,6 +24,12 @@
     {% endif %}
     <span class="kpi-delta__basis">vs previous {{ date_range.days }} days</span>
   </p>
+  {% elif kpi.no_comparison_reason %}
+  {# Deliberately not "no change". A period the record does not cover is not a period
+     in which nothing happened, and showing the whole figure as growth from zero was
+     the first month of every import reading as spectacular growth. #}
+  <p class="kpi-delta kpi-delta--neutral">no comparable period</p>
+  <p class="kpi-note">{{ kpi.no_comparison_reason }}</p>
   {% else %}
   <p class="kpi-delta kpi-delta--neutral">{{ kpi.label }}</p>
   {% endif %}

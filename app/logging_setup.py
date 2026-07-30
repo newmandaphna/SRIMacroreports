@@ -52,9 +52,16 @@ _SENSITIVE_KEYS = (
 _KEY_ALTERNATION = "|".join(re.escape(k) for k in _SENSITIVE_KEYS)
 
 # key="value" / key='value' / key=value / "key": "value"
+#
+# The optional suffix is load bearing, not decoration. SQLAlchemy names the bound
+# parameters of a batched insert patient_name__0, patient_code__1 and so on, and a
+# real quarterly import batches, so a database error mid insert renders every one of
+# them. The column itself is also patient_name_normalized. A pattern that demanded a
+# word boundary immediately after the key name matched none of those, and a patient
+# code has no fallback shape to catch it, so it reached the log in the clear.
 _KV_PATTERN = re.compile(
     rf"""(?ix)
-    (?P<key>['"]?\b(?:{_KEY_ALTERNATION})\b['"]?\s*[:=]\s*)
+    (?P<key>['"]?\b(?:{_KEY_ALTERNATION})(?:_+\w+)?\b['"]?\s*[:=]\s*)
     (?P<value>"[^"]*"|'[^']*'|[^\s,;)}}\]]+)
     """
 )
@@ -123,10 +130,19 @@ class _ScrubbingFormatter(logging.Formatter):
         return scrub(super().format(record))
 
 
+# Loggers that ship their own handlers with propagation off, so records logged to
+# them never reach the scrubbed root handler. uvicorn is the one that matters: on a
+# deployment its output IS the deployment log, and an unscrubbed traceback there is
+# the whole PHI to log path this module exists to close.
+_HIJACK_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
+
+
 def configure_logging(level: str = "INFO") -> None:
     """Install the scrubbing filter and formatter on the root logger.
 
-    Call this once, as early as possible, before any other logger is used.
+    Call this once, as early as possible, before any other logger is used. It is also
+    safe to call after a library has configured its own logging, which is the normal
+    case under uvicorn: the hijack below funnels those loggers back through here.
     """
     root = logging.getLogger()
     root.setLevel(level.upper())
@@ -147,3 +163,15 @@ def configure_logging(level: str = "INFO") -> None:
     # SQLAlchemy echo prints bound parameters, which is a direct PHI to log path.
     # Pin it off regardless of what any library default or env var tries to do.
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+
+    # Funnel the loggers that would otherwise print around us back through the one
+    # scrubbed handler. Their own handlers go, propagation comes back on, and each
+    # keeps a filter of its own so a library that re-attaches a handler later still
+    # cannot emit an unscrubbed record.
+    for name in _HIJACK_LOGGERS:
+        logger = logging.getLogger(name)
+        for existing in list(logger.handlers):
+            logger.removeHandler(existing)
+        logger.propagate = True
+        if not any(isinstance(f, PHIScrubbingFilter) for f in logger.filters):
+            logger.addFilter(PHIScrubbingFilter())

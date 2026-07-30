@@ -210,6 +210,43 @@ def test_drill_in_for_an_unmeasured_therapist_says_so(manager, practice):
     assert "No session threshold applies" in page
 
 
+def test_a_week_the_range_only_partly_covers_is_not_graded(manager, practice):
+    """A part week holds fewer sessions than the week it stands for.
+
+    1 April 2026 is a Wednesday and 28 April is a Tuesday, so the first and last
+    buckets of this range are fragments. Graded against a whole week's expectation they
+    opened and closed the table with red rows about weeks that were mostly outside the
+    range, which is a verdict on the picker rather than on anybody's work.
+    """
+    page = manager.get(f"/reports/therapist-utilization/{practice['salaried']}?{ALL}").text
+
+    assert "in progress" in page
+    # The fully covered week in the middle is still graded, or the fix has just
+    # switched the statuses off.
+    assert ">below<" in page
+
+
+def test_a_range_of_whole_weeks_grades_every_one_of_them(manager, practice):
+    """6 to 12 April is exactly one Monday to Sunday week, so nothing is partial."""
+    page = manager.get(f"/reports/therapist-utilization/{practice['salaried']}?{WEEK1}").text
+    assert "in progress" not in page
+    assert ">below<" in page
+
+
+def test_a_drill_in_range_with_no_rows_says_so_instead_of_grading_zeros(manager, practice):
+    """Zero sessions because the picker missed the data is not zero sessions worked.
+
+    The page used to render zeros and a table of empty weeks, every one of them graded
+    below, which reads as a finding about a real person.
+    """
+    page = manager.get(
+        f"/reports/therapist-utilization/{practice['salaried']}"
+        "?preset=custom&start=2025-01-06&end=2025-01-12&granularity=week"
+    ).text
+    assert "No data in this range" in page
+    assert ">below<" not in page
+
+
 def test_drill_in_on_a_missing_therapist_is_a_404(manager):
     assert manager.get(f"/reports/therapist-utilization/9999?{ALL}").status_code == 404
 
@@ -310,6 +347,47 @@ def test_a_viewer_cannot_write_a_note(viewer, practice):
 
     with viewer.app.state.db.session() as db:
         assert db.execute(select(UtilizationNote)).scalars().all() == []
+
+
+def test_a_manager_without_the_grant_cannot_write_a_note(client, practice):
+    """Write access without read access. The grant and the role answer different
+    questions, and only the role was being asked.
+
+    A manager who had never been granted therapist utilization got a 403 on the page
+    and a 200 on the POST, so the note landed on a therapist's record and then showed on
+    a board its author could not open.
+    """
+    with client.app.state.db.session() as db:
+        email = make_user(db, email="mgr.nogrant@example.invalid", role=Role.MANAGER).email
+    sign_in(client, email)
+
+    assert (
+        client.get(f"/reports/therapist-utilization/{practice['salaried']}?{ALL}").status_code
+        == 403
+    )
+
+    # A real token, from a page this user can open. A rejected token would give a 403
+    # from the CSRF middleware and prove nothing about the authorization check.
+    token = token_from(client.get("/change-password").text)
+    response = client.post(
+        f"/reports/therapist-utilization/{practice['salaried']}/notes?{ALL}",
+        data={"csrf_token": token, "period": "2026-04-06", "body": "Should not save."},
+    )
+    assert response.status_code == 403
+
+    with client.app.state.db.session() as db:
+        assert db.execute(select(UtilizationNote)).scalars().all() == []
+        denied = (
+            db.execute(
+                select(AuditLog).where(
+                    AuditLog.action == AuditAction.ACCESS_DENIED,
+                    AuditLog.detail.contains("write_without_grant"),
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert denied, "the refusal must be recorded against the module, like a refused read"
 
 
 def test_note_changes_are_audited_with_the_previous_text(manager, practice):

@@ -34,7 +34,6 @@ from app.routers import (
     status,
     utilization,
 )
-from app.security.csrf import CSRFMiddleware
 from app.security.deps import (
     AccessDenied,
     FeatureDisabled,
@@ -225,10 +224,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
 
+    # CSRF is installed in here too, so the whole order lives in one place. See the
+    # docstring: it has to sit inside the host and scheme guards.
     install_middleware(app, settings)
-    # Added after the security headers so it runs before them on the way in: a
-    # rejected request still gets the headers on the way out.
-    app.add_middleware(CSRFMiddleware)
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -291,7 +289,11 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/readyz", include_in_schema=False)
     async def readyz(request: Request) -> JSONResponse:
-        """Readiness probe: database connectivity + schema integrity."""
+        """Readiness probe: database connectivity + schema integrity.
+
+        Stays async, unlike the rest of the handlers, because it genuinely awaits: the
+        schema inspection is handed to a thread rather than run on the event loop.
+        """
         import asyncio
 
         from sqlalchemy import text
@@ -324,7 +326,7 @@ def register_routes(app: FastAPI) -> None:
         return JSONResponse({"status": "ready"})
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    async def index(request: Request, auth_ctx: OptionalUser) -> Response:
+    def index(request: Request, auth_ctx: OptionalUser) -> Response:
         if auth_ctx is None:
             return RedirectResponse("/login", status_code=303)
         if auth_ctx.user.must_change_password:

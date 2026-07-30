@@ -53,7 +53,7 @@ def _auto_sync_status(db: DbSession) -> tuple:
 
 
 @router.get("", response_class=HTMLResponse)
-async def config_form(request: Request, db: DbSession, auth: AdminUser) -> Response:
+def config_form(request: Request, db: DbSession, auth: AdminUser) -> Response:
     settings = request.app.state.settings
     last_auto_run, has_ready_sources = _auto_sync_status(db)
     return render(
@@ -74,7 +74,7 @@ async def config_form(request: Request, db: DbSession, auth: AdminUser) -> Respo
 
 
 @router.post("")
-async def save_config(
+def save_config(
     request: Request,
     db: DbSession,
     auth: AdminUser,
