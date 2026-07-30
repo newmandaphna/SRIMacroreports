@@ -375,6 +375,218 @@ def test_bulk_edit_is_audited(admin_client):
     assert "Andrea Harris" in (entry.detail or "")
 
 
+# ---------------------------------------- moving an alias that already has history
+#
+# A visit's identity is (therapist_id, patient, date, CPT). An alias is how a sheet
+# name becomes a therapist_id, so moving an alias that already attributed rows changes
+# the identity of history without touching the rows, and the next sync of the very same
+# sheet inserts a second copy of every one of them.
+
+ALIAS_HEADER = "Therapist,Patient name,DOS,CPT,Total paid\n"
+ALIAS_ROWS = "ZEBRA,Patient AA,2026-04-06,90837,150.00\nZEBRA,Patient AB,2026-04-07,90834,125.00\n"
+ALIAS_MAPPING = {
+    "therapist": "Therapist",
+    "patient_name": "Patient name",
+    "dos": "DOS",
+    "cpt": "CPT",
+    "total_paid": "Total paid",
+}
+
+
+def _upload_source(admin_client) -> int:
+    from app.models.data_source import DataSource, SourceProvider
+    from app.sync.upload import CSV_TAB_NAME
+
+    with admin_client.app.state.db.session() as db:
+        source = DataSource(
+            label="Alias history",
+            provider=SourceProvider.UPLOAD,
+            tab_name=CSV_TAB_NAME,
+            header_row=1,
+            column_mapping=dict(ALIAS_MAPPING),
+            active=True,
+        )
+        db.add(source)
+        db.flush()
+        return source.id
+
+
+def _upload_rows(admin_client, source_id: int, body: str):
+    token = token_from(admin_client.get(f"/admin/sources/{source_id}").text)
+    return admin_client.post(
+        f"/admin/sources/{source_id}/upload",
+        data={"csrf_token": token, "mode": "live"},
+        files={"file": ("rows.csv", body.encode(), "text/csv")},
+        follow_redirects=False,
+    )
+
+
+def _visit_totals(admin_client) -> tuple[int, str]:
+    from app.models.visit import Visit
+
+    with admin_client.app.state.db.session() as db:
+        count = db.execute(select(func.count(Visit.id))).scalar_one()
+        paid = db.execute(select(func.coalesce(func.sum(Visit.total_paid), 0))).scalar_one()
+    return count, str(paid)
+
+
+def test_an_alias_carrying_imported_rows_cannot_be_removed(admin_client):
+    """The two click double count, refused at the first click.
+
+    Remove the alias from one therapist, add it to another, and every historical row
+    is now attributed to somebody who has no rows matching it. Re-syncing the
+    unchanged sheet then inserts a second copy of all of them: sessions and money
+    double, and the duplicates are indistinguishable from real rows.
+    """
+    create(admin_client, "Zebra Alias", aliases="ZEBRA")
+    source_id = _upload_source(admin_client)
+    assert _upload_rows(admin_client, source_id, ALIAS_HEADER + ALIAS_ROWS).status_code == 303
+
+    before = _visit_totals(admin_client)
+    assert before[0] == 2, "the fixture rows must have imported for this test to mean anything"
+
+    with admin_client.app.state.db.session() as db:
+        alias = db.execute(
+            select(TherapistAlias).where(TherapistAlias.alias == "ZEBRA")
+        ).scalar_one()
+        therapist_id, alias_id = alias.therapist_id, alias.id
+
+    page = admin_client.get(f"/admin/therapists/{therapist_id}")
+    response = admin_client.post(
+        f"/admin/therapists/{therapist_id}/aliases/{alias_id}/remove",
+        data={"csrf_token": token_from(page.text)},
+    )
+
+    assert response.status_code == 409
+    assert "deactivate the therapist instead" in response.text
+
+    with admin_client.app.state.db.session() as db:
+        assert db.get(TherapistAlias, alias_id) is not None, "the alias must survive the refusal"
+
+    # The invariant the guard exists for: re-syncing the same file changes nothing.
+    assert _upload_rows(admin_client, source_id, ALIAS_HEADER + ALIAS_ROWS).status_code == 303
+    assert _visit_totals(admin_client) == before
+
+
+def test_an_alias_with_no_imported_rows_can_still_be_removed(admin_client):
+    """The guard must not turn an ordinary typo fix into a permanent record."""
+    create(admin_client, "Harris", aliases="A.HARRIS")
+    with admin_client.app.state.db.session() as db:
+        alias = db.execute(
+            select(TherapistAlias).where(TherapistAlias.alias == "A.HARRIS")
+        ).scalar_one()
+        therapist_id, alias_id = alias.therapist_id, alias.id
+
+    page = admin_client.get(f"/admin/therapists/{therapist_id}")
+    response = admin_client.post(
+        f"/admin/therapists/{therapist_id}/aliases/{alias_id}/remove",
+        data={"csrf_token": token_from(page.text)},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    with admin_client.app.state.db.session() as db:
+        assert db.get(TherapistAlias, alias_id) is None
+
+
+def test_an_alias_that_shadows_another_therapists_display_name_is_refused(admin_client):
+    """The same double count reached from the other direction.
+
+    The resolver checks aliases before display names, so attaching a name that is
+    already somebody's display name re-points that name's future imports without any
+    alias row changing hands. Reachable in one step: a bulk rename leaves the old
+    all-caps alias behind, so the new display name is not itself an alias and the
+    existing alias-table check cannot see the collision.
+    """
+    create(admin_client, "ZEBRA", aliases="ZEBRA")
+    create(admin_client, "Other Person", aliases="OTHER")
+
+    source_id = _upload_source(admin_client)
+    assert _upload_rows(admin_client, source_id, ALIAS_HEADER + ALIAS_ROWS).status_code == 303
+    before = _visit_totals(admin_client)
+    assert before[0] == 2
+
+    with admin_client.app.state.db.session() as db:
+        zebra_id = db.execute(
+            select(Therapist.id).where(Therapist.display_name == "ZEBRA")
+        ).scalar_one()
+        other_id = db.execute(
+            select(Therapist.id).where(Therapist.display_name == "Other Person")
+        ).scalar_one()
+
+    # Rename by the route an admin actually uses. The ZEBRA alias stays behind, so
+    # "Zebra Person" is now a display name that no alias row mentions.
+    page = admin_client.get("/admin/therapists/bulk")
+    assert (
+        admin_client.post(
+            "/admin/therapists/bulk",
+            data={
+                "csrf_token": token_from(page.text),
+                f"name_{zebra_id}": "Zebra Person",
+                f"employment_{zebra_id}": "salaried_benefits",
+                f"name_{other_id}": "Other Person",
+                f"employment_{other_id}": "salaried_benefits",
+            },
+            follow_redirects=False,
+        ).status_code
+        == 303
+    )
+
+    page = admin_client.get(f"/admin/therapists/{other_id}")
+    response = admin_client.post(
+        f"/admin/therapists/{other_id}/aliases",
+        data={"csrf_token": token_from(page.text), "alias": "Zebra Person"},
+    )
+    assert response.status_code == 400
+    assert "already resolves to a different therapist" in response.text
+
+    with admin_client.app.state.db.session() as db:
+        owner = db.execute(
+            select(TherapistAlias).where(TherapistAlias.alias == "ZEBRA PERSON")
+        ).scalar_one_or_none()
+    assert owner is None, "the shadowing alias must not have been created"
+
+
+def test_shadowing_a_display_name_with_no_rows_is_allowed(admin_client):
+    """Nothing to protect means nothing to refuse: a therapist who never imported a
+    row is exactly the placeholder an admin is trying to tidy up."""
+    create(admin_client, "PLACEHOLDER", aliases="PLACEHOLDER")
+    create(admin_client, "Real Person", aliases="REAL")
+
+    with admin_client.app.state.db.session() as db:
+        placeholder_id = db.execute(
+            select(Therapist.id).where(Therapist.display_name == "PLACEHOLDER")
+        ).scalar_one()
+        real_id = db.execute(
+            select(Therapist.id).where(Therapist.display_name == "Real Person")
+        ).scalar_one()
+
+    page = admin_client.get("/admin/therapists/bulk")
+    admin_client.post(
+        "/admin/therapists/bulk",
+        data={
+            "csrf_token": token_from(page.text),
+            f"name_{placeholder_id}": "Tidy Name",
+            f"employment_{placeholder_id}": "other",
+            f"name_{real_id}": "Real Person",
+            f"employment_{real_id}": "salaried_benefits",
+        },
+        follow_redirects=False,
+    )
+
+    page = admin_client.get(f"/admin/therapists/{real_id}")
+    response = admin_client.post(
+        f"/admin/therapists/{real_id}/aliases",
+        data={"csrf_token": token_from(page.text), "alias": "Tidy Name"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    with admin_client.app.state.db.session() as db:
+        entry = db.execute(
+            select(TherapistAlias).where(TherapistAlias.alias == "TIDY NAME")
+        ).scalar_one()
+    assert entry.therapist_id == real_id
+
+
 def test_a_created_therapist_resolves_a_previously_rejected_row(admin_client):
     """The whole point: reject, add the therapist, sync again, row lands."""
     from app.models.data_source import DataSource, RejectReason, SourceProvider
