@@ -272,7 +272,42 @@ def extract_row(
         "source_row_ref": row_ref,
         **money,
     }
+
+    too_long = _first_overlong_value(values)
+    if too_long is not None:
+        field_name, limit, actual = too_long
+        return None, Rejection(
+            row_ref,
+            RejectReason.VALUE_TOO_LONG,
+            field=field_name,
+            raw_value=str(values[field_name])[:120],
+            detail=(
+                f"{actual} characters, but the {field_name} column holds {limit}. "
+                "Shorten the cell in the source and sync again."
+            ),
+            patient_hint=patient_raw,
+            therapist_hint=therapist_raw,
+        )
+
     return values, None
+
+
+def _first_overlong_value(values: dict[str, Any]) -> tuple[str, int, int] | None:
+    """The first value the database would refuse for being too long, if any.
+
+    Reads the limits off the model's own columns rather than repeating them, so a
+    column that grows or shrinks cannot leave this check describing the old schema.
+    Without it, one over-long cell (a 21 character note, a long payer name) failed
+    at flush time and took the whole import with it, valid rows included.
+    """
+    for field_name, value in values.items():
+        if not isinstance(value, str):
+            continue
+        column = Visit.__table__.columns.get(field_name)
+        limit = getattr(getattr(column, "type", None), "length", None)
+        if limit and len(value) > limit:
+            return field_name, limit, len(value)
+    return None
 
 
 def run_sync(
@@ -299,17 +334,41 @@ def run_sync(
 
     result = SyncResult(run_id=run.id, mode=mode)
 
+    # The row writes happen inside a savepoint, and the flush that sends them to the
+    # database happens INSIDE this handler on purpose.
+    #
+    # Without both, a database level rejection (a cell too long for its column, a
+    # value the type refuses) surfaced on a later flush, after this handler had
+    # closed. The whole transaction then rolled back and took the sync run, every
+    # recorded rejection and the audit entry with it, so an import that destroyed a
+    # quarter's upload left no trace that it had ever run. The savepoint keeps the
+    # run row, which was flushed before it, while discarding the failed writes.
+    savepoint = db.begin_nested()
     try:
         _execute(db, source, client, run, result, dry_run=dry_run)
+        db.flush()
+        savepoint.commit()
     except SheetsError as exc:
+        savepoint.rollback()
         result.error_message = str(exc)
     except Exception:
+        savepoint.rollback()
         logger.exception("Sync failed for source %s", source.id)
-        result.error_message = "The import failed unexpectedly. The error has been logged."
+        result.error_message = (
+            "The import failed unexpectedly and nothing was written. The error has "
+            "been logged with a correlation id."
+        )
 
     run.status = SyncStatus.FAILED if result.error_message else SyncStatus.SUCCESS
     run.error_message = result.error_message
     run.finished_at = utcnow()
+    # A failed run wrote nothing, whatever the in flight counters had reached before
+    # the savepoint was rolled back. Reporting rows inserted on a FAILED run would
+    # send an admin looking for data that is not there.
+    if result.error_message:
+        result.rows_inserted = 0
+        result.rows_updated = 0
+        result.rows_unchanged = 0
     run.rows_read = result.rows_read
     run.rows_inserted = result.rows_inserted
     run.rows_updated = result.rows_updated
