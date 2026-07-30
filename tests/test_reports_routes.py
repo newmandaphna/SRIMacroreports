@@ -170,7 +170,10 @@ def test_therapist_row_drills_into_the_weekly_history_when_granted(client, with_
 
 def test_kpi_cards_link_into_the_module(financial_user, with_data):
     page = financial_user.get(f"/reports?{ALL}").text
-    assert 'class="card card--link" href="/reports/financial' in page
+    # The whole card is still clickable, now through an overlay link rather than by
+    # wrapping the body, so the "how this is calculated" link can be a second target.
+    assert 'class="card__stretch" href="/reports/financial' in page
+    assert "card--link" in page
 
 
 # --------------------------------------------------------------------- empty states

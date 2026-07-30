@@ -41,10 +41,21 @@
   {% endif %}
   {% endset %}
 
-  {% if kpi.href %}
-  <a class="card card--link" href="{{ kpi.href }}">{{ body }}</a>
-  {% else %}
-  <div class="card">{{ body }}</div>
-  {% endif %}
+  {# The card stays clickable as a whole via an overlay link rather than by
+     wrapping the body, because the explanation link below has to be a second,
+     separately clickable target and anchors cannot nest. #}
+  <div class="card {% if kpi.href %}card--link kpi-card{% endif %}">
+    {% if kpi.href %}
+    <a class="card__stretch" href="{{ kpi.href }}">
+      <span class="visually-hidden">{{ kpi.label }} detail</span>
+    </a>
+    {% endif %}
+    {{ body }}
+    {% if kpi.key in explainable %}
+    <p class="kpi-how no-print">
+      <a href="/reports/explain/{{ kpi.key }}?{{ query_string }}">How this is calculated</a>
+    </p>
+    {% endif %}
+  </div>
   {% endfor %}
 </div>
