@@ -246,6 +246,7 @@ class RejectReason(StrEnum):
     BAD_MONEY = "bad_money"
     MISSING_CPT = "missing_cpt"
     DUPLICATE_KEY = "duplicate_key"
+    VALUE_TOO_LONG = "value_too_long"
 
     @property
     def label(self) -> str:
@@ -258,6 +259,7 @@ class RejectReason(StrEnum):
             RejectReason.BAD_MONEY: "Amount could not be read",
             RejectReason.MISSING_CPT: "No CPT code",
             RejectReason.DUPLICATE_KEY: "Duplicate of another row",
+            RejectReason.VALUE_TOO_LONG: "Value too long for its column",
         }[self]
 
 
