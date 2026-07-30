@@ -49,32 +49,125 @@ APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 
 
-def _run_migrations() -> None:
-    """Run `alembic upgrade head` programmatically.
-
-    Called once at startup, before any request is served. Alembic tracks which
-    migrations have already been applied, so this is idempotent: on a cold start
-    with a fresh database it creates every table; on subsequent boots it is a
-    no-op that takes a few milliseconds.
-
-    Running migrations here rather than in a separate pre-deploy script means
-    the app and its schema are always in sync: a new deployment cannot serve
-    requests against a schema that hasn't been migrated yet.
-    """
+def _alembic_cfg():
+    """Build an Alembic Config object pointing at the project's alembic.ini."""
     from pathlib import Path as _Path
 
-    from alembic import command as _cmd
     from alembic.config import Config as _Config
 
-    # Locate alembic.ini relative to this file's project root.
-    ini_path = _Path(__file__).resolve().parent.parent / "alembic.ini"
-    cfg = _Config(str(ini_path))
-    # script_location must be absolute so Alembic finds the versions folder
-    # regardless of the working directory the server was started from.
-    cfg.set_main_option(
-        "script_location", str(_Path(__file__).resolve().parent.parent / "migrations")
-    )
+    root = _Path(__file__).resolve().parent.parent
+    cfg = _Config(str(root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(root / "migrations"))
+    return cfg
+
+
+def _schema_drift(engine) -> dict[str, list[str]]:
+    """Return {table: [missing_col, ...]} for every column declared in our
+    models that is absent from the live database.  Empty dict = no drift."""
+    from sqlalchemy import inspect as _inspect
+
+    import app.models as _models_pkg  # noqa: F401 — registers all models on Base
+
+    inspector = _inspect(engine)
+    from app.models import Base
+
+    missing: dict[str, list[str]] = {}
+    for table_name, table in Base.metadata.tables.items():
+        if not inspector.has_table(table_name):
+            missing[table_name] = [col.name for col in table.columns]
+            continue
+        actual = {col["name"] for col in inspector.get_columns(table_name)}
+        absent = [col.name for col in table.columns if col.name not in actual]
+        if absent:
+            missing[table_name] = absent
+    return missing
+
+
+def _run_migrations() -> None:
+    """Run ``alembic upgrade head`` and then verify the live schema matches the
+    models.  If they diverge — the exact failure mode seen when a migration's
+    DDL rolls back but the alembic_version row commits — the function stamps
+    the version pointer back one revision and re-runs, then checks again.
+
+    Called once at startup before any request is served.  All paths either
+    leave the database in a fully-migrated, schema-consistent state, or raise
+    so the process exits cleanly rather than serving on a broken schema.
+    """
+    import os
+
+    from alembic import command as _cmd
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import create_engine, text
+
+    cfg = _alembic_cfg()
     _cmd.upgrade(cfg, "head")
+
+    # ------------------------------------------------------------------ #
+    # Schema integrity check                                               #
+    # ------------------------------------------------------------------ #
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        # No URL means we're in a test environment that manages its own schema.
+        return
+
+    engine = create_engine(db_url, pool_pre_ping=True)
+    try:
+        drift = _schema_drift(engine)
+        if not drift:
+            return  # All good — common fast path.
+
+        # ---------------------------------------------------------------- #
+        # Auto-repair: stamp back one revision and re-run.                 #
+        # This fixes the scenario where the alembic_version row committed  #
+        # but the accompanying DDL was rolled back by the database.        #
+        # ---------------------------------------------------------------- #
+        logger.error(
+            "Schema integrity check failed — columns missing from live database: %s. "
+            "This usually means a migration's DDL was rolled back while its "
+            "alembic_version record was committed.  Attempting auto-repair.",
+            drift,
+        )
+
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+            current_rev = row[0] if row else None
+
+        if current_rev is None:
+            raise RuntimeError(
+                f"Schema drift detected but alembic_version table is empty — "
+                f"cannot auto-repair.  Missing: {drift}"
+            )
+
+        script = ScriptDirectory.from_config(cfg)
+        rev_obj = script.get_revision(current_rev)
+        prev_rev = rev_obj.down_revision if rev_obj else None
+
+        if not prev_rev:
+            raise RuntimeError(
+                f"Schema drift detected on the baseline revision '{current_rev}' "
+                f"(no previous revision to roll back to).  Missing: {drift}"
+            )
+
+        logger.warning(
+            "Stamping alembic_version back from %s to %s and re-running migrations.",
+            current_rev,
+            prev_rev,
+        )
+        _cmd.stamp(cfg, str(prev_rev))
+        _cmd.upgrade(cfg, "head")
+
+        # Verify the repair worked.
+        still_drifted = _schema_drift(engine)
+        if still_drifted:
+            raise RuntimeError(
+                f"Schema auto-repair failed — columns still missing after re-running "
+                f"migrations: {still_drifted}.  Manual intervention required."
+            )
+
+        logger.info("Schema auto-repair successful — all columns now present.")
+
+    finally:
+        engine.dispose()
 
 
 @asynccontextmanager
@@ -195,16 +288,41 @@ def register_routes(app: FastAPI) -> None:
         return JSONResponse({"status": "ok", "version": app.version})
 
     @app.get("/readyz", include_in_schema=False)
-    def readyz(request: Request) -> JSONResponse:
-        """Readiness probe: the encrypted database answers a query."""
+    async def readyz(request: Request) -> JSONResponse:
+        """Readiness probe: database connectivity + schema integrity.
+
+        Stays async, unlike the rest of the handlers, because it genuinely awaits: the
+        schema inspection is handed to a thread rather than run on the event loop.
+        """
+        import asyncio
+
         from sqlalchemy import text
 
+        # DB connectivity
         try:
             with request.app.state.db.session() as session:
                 session.execute(text("SELECT 1"))
         except Exception:
-            logger.exception("Readiness check failed")
-            return JSONResponse({"status": "degraded"}, status_code=503)
+            logger.exception("Readiness check failed — cannot reach database")
+            return JSONResponse({"status": "degraded", "reason": "db_unreachable"}, status_code=503)
+
+        # Schema integrity — run in a thread so we don't block the event loop
+        try:
+            engine = request.app.state.db.engine  # reuse the existing engine
+            drift = await asyncio.get_event_loop().run_in_executor(None, _schema_drift, engine)
+        except Exception:
+            logger.exception("Readiness check failed — schema inspection error")
+            return JSONResponse(
+                {"status": "degraded", "reason": "schema_check_error"}, status_code=503
+            )
+
+        if drift:
+            logger.error("Readiness check failed — schema drift detected: %s", drift)
+            return JSONResponse(
+                {"status": "degraded", "reason": "schema_drift", "detail": drift},
+                status_code=503,
+            )
+
         return JSONResponse({"status": "ready"})
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)

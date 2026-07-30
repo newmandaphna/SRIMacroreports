@@ -74,7 +74,20 @@ def run_due_syncs(db: Session, settings: Settings) -> int:
     entries with it. A pass interrupted part way through now keeps what it finished.
     """
     config = config_store.load(db, settings)
-    due = sources_due(db, now=utcnow(), interval_days=config.auto_sync_days)
+    interval = config.auto_sync_days
+
+    if interval <= 0:
+        logger.info("Auto-sync check: disabled (auto_sync_days=0)")
+        return 0
+
+    due = sources_due(db, now=utcnow(), interval_days=interval)
+    logger.info(
+        "Auto-sync check: interval=%d day(s), %d source(s) due to sync",
+        interval,
+        len(due),
+    )
+    # Ids rather than the loaded objects: each source below commits, which expires
+    # everything attached to this session.
     source_ids = [s.id for s in due]
 
     ran = 0
@@ -140,9 +153,8 @@ async def auto_sync_loop(app) -> None:
         try:
             with app.state.db.session() as db:
                 ran = run_due_syncs(db, app.state.settings)
-            if ran:
-                logger.info("Auto sync pass complete: %d source(s) synced", ran)
+            logger.info("Auto-sync wake complete: %d source(s) synced this hour", ran)
         except Exception:
             # The loop must survive anything: a dead scheduler is silent, and
             # silence here means the practice quietly stops getting fresh data.
-            logger.exception("Auto sync pass failed; will retry next hour")
+            logger.exception("Auto-sync pass failed; will retry next hour")
