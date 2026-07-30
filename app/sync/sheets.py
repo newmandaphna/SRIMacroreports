@@ -38,6 +38,24 @@ _SPREADSHEET_ID_PATTERNS = (
 MAX_ROWS = 50_000
 
 
+def assert_not_truncated(row_count: int, tab_name: str) -> None:
+    """Refuse a read that hit the cap rather than importing part of a sheet.
+
+    Every read path asks for one row more than the cap. Coming back with that many
+    means the sheet has at least MAX_ROWS rows of its own, so what was read is a
+    prefix of unknown completeness. Importing it would report SUCCESS over a partial
+    quarter, and the supersession pass would then resolve the rejections belonging to
+    rows nobody looked at.
+    """
+    if row_count > MAX_ROWS:
+        raise SheetsError(
+            f"The tab {tab_name!r} holds more than {MAX_ROWS:,} rows, which is more than "
+            "this application reads in one pass. Nothing was imported, because importing "
+            "part of a sheet and calling it a success is worse than refusing. Split the "
+            "tab by quarter and import each one."
+        )
+
+
 class SheetsError(RuntimeError):
     """Anything that stopped us reading the source. Message is safe to show an admin."""
 
@@ -179,7 +197,9 @@ class GoogleSheetsClient:
         self, spreadsheet_id: str, tab_name: str, header_row: int
     ) -> SheetData:  # pragma: no cover - network
         assert_tab_allowed(tab_name)
-        rng = f"'{tab_name}'!A1:ZZ{MAX_ROWS}"
+        # One past the cap on purpose, so a sheet that reaches it is detectable
+        # rather than silently trimmed. See assert_not_truncated.
+        rng = f"'{tab_name}'!A1:ZZ{MAX_ROWS + 1}"
         try:
             response = (
                 self._client()
@@ -196,7 +216,9 @@ class GoogleSheetsClient:
         except Exception as exc:
             raise SheetsError(_friendly_api_error(exc)) from exc
 
-        return build_sheet_data(header_row, response.get("values", []))
+        values = response.get("values", [])
+        assert_not_truncated(len(values), tab_name)
+        return build_sheet_data(header_row, values)
 
 
 def _friendly_api_error(exc: Exception) -> str:  # pragma: no cover - network paths

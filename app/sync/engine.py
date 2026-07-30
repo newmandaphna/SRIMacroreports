@@ -526,6 +526,31 @@ def _execute(
             + ". The tab layout may have changed; check the column mapping."
         )
 
+    # A mapped column whose header text changed in the sheet used to vanish silently:
+    # build_column_index cannot find it, so the field simply never enters the position
+    # map, every cell reads as blank, and blank money means zero by design. Renaming
+    # "Total paid" to "Paid total" produced a SUCCESS run with no rejections and rows
+    # reading total_due 175.00 against total_paid 0.00. Revenue read zero while billed
+    # read the full amount. Only the four required fields were guarded; the other
+    # fourteen, which is every money column, were not.
+    #
+    # Refusing the run is the right default for money. An unmapped column is a
+    # deliberate choice and stays silent; a mapped column that has gone missing is
+    # drift, and drift gets a FAILED run with an actionable message.
+    vanished = {field for field, header in source.column_mapping.items() if header} - set(positions)
+    vanished &= set(IMPORT_ALLOWLIST)
+    if vanished:
+        raise SheetsError(
+            "These columns are mapped but no longer present in the sheet: "
+            + ", ".join(
+                f"{field} (expected header {source.column_mapping[field]!r})"
+                for field in sorted(vanished)
+            )
+            + ". The tab layout may have changed; check the column mapping. Nothing was "
+            "imported, because a missing money column would otherwise read as zero on "
+            "every row."
+        )
+
     resolver = AliasResolver(db)
 
     # Pre-pass for the date span of the incoming sheet, so the existing rows can be

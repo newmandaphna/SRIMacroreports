@@ -17,6 +17,7 @@ from app.sync.sheets import (
     MAX_ROWS,
     SheetData,
     SheetsError,
+    assert_not_truncated,
     assert_tab_allowed,
     build_sheet_data,
     selectable_tabs,
@@ -95,7 +96,10 @@ def _parse_csv(content: bytes) -> list[list[object]]:
         # Excel on Windows exports CSV as cp1252 unless told otherwise.
         text = content.decode("cp1252", errors="replace")
     reader = csv.reader(io.StringIO(text))
-    return [list(row) for _, row in zip(range(MAX_ROWS), reader, strict=False)]
+    # One past the cap, so hitting it is detectable rather than a silent trim.
+    rows = [list(row) for _, row in zip(range(MAX_ROWS + 1), reader, strict=False)]
+    assert_not_truncated(len(rows), CSV_TAB_NAME)
+    return rows
 
 
 def _parse_xlsx(content: bytes) -> dict[str, list[list[object]]]:
@@ -118,8 +122,9 @@ def _parse_xlsx(content: bytes) -> dict[str, list[list[object]]]:
             rows: list[list[object]] = []
             for row in sheet.iter_rows(values_only=True):
                 rows.append(list(row))
-                if len(rows) >= MAX_ROWS:
+                if len(rows) > MAX_ROWS:
                     break
+            assert_not_truncated(len(rows), sheet.title)
             tabs[sheet.title] = rows
     finally:
         workbook.close()

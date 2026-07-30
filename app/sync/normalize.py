@@ -146,9 +146,9 @@ def parse_money(value: object) -> Decimal:
     if isinstance(value, int):
         return Decimal(value).quantize(Decimal("0.01"))
     if isinstance(value, float):
-        return Decimal(str(value)).quantize(Decimal("0.01"))
+        return _finite(Decimal(str(value)), value)
     if isinstance(value, Decimal):
-        return value.quantize(Decimal("0.01"))
+        return _finite(value, value)
 
     text = str(value).strip()
     if not text:
@@ -163,8 +163,21 @@ def parse_money(value: object) -> Decimal:
         return Decimal("0.00")
 
     try:
-        amount = Decimal(text).quantize(Decimal("0.01"))
+        amount = _finite(Decimal(text), value)
     except (InvalidOperation, ArithmeticError) as exc:
         raise ParseError(f"Unrecognized amount: {value!r}", value) from exc
 
     return -amount if negative else amount
+
+
+def _finite(amount: Decimal, raw: object) -> Decimal:
+    """Quantize, refusing the values that are not numbers.
+
+    Decimal happily accepts "nan", "inf" and "-inf", from text and from float alike,
+    and quantizing a NaN raises nothing. One such cell then poisoned every aggregate
+    it touched, or crashed the import outright at the database. A cell that is not an
+    amount rejects its row like any other unreadable value, with the raw text kept.
+    """
+    if not amount.is_finite():
+        raise ParseError(f"Not a finite amount: {raw!r}", raw)
+    return amount.quantize(Decimal("0.01"))

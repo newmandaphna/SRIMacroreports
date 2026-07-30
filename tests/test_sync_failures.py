@@ -208,3 +208,71 @@ def test_a_dry_run_of_a_bad_file_agrees_with_the_live_run(admin_client, source_i
     assert dry_rejections >= 1 or dry_run_row.error_message, (
         "the dry run reported the file as clean, so the live run's failure is a surprise"
     )
+
+
+# ------------------------------------------------- the other silent-wrong paths
+
+
+def test_a_renamed_money_column_refuses_the_import(admin_client, source_id):
+    """A mapped column whose header changed used to vanish silently: every cell read
+    as blank, and blank money means zero by design. Renaming "Total paid" produced a
+    SUCCESS run with no rejections and revenue reading zero against a full billed
+    figure. Only the four required fields were guarded; every money column was not."""
+    renamed = HEADER.replace("Total paid", "Paid total")
+    response = upload(admin_client, source_id, renamed + GOOD_ROW.replace("", ""))
+    assert response.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.status is SyncStatus.FAILED, "a vanished money column must not import as zero"
+    assert "total_paid" in (run.error_message or "")
+    assert counts(admin_client, source_id)["visits"] == 0
+
+
+def test_a_deliberately_unmapped_column_stays_silent(admin_client, source_id):
+    """The guard must distinguish drift from choice: a column nobody mapped is a
+    decision, and it must not start failing imports."""
+    with admin_client.app.state.db.session() as db:
+        source = db.get(DataSource, source_id)
+        mapping = dict(source.column_mapping)
+        mapping.pop("note_code")
+        source.column_mapping = mapping
+
+    response = upload(admin_client, source_id, HEADER + GOOD_ROW)
+    assert response.status_code == 303
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.status is SyncStatus.SUCCESS
+    assert counts(admin_client, source_id)["visits"] == 1
+
+
+def test_a_money_cell_reading_nan_rejects_its_row(admin_client, source_id):
+    """Decimal accepts "nan" and quantizing it raises nothing, so one such cell
+    poisoned every aggregate it touched or crashed the import at the database."""
+    from app.models.data_source import RejectReason
+
+    nan_row = "ZEBRA,Patient AC,2026-04-08,90837,nan,OK\n"
+    response = upload(admin_client, source_id, HEADER + GOOD_ROW + nan_row)
+    assert response.status_code == 303
+
+    after = counts(admin_client, source_id)
+    assert after["visits"] == 1, "the good row must still import"
+    with admin_client.app.state.db.session() as db:
+        rejection = (
+            db.execute(select(ImportErrorRow).where(ImportErrorRow.source_id == source_id))
+            .scalars()
+            .one()
+        )
+    assert rejection.reason is RejectReason.BAD_MONEY
