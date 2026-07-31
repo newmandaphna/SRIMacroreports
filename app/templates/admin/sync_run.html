@@ -29,6 +29,29 @@
 {% if run.error_message %}
 <div class="alert alert--error" role="alert">
   <p><strong>The run failed.</strong> {{ run.error_message }}</p>
+  {# The kind is the machine readable half of the failure, so the error can point
+     at the control that fixes it instead of only describing the path. #}
+  {% if run.error_kind and run.error_kind.fix_area == "mapping" %}
+  <p>
+    <a href="/admin/sources/{{ source.id }}" class="button">Open the column mapping</a>
+  </p>
+  {% elif run.error_kind and run.error_kind.fix_area == "tab" %}
+  {% if run.error_detail and run.error_detail.get("available_tabs") %}
+  <p>
+    The workbook offers:
+    {% for t in run.error_detail["available_tabs"] %}<span class="pill pill--neutral">{{ t }}</span>
+    {% endfor %}
+  </p>
+  {% endif %}
+  <p>
+    <a href="/admin/sources/{{ source.id }}" class="button">Choose the tab on the source page</a>
+  </p>
+  {% elif run.error_kind and run.error_kind.is_transient %}
+  <p class="text-muted">
+    This kind of failure is usually temporary. Nothing needs fixing yet: sync again in
+    a minute, and auto sync retries on its own schedule anyway.
+  </p>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -39,12 +62,11 @@
 <div class="alert alert--warning" role="alert">
   <p>
     <strong>
-      {%- if run.mode.value == "dry_run" %} The preview found gaps.
-      {%- else %} Imported with gaps.
+      {%- if run.mode.value == "dry_run" %} The preview raised warnings.
+      {%- else %} Finished with warnings.
       {%- endif %}
     </strong>
-    This run finished, but it could not see everything the mapping says the sheet
-    should have:
+    This run completed, and it noticed things somebody should look at:
   </p>
   <ul>
     {% for warning in run.warnings %}
@@ -112,6 +134,89 @@
     {% endif %}
   </div>
 </div>
+
+{% if run.reconciliation %}
+{% set recon = run.reconciliation %}
+<div class="card" style="margin-top: var(--space-3)">
+  <div class="section-head">
+    <div>
+      <h2>What this sync changed in its span</h2>
+      <p class="page-head__sub">
+        {{ recon["span_start"] }} to {{ recon["span_end"] }}, everything stored for
+        those dates, compared before and after this run. Advisory: nothing here blocks
+        an import, it makes change visible so a person can judge it.
+      </p>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th class="numeric">Before</th>
+        <th class="numeric">After</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Stored rows in span</td>
+        <td class="numeric">{{ recon["rows_before"] }}</td>
+        <td class="numeric">{{ recon["rows_after"] }}</td>
+      </tr>
+      <tr>
+        <td>Collected</td>
+        <td class="numeric">${{ recon["collected_before"] }}</td>
+        <td class="numeric">${{ recon["collected_after"] }}</td>
+      </tr>
+      <tr>
+        <td>Billed</td>
+        <td class="numeric">${{ recon["billed_before"] }}</td>
+        <td class="numeric">${{ recon["billed_after"] }}</td>
+      </tr>
+    </tbody>
+  </table>
+  {% if recon["vanished_count"] %}
+  <p style="margin-top: var(--space-2)">
+    <span class="pill pill--watch">{{ recon["vanished_count"] }} stored row(s) not in this read</span>
+    <span class="text-muted">
+      dated {{ recon["vanished_span"][0] }} to {{ recon["vanished_span"][1] }}. The rows
+      stand; details in the warnings above.
+    </span>
+  </p>
+  {% endif %}
+  {% if recon["movers"] %}
+  <h3 style="margin-top: var(--space-3)">Largest money movements</h3>
+  <p class="text-muted">
+    Rows this sync changed the most, by sheet row. No patient identity is shown here.
+  </p>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Sheet row</th>
+        <th>DOS</th>
+        <th>CPT</th>
+        <th class="numeric">Paid was</th>
+        <th class="numeric">Paid now</th>
+        <th class="numeric">Due was</th>
+        <th class="numeric">Due now</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in recon["movers"] %}
+      <tr>
+        <td>{{ m["row_ref"] }}</td>
+        <td>{{ m["dos"] }}</td>
+        <td>{{ m["cpt"] }}</td>
+        <td class="numeric">${{ m["paid_before"] }}</td>
+        <td class="numeric">${{ m["paid_after"] }}</td>
+        <td class="numeric">${{ m["due_before"] }}</td>
+        <td class="numeric">${{ m["due_after"] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endif %}
 
 {% if unknown_therapists %}
 <div class="alert alert--warning" style="margin-top: var(--space-5)">

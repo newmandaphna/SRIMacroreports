@@ -157,6 +157,71 @@ class DataSource(Base):
         return not self.missing_required_fields
 
 
+class ErrorKind(StrEnum):
+    """What went wrong, in a form the SYSTEM can read.
+
+    The prose in error_message is for the admin; this is for the code. RejectReason
+    already does exactly this one level down, at the row, and it is what lets the
+    review queue count, filter, and supersede. Run level failures were prose only,
+    so a Google rate limit and a renamed header were indistinguishable without
+    string matching: every failure was just "a failed run".
+
+    Two families, and the split drives behaviour:
+
+      transient  the world may fix it on its own (rate limits, network). Retrying
+                 is sensible, and nobody should be alarmed by one of them.
+      structural someone changed something, and no retry will ever fix it. The
+                 only cure is a person, so these escalate instead of waiting.
+    """
+
+    # Transient: retrying can genuinely help.
+    RATE_LIMITED = "rate_limited"
+    SHEET_UNREACHABLE = "sheet_unreachable"
+
+    # Structural: a person has to change something.
+    CREDENTIALS_MISSING = "credentials_missing"
+    PERMISSION_DENIED = "permission_denied"
+    BAD_SOURCE_CONFIG = "bad_source_config"
+    TAB_MISSING = "tab_missing"
+    TAB_BLOCKED = "tab_blocked"
+    HEADER_ROW_EMPTY = "header_row_empty"
+    MAPPING_INCOMPLETE = "mapping_incomplete"
+    HEADER_DRIFT_IDENTITY = "header_drift_identity"
+    HEADER_DRIFT_MONEY = "header_drift_money"
+    DUPLICATE_HEADER = "duplicate_header"
+    TRUNCATED = "truncated"
+
+    # Neither: another import holds the source right now.
+    CONCURRENT_RUN = "concurrent_run"
+
+    # The catch all. A raise site that cannot name its kind is a bug to fix, not a
+    # licence to lean on this.
+    UNEXPECTED = "unexpected"
+
+    @property
+    def is_transient(self) -> bool:
+        """Whether waiting and retrying can plausibly fix it without a human."""
+        return self in {
+            ErrorKind.RATE_LIMITED,
+            ErrorKind.SHEET_UNREACHABLE,
+            ErrorKind.CONCURRENT_RUN,
+        }
+
+    @property
+    def fix_area(self) -> str | None:
+        """Which control fixes it, so an error can render as a button, not just text."""
+        if self in {
+            ErrorKind.MAPPING_INCOMPLETE,
+            ErrorKind.HEADER_DRIFT_IDENTITY,
+            ErrorKind.HEADER_DRIFT_MONEY,
+            ErrorKind.DUPLICATE_HEADER,
+        }:
+            return "mapping"
+        if self in {ErrorKind.TAB_MISSING, ErrorKind.TAB_BLOCKED, ErrorKind.HEADER_ROW_EMPTY}:
+            return "tab"
+        return None
+
+
 class SyncMode(StrEnum):
     DRY_RUN = "dry_run"
     LIVE = "live"
@@ -224,6 +289,20 @@ class SyncRun(Base):
     warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The machine readable half of a failure: which kind, and its structured facts
+    # (field names, expected headers, available tabs). The prose above stays the
+    # admin's; these are what let the code choose a retry policy, render the error
+    # as a link to the fixing control, and tell an insight whether to say "wait" or
+    # "get an administrator". Nullable, because old rows predate the classification.
+    error_kind: Mapped[ErrorKind | None] = mapped_column(
+        enum_column(ErrorKind, length=40), nullable=True
+    )
+    error_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # What a live run changed against what was already stored in its own date span:
+    # row and money totals before and after, the largest movers, and rows present in
+    # the store but absent from this read. Advisory by design. See A-100.
+    reconciliation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     run_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True

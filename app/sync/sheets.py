@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.models.data_source import BLOCKED_TAB_PREFIX
+from app.models.data_source import BLOCKED_TAB_PREFIX, ErrorKind
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +52,33 @@ def assert_not_truncated(row_count: int, tab_name: str) -> None:
             f"The tab {tab_name!r} holds more than {MAX_ROWS:,} rows, which is more than "
             "this application reads in one pass. Nothing was imported, because importing "
             "part of a sheet and calling it a success is worse than refusing. Split the "
-            "tab by quarter and import each one."
+            "tab by quarter and import each one.",
+            kind=ErrorKind.TRUNCATED,
+            detail={"tab": tab_name, "max_rows": MAX_ROWS},
         )
 
 
 class SheetsError(RuntimeError):
-    """Anything that stopped us reading the source. Message is safe to show an admin."""
+    """Anything that stopped us reading the source. Message is safe to show an admin.
+
+    Carries two audiences at once. The message is prose for the person. `kind` and
+    `detail` are for the system: which class of failure, and its structured facts
+    (field names, expected headers, available tabs), so the code can pick a retry
+    policy, render the error as a link to the control that fixes it, and let an
+    insight distinguish "wait" from "get an administrator". Every raise site names
+    its kind; UNEXPECTED reaching a run page is a bug in the raiser, not a category.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: ErrorKind = ErrorKind.UNEXPECTED,
+        detail: dict | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.detail = detail
 
 
 @dataclass(frozen=True)
@@ -86,7 +107,10 @@ def extract_spreadsheet_id(url_or_id: str) -> str:
     """
     candidate = (url_or_id or "").strip()
     if not candidate:
-        raise SheetsError("Enter a Google Sheets URL or spreadsheet ID.")
+        raise SheetsError(
+            "Enter a Google Sheets URL or spreadsheet ID.",
+            kind=ErrorKind.BAD_SOURCE_CONFIG,
+        )
 
     for pattern in _SPREADSHEET_ID_PATTERNS:
         match = pattern.search(candidate)
@@ -96,7 +120,8 @@ def extract_spreadsheet_id(url_or_id: str) -> str:
     if "/" in candidate or " " in candidate:
         raise SheetsError(
             "That does not look like a Google Sheets URL. It should contain "
-            "/spreadsheets/d/ followed by the sheet ID."
+            "/spreadsheets/d/ followed by the sheet ID.",
+            kind=ErrorKind.BAD_SOURCE_CONFIG,
         )
     return candidate
 
@@ -112,7 +137,9 @@ def assert_tab_allowed(tab_name: str) -> None:
         raise SheetsError(
             f"The tab {tab_name!r} holds raw Valant exports, which carry patient dates "
             "of birth, emails, and phone numbers. This application never imports "
-            "those. Choose the visit level tab instead."
+            "those. Choose the visit level tab instead.",
+            kind=ErrorKind.TAB_BLOCKED,
+            detail={"tab": tab_name},
         )
 
 
@@ -135,7 +162,9 @@ def build_sheet_data(header_row: int, values: list[list[object]]) -> SheetData:
     """
     if len(values) < header_row:
         raise SheetsError(
-            f"The tab has fewer than {header_row} rows, so there is no header row to read."
+            f"The tab has fewer than {header_row} rows, so there is no header row to read.",
+            kind=ErrorKind.HEADER_ROW_EMPTY,
+            detail={"header_row": header_row, "rows_in_tab": len(values)},
         )
 
     headers = [str(h).strip() if h is not None else "" for h in values[header_row - 1]]
@@ -154,7 +183,8 @@ class GoogleSheetsClient:
             raise SheetsError(
                 "GOOGLE_SERVICE_ACCOUNT_JSON is not set, so the application cannot "
                 "reach Google Sheets. Add it in Replit Secrets (see the README) and "
-                "restart."
+                "restart.",
+                kind=ErrorKind.CREDENTIALS_MISSING,
             )
         self._raw_credentials = service_account_json
         self._service = None
@@ -175,7 +205,8 @@ class GoogleSheetsClient:
             # Deliberately does not include the value: it is a private key.
             raise SheetsError(
                 "GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON. Paste the whole "
-                "downloaded key file as the secret's value."
+                "downloaded key file as the secret's value.",
+                kind=ErrorKind.CREDENTIALS_MISSING,
             ) from exc
 
         credentials = Credentials.from_service_account_info(info, scopes=list(SCOPES))
@@ -191,7 +222,7 @@ class GoogleSheetsClient:
                 .execute()
             )
         except Exception as exc:
-            raise SheetsError(_friendly_api_error(exc)) from exc
+            raise _api_error(exc) from exc
 
         return [s["properties"]["title"] for s in meta.get("sheets", [])]
 
@@ -216,7 +247,7 @@ class GoogleSheetsClient:
                 .execute()
             )
         except Exception as exc:
-            raise SheetsError(_friendly_api_error(exc)) from exc
+            raise _api_error(exc) from exc
 
         values = response.get("values", [])
         assert_not_truncated(len(values), tab_name)
@@ -247,46 +278,58 @@ class GoogleSheetsClient:
                 .execute()
             )
         except Exception as exc:
-            raise SheetsError(_friendly_api_error(exc)) from exc
+            raise _api_error(exc) from exc
 
         rows = response.get("values", [])
         if not rows:
             raise SheetsError(
                 f"Row {header_row} of the tab {tab_name!r} is empty, so there are no "
-                "column names to map. Check the source's Header row setting."
+                "column names to map. Check the source's Header row setting.",
+                kind=ErrorKind.HEADER_ROW_EMPTY,
+                detail={"header_row": header_row, "tab": tab_name},
             )
         return [str(h).strip() if h is not None else "" for h in rows[0]]
 
 
-def _friendly_api_error(exc: Exception) -> str:  # pragma: no cover - network paths
+def _api_error(exc: Exception) -> SheetsError:  # pragma: no cover - network paths
     """Translate a Google API failure into something an admin can act on.
 
-    Never includes the exception's raw body, which can echo request content.
+    Never includes the exception's raw body, which can echo request content. The
+    kind matters as much as the words: rate limits and network trouble are
+    transient, so retries make sense and nobody should be paged over one, while a
+    revoked share stays broken until a person fixes it.
     """
     text = str(exc)
     if "404" in text:
-        return (
+        return SheetsError(
             "That spreadsheet was not found. Check the URL, and check that the sheet "
-            "is in the Drive folder shared with the service account."
+            "is in the Drive folder shared with the service account.",
+            kind=ErrorKind.SHEET_UNREACHABLE,
         )
     if "403" in text:
         if "SERVICE_DISABLED" in text or "has not been used" in text:
-            return (
+            return SheetsError(
                 "The Google Sheets API is not enabled in the service account's Cloud "
-                "project. Visit the Google Cloud Console → APIs & Services → Enable "
-                "APIs and enable 'Google Sheets API' (and 'Google Drive API') for that "
-                "project, then try again."
+                "project. Visit the Google Cloud Console, APIs & Services, Enable "
+                "APIs, and enable 'Google Sheets API' (and 'Google Drive API') for "
+                "that project, then try again.",
+                kind=ErrorKind.PERMISSION_DENIED,
             )
-        return (
+        return SheetsError(
             "Access denied by Google. Make sure the spreadsheet (or its containing "
-            "Drive folder) is shared with the service account address as Viewer."
+            "Drive folder) is shared with the service account address as Viewer.",
+            kind=ErrorKind.PERMISSION_DENIED,
         )
     if "429" in text or "quota" in text.lower():
-        return "Google rate limited the request. Wait a minute and try again."
+        return SheetsError(
+            "Google rate limited the request. Wait a minute and try again.",
+            kind=ErrorKind.RATE_LIMITED,
+        )
     logger.exception("Google Sheets API call failed")
-    return (
+    return SheetsError(
         "Could not read the spreadsheet. The error has been logged; ask an "
-        "administrator to check the application log."
+        "administrator to check the application log.",
+        kind=ErrorKind.SHEET_UNREACHABLE,
     )
 
 
@@ -315,7 +358,9 @@ class DemoSheetsClient:
         if tab_name not in self._tabs:
             raise SheetsError(
                 f"The demo workbook has no tab named {tab_name!r}. "
-                f"Available: {', '.join(self._tabs)}."
+                f"Available: {', '.join(self._tabs)}.",
+                kind=ErrorKind.TAB_MISSING,
+                detail={"tab": tab_name, "available_tabs": list(self._tabs)},
             )
         return build_sheet_data(header_row, self._tabs[tab_name])
 
@@ -334,6 +379,7 @@ def client_for(provider: str, service_account_json: str | None = None) -> Sheets
         # the duration of one uploaded file (see app/sync/upload.py).
         raise SheetsError(
             "This source imports from uploaded files, so there is nothing to sync "
-            "on demand. Upload a file below instead."
+            "on demand. Upload a file below instead.",
+            kind=ErrorKind.BAD_SOURCE_CONFIG,
         )
     return GoogleSheetsClient(service_account_json)

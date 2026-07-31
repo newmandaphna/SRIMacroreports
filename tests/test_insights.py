@@ -415,3 +415,122 @@ def test_a_recent_backup_silences_the_nag(client, practice):
         )
     report = insights_for(client)
     assert "backup_overdue" not in keys(report)
+
+
+# ---------------------------------------------------------------- sync health
+
+
+def _failing_source(client, ids, *, kind, failures=2, last_success=None):
+    from app.models.data_source import (
+        DataSource,
+        SourceProvider,
+        SyncMode,
+        SyncRun,
+        SyncStatus,
+    )
+
+    with client.app.state.db.session() as db:
+        source = DataSource(
+            label="Live Q",
+            provider=SourceProvider.GOOGLE_SHEETS,
+            spreadsheet_id="x",
+            tab_name="Q Snapshot",
+            header_row=1,
+            column_mapping={},
+            active=True,
+            last_synced_at=last_success,
+        )
+        db.add(source)
+        db.flush()
+        for _ in range(failures):
+            db.add(
+                SyncRun(
+                    source_id=source.id,
+                    mode=SyncMode.LIVE,
+                    status=SyncStatus.FAILED,
+                    error_message="failed",
+                    error_kind=kind,
+                )
+            )
+        return source.id
+
+
+def test_a_structurally_failing_sync_reaches_the_leadership_page(client, practice):
+    """Failed runs live on an admin page a viewer never opens, so stale data read as
+    current. Two consecutive structural failures now say so where the figures are,
+    in viewer safe words: what it means and who can fix it, never the raw error."""
+    from app.models.data_source import ErrorKind
+
+    seed_weeks(client, practice, {1: 10, 2: 10})
+    _failing_source(client, practice, kind=ErrorKind.HEADER_DRIFT_MONEY)
+
+    report = insights_for(client)
+    assert "sync_failing" in keys(report)
+    failing = by_key(report, "sync_failing")
+    assert failing.tone == "bad"
+    assert "Live Q" in failing.headline
+    assert "administrator" in failing.detail
+    assert "retrying will not fix" in failing.detail.lower()
+    assert "failed" != failing.detail, "raw error text stays on the admin pages"
+
+
+def test_a_transient_failure_asks_for_patience_not_alarm(client, practice):
+    from app.models.data_source import ErrorKind
+
+    seed_weeks(client, practice, {1: 10, 2: 10})
+    _failing_source(client, practice, kind=ErrorKind.RATE_LIMITED)
+
+    report = insights_for(client)
+    failing = by_key(report, "sync_failing")
+    assert failing.tone == "watch"
+    assert "temporary" in failing.detail
+
+
+def test_a_single_failure_never_fires_the_insight(client, practice):
+    """One recovered rate limit must not paint the dashboard: the gate is two
+    consecutive failures, so transient noise stays noise."""
+    from app.models.data_source import ErrorKind
+
+    seed_weeks(client, practice, {1: 10, 2: 10})
+    _failing_source(client, practice, kind=ErrorKind.RATE_LIMITED, failures=1)
+
+    report = insights_for(client)
+    assert "sync_failing" not in keys(report)
+
+
+def test_a_successful_dry_run_does_not_silence_a_broken_live_sync(client, practice):
+    """A dry run is a preview. Previewing the fixed sheet is exactly what an admin
+    does while the live imports are still failing, and the insight must keep firing
+    until a LIVE run succeeds."""
+    from app.models.data_source import (
+        ErrorKind,
+        SyncMode,
+        SyncRun,
+        SyncStatus,
+    )
+
+    seed_weeks(client, practice, {1: 10, 2: 10})
+    source_id = _failing_source(client, practice, kind=ErrorKind.HEADER_DRIFT_MONEY, failures=2)
+    with client.app.state.db.session() as db:
+        db.add(SyncRun(source_id=source_id, mode=SyncMode.DRY_RUN, status=SyncStatus.SUCCESS))
+
+    report = insights_for(client)
+    assert "sync_failing" in keys(report), "a clean preview is not a working import"
+
+
+def test_a_recovered_source_never_fires_the_insight(client, practice):
+    """A success after a failure means the failure is history, not a finding."""
+    from app.models.data_source import (
+        ErrorKind,
+        SyncMode,
+        SyncRun,
+        SyncStatus,
+    )
+
+    seed_weeks(client, practice, {1: 10, 2: 10})
+    source_id = _failing_source(client, practice, kind=ErrorKind.HEADER_DRIFT_MONEY, failures=2)
+    with client.app.state.db.session() as db:
+        db.add(SyncRun(source_id=source_id, mode=SyncMode.LIVE, status=SyncStatus.SUCCESS))
+
+    report = insights_for(client)
+    assert "sync_failing" not in keys(report)

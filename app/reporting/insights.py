@@ -549,6 +549,79 @@ def build_insights(
             )
         )
 
+    # ---------------------------------------------------------------- sync health
+    # A failing sync means every figure on this page is quietly going stale, and the
+    # failed runs live on an admin page a leadership viewer never opens. The error
+    # kind decides the wording: a structural failure needs a person and says so; a
+    # transient one asks for patience first. Two consecutive failures, so a single
+    # rate limit that recovers on the next pass never alarms anyone. No raw error
+    # text here: that is admin material, and the run page has it.
+    from app.models.data_source import (
+        DataSource,
+        SourceProvider,
+        SyncMode,
+        SyncRun,
+        SyncStatus,
+    )
+
+    failing_sources = []
+    active_sources = (
+        db.execute(
+            select(DataSource).where(
+                DataSource.active.is_(True),
+                DataSource.provider != SourceProvider.UPLOAD,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for source in active_sources:
+        # Live runs only. A dry run is a preview: a successful preview of a fixed
+        # sheet must not silence this while the live imports are still failing, and
+        # a failed preview while an admin experiments must not trip it either.
+        last_runs = (
+            db.execute(
+                select(SyncRun)
+                .where(SyncRun.source_id == source.id, SyncRun.mode == SyncMode.LIVE)
+                .order_by(SyncRun.id.desc())
+                .limit(2)
+            )
+            .scalars()
+            .all()
+        )
+        if len(last_runs) >= 2 and all(r.status is SyncStatus.FAILED for r in last_runs):
+            failing_sources.append((source, last_runs[0]))
+
+    for source, last_run in failing_sources:
+        structural = last_run.error_kind is not None and not last_run.error_kind.is_transient
+        since = (
+            f"Its data has not refreshed since {source.last_synced_at:%d %b %Y}."
+            if source.last_synced_at
+            else "It has never synced successfully."
+        )
+        insights.append(
+            Insight(
+                key="sync_failing",
+                tone="bad" if structural else "watch",
+                headline=f"{source.label} is failing to sync. {since}",
+                detail=(
+                    (
+                        "The last attempts failed in a way retrying will not fix, "
+                        "usually the sheet's layout or access changing. An "
+                        "administrator can see exactly what and fix it from the Data "
+                        "sources page; every figure here is going stale until then."
+                    )
+                    if structural
+                    else (
+                        "The recent failures look temporary, such as rate limits or "
+                        "network trouble, and syncing retries on its own. If this "
+                        "message persists for more than a day, ask an administrator "
+                        "to look at the Data sources page."
+                    )
+                ),
+            )
+        )
+
     # ------------------------------------------------------------- offline backups
     # Replit's point-in-time recovery covers a rolling window only. Once real data
     # exists, an offline copy that is older than a month (or has never been taken)
