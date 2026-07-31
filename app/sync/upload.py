@@ -20,6 +20,7 @@ from __future__ import annotations
 import csv
 import io
 
+from app.models.data_source import ErrorKind
 from app.sync.sheets import (
     MAX_ROWS,
     SheetData,
@@ -49,10 +50,11 @@ class UploadedWorkbookClient:
         if len(content) > MAX_UPLOAD_BYTES:
             raise SheetsError(
                 f"That file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB. "
-                "Export the quarter you need rather than the whole history at once."
+                "Export the quarter you need rather than the whole history at once.",
+                kind=ErrorKind.BAD_SOURCE_CONFIG,
             )
         if not content:
-            raise SheetsError("The uploaded file is empty.")
+            raise SheetsError("The uploaded file is empty.", kind=ErrorKind.BAD_SOURCE_CONFIG)
 
         name = (filename or "").lower()
         if name.endswith(".csv"):
@@ -64,11 +66,14 @@ class UploadedWorkbookClient:
         else:
             raise SheetsError(
                 "Only .xlsx and .csv files can be imported. Export the tab you need "
-                "from the workbook as one of those."
+                "from the workbook as one of those.",
+                kind=ErrorKind.BAD_SOURCE_CONFIG,
             )
 
         if not self._tabs:
-            raise SheetsError("The workbook has no readable tabs.")
+            raise SheetsError(
+                "The workbook has no readable tabs.", kind=ErrorKind.BAD_SOURCE_CONFIG
+            )
 
     def list_tabs(self, spreadsheet_id: str) -> list[str]:
         return list(self._tabs)
@@ -96,7 +101,9 @@ class UploadedWorkbookClient:
         raise SheetsError(
             f"The uploaded workbook has no tab named {tab_name!r}. "
             f"It contains: {', '.join(allowed) or 'no importable tabs'}. "
-            "Set the source's Tab field to the one to import, or re-export the file."
+            "Set the source's Tab field to the one to import, or re-export the file.",
+            kind=ErrorKind.TAB_MISSING,
+            detail={"tab": tab_name, "available_tabs": allowed},
         )
 
 
@@ -124,7 +131,8 @@ def _parse_xlsx(content: bytes) -> dict[str, list[list[object]]]:
     except Exception as exc:
         raise SheetsError(
             "That file could not be read as an Excel workbook. If it came from "
-            "Google Sheets, use File, Download, Microsoft Excel (.xlsx)."
+            "Google Sheets, use File, Download, Microsoft Excel (.xlsx).",
+            kind=ErrorKind.BAD_SOURCE_CONFIG,
         ) from exc
 
     tabs: dict[str, list[list[object]]] = {}

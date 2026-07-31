@@ -561,6 +561,7 @@ def sync_source(
             "unmapped_columns": result.unmapped_columns,
             "warnings": result.warnings,
             "error": result.error_message,
+            "error_kind": result.error_kind.value if result.error_kind else None,
         },
     )
 
@@ -638,6 +639,7 @@ async def upload_workbook(
             "unmapped_columns": result.unmapped_columns,
             "warnings": result.warnings,
             "error": result.error_message,
+            "error_kind": result.error_kind.value if result.error_kind else None,
         },
     )
 

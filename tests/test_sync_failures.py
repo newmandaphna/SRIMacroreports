@@ -142,6 +142,12 @@ def test_a_write_that_fails_at_the_database_leaves_a_recorded_failure(
     assert run.error_message, "a failed run must carry a message"
     assert run.rows_inserted == 0, "a failed run must not claim rows it did not write"
 
+    from app.models.data_source import ErrorKind
+
+    assert run.error_kind is ErrorKind.UNEXPECTED, (
+        "even the catch all path must tell the system which family it was"
+    )
+
 
 def test_one_oversized_cell_rejects_its_own_row_and_the_rest_imports(admin_client, source_id):
     """The right blast radius for a bad cell is one row, named in the review queue."""
@@ -322,9 +328,10 @@ def test_a_failed_write_discards_the_warnings_with_the_counters(
         )
     assert run.status is SyncStatus.FAILED
     assert run.warnings == []
+    assert run.reconciliation is None, "the account describes writes, and the writes rolled back"
 
     page = admin_client.get(f"/admin/sources/{source_id}/runs/{run.id}").text
-    assert "Imported with gaps" not in page
+    assert "Finished with warnings" not in page
 
 
 def test_a_renamed_descriptive_column_warns_and_imports(admin_client, source_id):
@@ -367,7 +374,7 @@ def test_a_renamed_descriptive_column_warns_and_imports(admin_client, source_id)
 
     # Persisted, so it survives navigation: the run page still shows it later.
     page = admin_client.get(f"/admin/sources/{source_id}/runs/{run.id}").text
-    assert "Imported with gaps" in page
+    assert "Finished with warnings" in page
     assert "note_code" in page
 
     # And on the audit trail, at parity with unmapped_columns.
@@ -545,3 +552,339 @@ def test_a_money_cell_reading_nan_rejects_its_row(admin_client, source_id):
             .one()
         )
     assert rejection.reason is RejectReason.BAD_MONEY
+
+
+# ------------------------------------------------- errors the system can read
+
+
+def test_the_error_kind_and_detail_travel_to_the_run(admin_client, source_id):
+    """The machine readable half of a failure, mirrored from the raise to the run.
+
+    Prose is for the admin; the kind and detail are what let the code route a
+    failure, so the tests pin the facts rather than the sentences and the wording
+    stays free to improve.
+    """
+    from app.models.data_source import ErrorKind
+
+    renamed = HEADER.replace("Total paid", "Paid total").replace("NOTE", "MEMO")
+    upload(admin_client, source_id, renamed + GOOD_ROW)
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.error_kind is ErrorKind.HEADER_DRIFT_MONEY
+    assert run.error_detail["fields"] == ["total_paid"]
+    assert run.error_detail["expected"] == {"total_paid": "Total paid"}
+    assert run.error_detail["also_stale"] == ["note_code"], (
+        "the descriptive stragglers ride the detail so the UI can flag them too"
+    )
+
+
+def test_a_vanished_identity_column_carries_its_kind(admin_client, source_id):
+    from app.models.data_source import ErrorKind
+
+    upload(admin_client, source_id, HEADER.replace("CPT", "PROCEDURE") + GOOD_ROW)
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.error_kind is ErrorKind.HEADER_DRIFT_IDENTITY
+    assert run.error_detail["fields"] == ["cpt"]
+
+
+def test_the_failed_run_page_offers_the_fixing_control(admin_client, source_id):
+    """The kind turns the error from a description of the path into the path."""
+    upload(admin_client, source_id, HEADER.replace("Total paid", "Paid total") + GOOD_ROW)
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    page = admin_client.get(f"/admin/sources/{source_id}/runs/{run.id}").text
+    assert "Open the column mapping" in page
+
+
+def test_the_kind_families_are_pinned():
+    """Transient and structural drive different behaviour, so the membership is a
+    contract: a kind added later lands on a side because somebody chose one."""
+    from app.models.data_source import ErrorKind
+
+    transient = {kind for kind in ErrorKind if kind.is_transient}
+    assert transient == {
+        ErrorKind.RATE_LIMITED,
+        ErrorKind.SHEET_UNREACHABLE,
+        ErrorKind.CONCURRENT_RUN,
+    }
+    assert ErrorKind.HEADER_DRIFT_MONEY.fix_area == "mapping"
+    assert ErrorKind.TAB_MISSING.fix_area == "tab"
+    assert ErrorKind.RATE_LIMITED.fix_area is None
+
+
+# ------------------------------------------------------------ duplicate headers
+
+
+DUP_MONEY_HEADER = "Therapist,Patient name,DOS,CPT,Total paid,Total paid,NOTE\n"
+DUP_MONEY_ROW = "ZEBRA,Patient AA,2026-04-06,90837,150.00,175.00,OK\n"
+DUP_NOTE_HEADER = "Therapist,Patient name,DOS,CPT,Total paid,NOTE,NOTE\n"
+DUP_NOTE_ROW = "ZEBRA,Patient AA,2026-04-06,90837,150.00,LEFT,RIGHT\n"
+
+
+def test_a_duplicated_money_header_refuses_the_import(admin_client, source_id):
+    """Two columns wearing the same money name is ambiguity, and the position map
+    silently took the leftmost even when the stale copy was leftmost."""
+    from app.models.data_source import ErrorKind
+
+    response = upload(admin_client, source_id, DUP_MONEY_HEADER + DUP_MONEY_ROW)
+    assert response.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.status is SyncStatus.FAILED
+    assert run.error_kind is ErrorKind.DUPLICATE_HEADER
+    assert "'Total paid'" in (run.error_message or "")
+    assert counts(admin_client, source_id)["visits"] == 0
+
+
+def test_a_duplicated_descriptive_header_warns_and_uses_the_leftmost(admin_client, source_id):
+    """Graded like the vanished check: descriptive ambiguity is not worth a blocked
+    quarter, but it is said out loud, naming which copy won."""
+    response = upload(admin_client, source_id, DUP_NOTE_HEADER + DUP_NOTE_ROW)
+    assert response.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+        visit = db.execute(select(Visit).where(Visit.source_id == source_id)).scalars().one()
+        note_code = visit.note_code
+
+    assert run.status is SyncStatus.SUCCESS
+    assert note_code == "LEFT"
+    warnings_text = " ".join(run.warnings or [])
+    assert "appears 2 times" in warnings_text
+    assert "leftmost" in warnings_text
+
+
+# ----------------------------------------------------------- header row hunting
+
+
+def test_a_title_row_inserted_above_the_headers_gets_a_row_suggestion(admin_client, source_id):
+    """The classic Sheets accident: somebody adds a heading above row 1. The refusal
+    now names the row that looks like the real header row, and only names it: the
+    setting is never changed automatically."""
+    body = "QUARTERLY REPORT,,,,,\n" + HEADER + GOOD_ROW
+    response = upload(admin_client, source_id, body)
+    assert response.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.status is SyncStatus.FAILED
+    assert "Row 2 of the tab looks like it holds these headers" in (run.error_message or "")
+    assert run.error_detail["suggested_header_row"] == 2
+    # The source is untouched: the suggestion is the admin's to take.
+    with admin_client.app.state.db.session() as db:
+        assert db.get(DataSource, source_id).header_row == 1
+
+
+# ------------------------------------------------------- reconciliation account
+
+
+def test_a_live_run_records_what_it_changed_in_its_span(admin_client, source_id):
+    """The before and after account that catches plausible but wrong values.
+
+    A fat fingered amount imports cleanly, because it is a valid number. Only the
+    comparison against what the span already held shows it, so every live run
+    records that comparison and the run page shows the largest movers.
+    """
+    upload(admin_client, source_id, HEADER + GOOD_ROW)
+    upload(admin_client, source_id, HEADER + GOOD_ROW.replace("150.00", "250.00"))
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+        run_id = run.id
+        recon = run.reconciliation
+
+    assert recon["rows_before"] == 1
+    assert recon["rows_after"] == 1
+    assert recon["collected_before"] == "150.00"
+    assert recon["collected_after"] == "250.00"
+    assert len(recon["movers"]) == 1
+    mover = recon["movers"][0]
+    assert (mover["paid_before"], mover["paid_after"]) == ("150.00", "250.00")
+    assert "Patient" not in str(recon), "the account must carry no patient identity"
+
+    page = admin_client.get(f"/admin/sources/{source_id}/runs/{run_id}").text
+    assert "What this sync changed in its span" in page
+    assert "Largest money movements" in page
+    # A $100 move on a $150 base is huge in percent terms but the span held less
+    # than the warning floor, so it stays information rather than alarm.
+    assert "moved" not in " ".join(run.warnings or [])
+
+
+def test_a_large_swing_on_a_substantial_span_warns(admin_client, source_id):
+    """20 percent on at least $1,000: generous enough that a remittance batch on a
+    small span or a first import never cries wolf."""
+    rows = "".join(
+        f"ZEBRA,Patient A{chr(66 + i)},2026-04-0{(i % 5) + 1},90837,150.00,OK\n" for i in range(8)
+    )
+    upload(admin_client, source_id, HEADER + rows)
+
+    shrunk = rows.replace("150.00", "100.00")
+    upload(admin_client, source_id, HEADER + shrunk)
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.status is SyncStatus.SUCCESS, "advisory means the import still lands"
+    warnings_text = " ".join(run.warnings or [])
+    assert "Collected money for" in warnings_text
+    assert "33 percent" in warnings_text
+
+
+def test_a_first_import_into_an_empty_span_never_warns(admin_client, source_id):
+    rows = "".join(
+        f"ZEBRA,Patient A{chr(66 + i)},2026-04-0{(i % 5) + 1},90837,150.00,OK\n" for i in range(8)
+    )
+    upload(admin_client, source_id, HEADER + rows)
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.reconciliation["rows_before"] == 0
+    assert "Collected money for" not in " ".join(run.warnings or [])
+
+
+def test_rows_missing_from_a_re_read_are_flagged_and_kept(admin_client, source_id):
+    """The sort-a-filtered-range disaster, finally visible.
+
+    Rows deleted from the sheet used to produce no signal at all: the store kept
+    them, the figures kept counting them, and nobody knew the sheet disagreed. The
+    re-read now names how many stored rows it did not contain, and the rows stand.
+    """
+    two = HEADER + GOOD_ROW + "ZEBRA,Patient AB,2026-04-06,90834,125.00,OK\n"
+    upload(admin_client, source_id, two)
+    upload(admin_client, source_id, HEADER + GOOD_ROW)
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.status is SyncStatus.SUCCESS
+    assert run.reconciliation["vanished_count"] == 1
+    warnings_text = " ".join(run.warnings or [])
+    assert "were not in this read" in warnings_text
+    assert "version history" in warnings_text, "the warning must name the sheet's undo button"
+    assert counts(admin_client, source_id)["visits"] == 2, "nothing is deleted on this side"
+
+
+def test_another_sources_rows_never_count_as_vanished(admin_client, source_id):
+    """The rolling export window means two sheets legitimately share a span. A row
+    imported from the other sheet is not a deletion from this one."""
+    with admin_client.app.state.db.session() as db:
+        other = DataSource(
+            label="Other quarter",
+            provider=SourceProvider.UPLOAD,
+            tab_name=CSV_TAB_NAME,
+            header_row=1,
+            column_mapping=dict(MAPPING),
+            active=True,
+        )
+        db.add(other)
+        db.flush()
+        therapist_id = db.execute(select(Therapist.id)).scalars().first()
+        from datetime import date as _date
+        from decimal import Decimal as _Decimal
+
+        db.add(
+            Visit(
+                source_id=other.id,
+                therapist_id=therapist_id,
+                patient_name="Patient AZ",
+                patient_name_normalized="PATIENT AZ",
+                dos=_date(2026, 4, 6),
+                cpt="90837",
+                cpt_base="90837",
+                total_paid=_Decimal("150.00"),
+                total_due=_Decimal("150.00"),
+                total_balance=_Decimal("0.00"),
+            )
+        )
+
+    upload(admin_client, source_id, HEADER + GOOD_ROW)
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.reconciliation["vanished_count"] == 0
+    assert "were not in this read" not in " ".join(run.warnings or [])
+
+
+def test_a_dry_run_records_no_reconciliation(admin_client, source_id):
+    """A dry run deliberately reads no existing rows, so it has no before to compare
+    against, and a comparison of nothing against nothing would only mislead."""
+    upload(admin_client, source_id, HEADER + GOOD_ROW, mode="dry_run")
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.reconciliation is None

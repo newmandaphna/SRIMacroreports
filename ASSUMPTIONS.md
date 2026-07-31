@@ -607,6 +607,35 @@ Sync is pressed. Deliberately no fuzzy or automatic re-matching in either place:
 silently attaches the wrong data to nine thousand rows, so a remap is something only an admin
 confirms, explicitly, in the mapping UI.
 
+**A-100. Errors tell the system what went wrong, not only the admin.**
+Decided 2026-07-31. Run level failures were prose only, so a Google rate limit and a renamed
+header were indistinguishable without string matching: every failure was just "a failed run".
+`SheetsError` now carries an `ErrorKind` and a structured detail payload, persisted on the run
+(`error_kind`, `error_detail`), exactly as `RejectReason` already does one level down at the row.
+The kind splits transient (rate limits, network, a concurrent run) from structural (layout,
+access, configuration), and that split drives behaviour: the run page renders the error as a link
+to the control that fixes it, and the sync health insight tells a viewer "wait" for transient
+failures and "get an administrator" for structural ones, only after two consecutive failures so a
+single recovered rate limit alarms nobody. The kinds never drive automatic repair: a duplicated
+or renamed header still gets a person, per A-099. Tests assert kinds, not sentences, so the
+wording can improve without breaking the suite.
+
+**A-101. Every live run reconciles its own span, advisory only.**
+Decided 2026-07-31. The remaining sheet risks are silently wrong values: a fat fingered amount, a
+mass paste error, a filtered sort that destroyed rows. Each import is individually valid; only
+the before and after comparison shows something moved. So every live run records what it changed
+inside its own date span (`SyncRun.reconciliation`): row and money totals before and after, the
+largest movers by sheet row, and rows this source previously imported that the read no longer
+contained. Shown as neutral information on the run page, escalating to a warning only at
+extremes: collected moving at least 20 percent on a span that already held at least $1,000, or
+any vanished rows. Deliberately advisory, with no circuit breaker: a batch of insurance
+remittances and an end of quarter catch up entry are legitimate large swings, and blocking a
+quarter over a false alarm is the exact failure A-099 removed. Vanished rows are never deleted
+here and never resurrected: the stored rows stand, the warning says how to restore the sheet
+(version history) if the deletion was an accident, and a deliberate void is flagged as
+unresolvable until a void mechanism exists. The human decides; the next sync converges on
+whatever the corrected sheet says.
+
 ---
 
 ## 5b. Reporting decisions (Phase 3)

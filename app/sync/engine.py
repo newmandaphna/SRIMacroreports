@@ -28,6 +28,7 @@ from app.models.data_source import (
     MONEY_FIELDS,
     REQUIRED_FIELDS,
     DataSource,
+    ErrorKind,
     RejectReason,
     SyncMode,
     SyncRun,
@@ -44,6 +45,16 @@ from app.sync import normalize
 from app.sync.sheets import SheetData, SheetsClient, SheetsError, assert_tab_allowed
 
 logger = logging.getLogger(__name__)
+
+# Reconciliation only warns when the span already held this much collected money and
+# the swing is at least this share of it. Generous on purpose: a first import, a
+# catch up entry, or a remittance batch must not cry wolf, or the warning becomes
+# wallpaper and takes the credible warnings down with it.
+RECONCILE_MIN_BASE = Decimal("1000.00")
+RECONCILE_WARN_RATIO = Decimal("0.20")
+
+# Enough movers to see what happened, few enough to read.
+MOVERS_SHOWN = 8
 
 
 @dataclass
@@ -73,6 +84,14 @@ class SyncResult:
     date_min: date | None = None
     date_max: date | None = None
     error_message: str | None = None
+    # The machine readable half of the failure, mirrored onto the SyncRun.
+    error_kind: ErrorKind | None = None
+    error_detail: dict | None = None
+    # Money movements observed while updating existing rows, for the run page's
+    # biggest movers table. Row references and codes only, never patient identity.
+    movers: list[dict] = field(default_factory=list)
+    # What this live run changed against what its span already held. See A-100.
+    reconciliation: dict | None = None
     # Unresolved errors from earlier runs of this source that this run replaced.
     superseded_errors: int = 0
 
@@ -337,6 +356,77 @@ def _hold_source_lock(db: Session, source_id: int) -> bool:
     )
 
 
+def _hunt_header_row(data: SheetData, mapping: dict[str, str]) -> int | None:
+    """The sheet row that looks like it holds the mapped headers, if any does.
+
+    Used when the required headers are missing from the configured header row, which
+    is what a title row inserted above the headers produces. Scans the first few rows
+    below the configured one for the mapped header texts, matched the way the
+    importer matches them (stripped, case insensitive), and names the best row when
+    it matches at least two of them and at least half. Never acts on the answer:
+    naming the fix is the system's job, confirming it is the admin's.
+    """
+    wanted = {h.strip().lower() for h in mapping.values() if h and h.strip()}
+    if len(wanted) < 2:
+        return None
+
+    best_row: int | None = None
+    best_hits = 0
+    for i, row in enumerate(data.rows[:10]):
+        cells = {str(c).strip().lower() for c in row if c is not None and str(c).strip()}
+        hits = len(wanted & cells)
+        if hits > best_hits:
+            best_hits = hits
+            best_row = data.row_numbers[i]
+
+    if best_hits >= max(2, len(wanted) // 2):
+        return best_row
+    return None
+
+
+def _check_duplicate_headers(data: SheetData, source: DataSource, result: SyncResult) -> None:
+    """Refuse or announce a mapped header that appears more than once in the sheet.
+
+    build_column_index takes the first occurrence, which was silent: a pasted copy of
+    a money column meant the leftmost quietly won even when the stale copy was the
+    leftmost. Ambiguity about money or identity fails the run; a duplicated
+    descriptive header keeps the leftmost and says so in a warning.
+    """
+    normalized = [h.strip().lower() for h in data.headers if h and h.strip()]
+    duplicated_critical: dict[str, int] = {}
+    for field_name, header in source.column_mapping.items():
+        if not header or field_name not in IMPORT_ALLOWLIST:
+            continue
+        occurrences = normalized.count(header.strip().lower())
+        if occurrences <= 1:
+            continue
+        if field_name in MONEY_FIELDS or field_name in REQUIRED_FIELDS:
+            duplicated_critical[field_name] = occurrences
+        else:
+            result.warnings.append(
+                f"The header {header!r} appears {occurrences} times in the sheet, and "
+                f"{field_name} was read from the leftmost copy. If the wrong copy is "
+                "leftmost, remove or rename the duplicate in the sheet and sync again."
+            )
+
+    if duplicated_critical:
+        raise SheetsError(
+            "These mapped headers appear more than once in the sheet: "
+            + ", ".join(
+                f"{source.column_mapping[field]!r} ({field}, {count} times)"
+                for field, count in sorted(duplicated_critical.items())
+            )
+            + ". Nothing was imported, because with two columns wearing the same name "
+            "there is no safe way to know which one holds the real figures. Remove or "
+            "rename the duplicate column in the sheet, then sync again.",
+            kind=ErrorKind.DUPLICATE_HEADER,
+            detail={
+                "fields": sorted(duplicated_critical),
+                "headers": {field: source.column_mapping[field] for field in duplicated_critical},
+            },
+        )
+
+
 def run_sync(
     db: Session,
     source: DataSource,
@@ -377,7 +467,8 @@ def run_sync(
                 "Another import of this source is running right now, so this one did "
                 "nothing rather than compete with it. Wait for that run to finish, "
                 "check the history below, and start again only if it did not do what "
-                "you wanted."
+                "you wanted.",
+                kind=ErrorKind.CONCURRENT_RUN,
             )
         _execute(db, source, client, run, result, dry_run=dry_run)
         db.flush()
@@ -385,6 +476,8 @@ def run_sync(
     except SheetsError as exc:
         savepoint.rollback()
         result.error_message = str(exc)
+        result.error_kind = exc.kind
+        result.error_detail = exc.detail
     except Exception:
         savepoint.rollback()
         logger.exception("Sync failed for source %s", source.id)
@@ -392,9 +485,12 @@ def run_sync(
             "The import failed unexpectedly and nothing was written. The error has "
             "been logged with a correlation id."
         )
+        result.error_kind = ErrorKind.UNEXPECTED
 
     run.status = SyncStatus.FAILED if result.error_message else SyncStatus.SUCCESS
     run.error_message = result.error_message
+    run.error_kind = result.error_kind
+    run.error_detail = result.error_detail
     run.finished_at = utcnow()
     # A failed run wrote nothing, whatever the in flight counters had reached before
     # the savepoint was rolled back. Reporting rows inserted on a FAILED run would
@@ -408,6 +504,8 @@ def run_sync(
         result.rows_updated = 0
         result.rows_unchanged = 0
         result.warnings = []
+        # The reconciliation account describes writes, and the writes rolled back.
+        result.reconciliation = None
     run.rows_read = result.rows_read
     run.rows_inserted = result.rows_inserted
     run.rows_updated = result.rows_updated
@@ -415,6 +513,7 @@ def run_sync(
     run.rows_rejected = result.rows_rejected
     run.unmapped_columns = result.unmapped_columns
     run.warnings = result.warnings
+    run.reconciliation = result.reconciliation
     run.date_min = result.date_min
     run.date_max = result.date_max
 
@@ -559,13 +658,15 @@ def _execute(
     dry_run: bool,
 ) -> None:
     if not source.tab_name:
-        raise SheetsError("This source has no tab selected yet.")
+        raise SheetsError("This source has no tab selected yet.", kind=ErrorKind.BAD_SOURCE_CONFIG)
     assert_tab_allowed(source.tab_name)
 
     missing = source.missing_required_fields
     if missing:
         raise SheetsError(
-            "The column mapping is incomplete. Still needed: " + ", ".join(sorted(missing)) + "."
+            "The column mapping is incomplete. Still needed: " + ", ".join(sorted(missing)) + ".",
+            kind=ErrorKind.MAPPING_INCOMPLETE,
+            detail={"fields": sorted(missing)},
         )
 
     data: SheetData = client.read_tab(
@@ -581,6 +682,18 @@ def _execute(
     # the same fix guidance as the money branch for that reason.
     still_missing = REQUIRED_FIELDS - set(positions)
     if still_missing:
+        # Someone inserting a title row above the headers shifts every header down,
+        # and the refusal used to leave the admin to work out why. Hunt the first few
+        # rows for the mapped header texts and, if one looks like the real header
+        # row, say so. A suggestion in the message only: the Header row setting is
+        # never changed automatically, per the no guessing rule.
+        suggested_row = _hunt_header_row(data, source.column_mapping)
+        hint = (
+            f" Row {suggested_row} of the tab looks like it holds these headers; if a "
+            f"row was inserted above them, set Header row to {suggested_row} and save."
+            if suggested_row is not None
+            else ""
+        )
         raise SheetsError(
             "The sheet does not contain the mapped header for: "
             + ", ".join(
@@ -592,8 +705,22 @@ def _execute(
             + ". The tab layout may have changed; check the column mapping. To fix "
             "it: open this source's column mapping, and for each field above either "
             "pick the column's new header from the dropdown or correct the sheet, "
-            "then save and sync again."
+            "then save and sync again." + hint,
+            kind=ErrorKind.HEADER_DRIFT_IDENTITY,
+            detail={
+                "fields": sorted(still_missing),
+                "expected": {
+                    field: source.column_mapping.get(field) for field in sorted(still_missing)
+                },
+                "suggested_header_row": suggested_row,
+            },
         )
+
+    # A mapped header appearing more than once is ambiguity about which column is
+    # real, and the position map silently took the leftmost. For money and identity
+    # that ambiguity is dangerous, so it refuses; for a descriptive field the
+    # leftmost is used and said out loud, graded exactly like the vanished check.
+    _check_duplicate_headers(data, source, result)
 
     # A mapped column whose header text changed in the sheet used to vanish silently:
     # build_column_index cannot find it, so the field simply never enters the position
@@ -653,7 +780,15 @@ def _execute(
             "every row. To fix it: open this source's column mapping, and for each "
             "field above either pick the column's new header from the dropdown or "
             "clear the mapping if the column is gone for good, then save and sync "
-            "again." + also_stale
+            "again." + also_stale,
+            kind=ErrorKind.HEADER_DRIFT_MONEY,
+            detail={
+                "fields": sorted(vanished_critical),
+                "expected": {
+                    field: source.column_mapping[field] for field in sorted(vanished_critical)
+                },
+                "also_stale": sorted(vanished_descriptive),
+            },
         )
 
     for field_name in sorted(vanished_descriptive):
@@ -686,6 +821,13 @@ def _execute(
     # Used to tell a later export revising money from an older one reverting it.
     incoming_end = incoming_dates[1]
     vintages = _source_vintages(db)
+    # The span's totals before anything is touched, for the reconciliation account.
+    # Captured now because the loop below mutates these same objects in place.
+    span_before = {
+        "rows": len(existing),
+        "collected": sum((v.total_paid for v in existing.values()), Decimal("0.00")),
+        "billed": sum((v.total_due for v in existing.values()), Decimal("0.00")),
+    }
     seen_keys: set[tuple] = set()
 
     for row, row_number in zip(data.rows, data.row_numbers, strict=True):
@@ -769,6 +911,96 @@ def _execute(
             incoming_end=incoming_end,
             vintages=vintages,
             unseen_fields=vanished_descriptive,
+        )
+
+    if not dry_run and incoming_dates[0] is not None:
+        _reconcile(source, existing, seen_keys, span_before, incoming_dates, result)
+
+
+def _reconcile(
+    source: DataSource,
+    existing: dict[tuple, Visit],
+    seen_keys: set[tuple],
+    span_before: dict,
+    incoming_dates: tuple[date | None, date | None],
+    result: SyncResult,
+) -> None:
+    """The account of what this live run changed inside its own date span.
+
+    Advisory by design: nothing here blocks or reverts anything. The whole silent
+    wrong category, a fat fingered amount, a mass paste error, a filtered sort that
+    destroyed rows, shares one property: each import is individually valid and only
+    the before and after comparison shows something moved. So the comparison is
+    computed here, where both sides are in hand, persisted on the run, and shown as
+    neutral information, escalating to a warning only at extremes. The human decides;
+    the next sync converges on whatever the corrected sheet says. See A-100.
+
+    The one legitimate cause of large swings, a first import into an empty span, is
+    excluded by the threshold on the size of what was already there.
+    """
+    rows_after = len(existing)
+    collected_after = sum((v.total_paid for v in existing.values()), Decimal("0.00"))
+    billed_after = sum((v.total_due for v in existing.values()), Decimal("0.00"))
+
+    # Rows this source itself imported, inside this sheet's own span, that this read
+    # did not contain. Scoped to this source so a quarter boundary overlap with
+    # another sheet never counts as a deletion, and to pre existing rows so the ones
+    # this run just inserted are not compared against themselves.
+    vanished_rows = [
+        visit
+        for key, visit in existing.items()
+        if key not in seen_keys and visit.id is not None and visit.source_id == source.id
+    ]
+
+    movers = sorted(result.movers, key=lambda m: m["magnitude"], reverse=True)[:MOVERS_SHOWN]
+
+    result.reconciliation = {
+        "span_start": incoming_dates[0].isoformat() if incoming_dates[0] else None,
+        "span_end": incoming_dates[1].isoformat() if incoming_dates[1] else None,
+        "rows_before": span_before["rows"],
+        "rows_after": rows_after,
+        "collected_before": str(span_before["collected"]),
+        "collected_after": str(collected_after),
+        "billed_before": str(span_before["billed"]),
+        "billed_after": str(billed_after),
+        "movers": movers,
+        "vanished_count": len(vanished_rows),
+        "vanished_span": (
+            [
+                min(v.dos for v in vanished_rows).isoformat(),
+                max(v.dos for v in vanished_rows).isoformat(),
+            ]
+            if vanished_rows
+            else None
+        ),
+    }
+
+    before_collected = span_before["collected"]
+    if before_collected >= RECONCILE_MIN_BASE:
+        shift = abs(collected_after - before_collected)
+        ratio = shift / before_collected
+        if ratio >= RECONCILE_WARN_RATIO:
+            result.warnings.append(
+                f"Collected money for {incoming_dates[0]} to {incoming_dates[1]} moved "
+                f"from {before_collected} to {collected_after} in this one sync, a "
+                f"change of {(ratio * 100).quantize(Decimal('1'))} percent. A batch of "
+                "insurance payments landing does this legitimately; a paste error does "
+                "it too. The largest movers are listed on this run's page: check them "
+                "before relying on the new figures."
+            )
+
+    if vanished_rows:
+        first = min(v.dos for v in vanished_rows)
+        last = max(v.dos for v in vanished_rows)
+        result.warnings.append(
+            f"{len(vanished_rows)} row(s) already imported from this source, dated "
+            f"{first} to {last}, were not in this read (or failed to import from it). "
+            "Nothing was deleted here: the stored rows stand and the figures still "
+            "include them. If they were removed from the sheet by accident, restore "
+            "them with the sheet's version history (File, then Version history) and "
+            "sync again. If they were voided on purpose, tell an administrator: this "
+            "application keeps imported rows, so the figures overcount until that is "
+            "resolved."
         )
 
 
@@ -944,9 +1176,26 @@ def _upsert(
                 )
             )
             return
+        paid_before, due_before = current.total_paid, current.total_due
         current.apply(payload, ignore=unseen_fields)
         current.last_sync_run_id = run.id
         result.rows_updated += 1
+        # Feed the reconciliation account's biggest movers table. Row reference,
+        # date and code only: money movement is not patient identity.
+        magnitude = abs(current.total_paid - paid_before) + abs(current.total_due - due_before)
+        if magnitude > 0:
+            result.movers.append(
+                {
+                    "row_ref": row_ref,
+                    "dos": str(values["dos"]),
+                    "cpt": values["cpt"],
+                    "paid_before": str(paid_before),
+                    "paid_after": str(current.total_paid),
+                    "due_before": str(due_before),
+                    "due_after": str(current.total_due),
+                    "magnitude": float(magnitude),
+                }
+            )
     else:
         # Unchanged rows are left alone so a re-sync does not churn updated_at on
         # every row and make the history useless.

@@ -142,6 +142,7 @@ def _sync_one(db: Session, settings: Settings, source_id: int) -> int:
             "rejected": result.rows_rejected,
             "warnings": result.warnings,
             "error": result.error_message,
+            "error_kind": result.error_kind.value if result.error_kind else None,
         },
     )
     return 1
