@@ -332,6 +332,20 @@ def source_detail(request: Request, db: DbSession, auth: AdminUser, source_id: i
 
     suggested = suggest_mapping(headers) if headers else {}
 
+    # Saved mappings whose header text is not in the sheet right now, matched the
+    # same way the importer matches (stripped, case insensitive). Shown next to the
+    # dropdown so an admin sees the drift before pressing Sync rather than in a
+    # failed or gap-ridden run afterwards. Only computable when the sheet is
+    # reachable; an empty headers list proves nothing about the mapping.
+    stale_mappings: set[str] = set()
+    if headers:
+        present = {h.strip().lower() for h in headers if h.strip()}
+        stale_mappings = {
+            field
+            for field, header in source.column_mapping.items()
+            if field in IMPORT_ALLOWLIST and header and header.strip().lower() not in present
+        }
+
     # The mapping dropdowns fall back to `suggested` when nothing is saved, so a source
     # with an empty mapping renders as though it were fully configured while the sync
     # panel, which reads only what is stored, correctly refuses to run. The page
@@ -353,6 +367,7 @@ def source_detail(request: Request, db: DbSession, auth: AdminUser, source_id: i
             "headers": [h for h in headers if h.strip()],
             "allowlist": IMPORT_ALLOWLIST,
             "suggested": suggested,
+            "stale_mappings": stale_mappings,
             "unsaved_suggestion": unsaved_suggestion,
             "runs": runs,
             "open_error_count": open_error_count,
@@ -544,6 +559,7 @@ def sync_source(
             "rejected": result.rows_rejected,
             "superseded": result.superseded_errors,
             "unmapped_columns": result.unmapped_columns,
+            "warnings": result.warnings,
             "error": result.error_message,
         },
     )
@@ -620,6 +636,7 @@ async def upload_workbook(
             "rejected": result.rows_rejected,
             "superseded": result.superseded_errors,
             "unmapped_columns": result.unmapped_columns,
+            "warnings": result.warnings,
             "error": result.error_message,
         },
     )

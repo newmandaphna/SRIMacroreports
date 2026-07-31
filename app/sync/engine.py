@@ -67,6 +67,9 @@ class SyncResult:
     rows_unchanged: int = 0
     rejections: list[Rejection] = field(default_factory=list)
     unmapped_columns: list[str] = field(default_factory=list)
+    # Things a successful run still has to say, loudly: a mapped descriptive column
+    # missing from the sheet, imported around rather than refused over.
+    warnings: list[str] = field(default_factory=list)
     date_min: date | None = None
     date_max: date | None = None
     error_message: str | None = None
@@ -395,17 +398,23 @@ def run_sync(
     run.finished_at = utcnow()
     # A failed run wrote nothing, whatever the in flight counters had reached before
     # the savepoint was rolled back. Reporting rows inserted on a FAILED run would
-    # send an admin looking for data that is not there.
+    # send an admin looking for data that is not there. Warnings go the same way,
+    # for the same reason: they are collected before the writes and phrased as
+    # "the import went ahead", which on a failed run is a lie beside an error that
+    # says it did not. The drift they describe is not lost, because the failure
+    # message names every stale column and the mapping page flags them all.
     if result.error_message:
         result.rows_inserted = 0
         result.rows_updated = 0
         result.rows_unchanged = 0
+        result.warnings = []
     run.rows_read = result.rows_read
     run.rows_inserted = result.rows_inserted
     run.rows_updated = result.rows_updated
     run.rows_unchanged = result.rows_unchanged
     run.rows_rejected = result.rows_rejected
     run.unmapped_columns = result.unmapped_columns
+    run.warnings = result.warnings
     run.date_min = result.date_min
     run.date_max = result.date_max
 
@@ -566,12 +575,24 @@ def _execute(
     positions, unmapped = build_column_index(data.headers, source.column_mapping)
     result.unmapped_columns = unmapped
 
+    # This is the check that actually catches a vanished IDENTITY column: a mapped
+    # required field whose header changed never enters the position map, so it
+    # surfaces here, before the graded check below ever sees it. The message carries
+    # the same fix guidance as the money branch for that reason.
     still_missing = REQUIRED_FIELDS - set(positions)
     if still_missing:
         raise SheetsError(
             "The sheet does not contain the mapped header for: "
-            + ", ".join(sorted(still_missing))
-            + ". The tab layout may have changed; check the column mapping."
+            + ", ".join(
+                f"{field} (expected header {source.column_mapping.get(field)!r})"
+                if source.column_mapping.get(field)
+                else field
+                for field in sorted(still_missing)
+            )
+            + ". The tab layout may have changed; check the column mapping. To fix "
+            "it: open this source's column mapping, and for each field above either "
+            "pick the column's new header from the dropdown or correct the sheet, "
+            "then save and sync again."
         )
 
     # A mapped column whose header text changed in the sheet used to vanish silently:
@@ -582,21 +603,77 @@ def _execute(
     # read the full amount. Only the four required fields were guarded; the other
     # fourteen, which is every money column, were not.
     #
-    # Refusing the run is the right default for money. An unmapped column is a
-    # deliberate choice and stays silent; a mapped column that has gone missing is
-    # drift, and drift gets a FAILED run with an actionable message.
+    # The response is graded by what the field means, because the failure modes are
+    # not the same size. A vanished money or identity column silently corrupts every
+    # figure, so it fails the run. A vanished descriptive column (a payer code, a
+    # location, a note flag) makes rows less complete, not wrong: refusing the run
+    # over it once blocked an entire quarter's import because "Recorded" had been
+    # retitled in the sheet, which is a worse outcome than the gap itself. Those now
+    # import with the field empty and a warning that survives on the run page, so the
+    # drift is visible and gets fixed rather than quietly becoming permanent.
+    #
+    # An unmapped column is a deliberate choice and stays silent either way. And
+    # nothing here ever guesses that a new header means an old column: deciding that
+    # "Unrecorded" is the artist formerly known as "Recorded" is a remap only an
+    # admin may confirm, because a wrong guess silently reassigns the wrong data.
     vanished = {field for field, header in source.column_mapping.items() if header} - set(positions)
     vanished &= set(IMPORT_ALLOWLIST)
-    if vanished:
+    # REQUIRED_FIELDS is belt and braces here: the still_missing check above already
+    # intercepts a vanished identity column, so in practice this set only ever holds
+    # money fields. It stays in the intersection so the run still fails if that check
+    # is ever moved or narrowed.
+    vanished_critical = vanished & (MONEY_FIELDS | REQUIRED_FIELDS)
+    vanished_descriptive = frozenset(vanished - MONEY_FIELDS - REQUIRED_FIELDS)
+    if vanished_critical:
+        # The descriptive stragglers are named in the same error, so a mixed rename
+        # is fixed in one visit to the mapping rather than discovered one run at a
+        # time. Their warnings are not recorded on this run: it failed, nothing was
+        # imported around anything, and a failed run's warnings would have to lie.
+        also_stale = (
+            (
+                " While fixing it, these descriptive columns are also missing and will "
+                "import with gaps until remapped: "
+                + ", ".join(
+                    f"{field} (expected header {source.column_mapping[field]!r})"
+                    for field in sorted(vanished_descriptive)
+                )
+                + "."
+            )
+            if vanished_descriptive
+            else ""
+        )
         raise SheetsError(
             "These columns are mapped but no longer present in the sheet: "
             + ", ".join(
                 f"{field} (expected header {source.column_mapping[field]!r})"
-                for field in sorted(vanished)
+                for field in sorted(vanished_critical)
             )
             + ". The tab layout may have changed; check the column mapping. Nothing was "
             "imported, because a missing money column would otherwise read as zero on "
-            "every row."
+            "every row. To fix it: open this source's column mapping, and for each "
+            "field above either pick the column's new header from the dropdown or "
+            "clear the mapping if the column is gone for good, then save and sync "
+            "again." + also_stale
+        )
+
+    for field_name in sorted(vanished_descriptive):
+        # Tense follows the mode, because this text sits on a page whose banner says
+        # "Nothing was written" for a dry run, and a warning that contradicts the
+        # page it is on teaches the reader to trust neither.
+        effect = (
+            "A live import will go ahead anyway: new rows will land without this "
+            "field, and rows already stored will keep the value they have."
+            if dry_run
+            else "The import went ahead: new rows landed without this field, and "
+            "rows already stored kept the value they had."
+        )
+        result.warnings.append(
+            f"The mapped column for {field_name} (expected header "
+            f"{source.column_mapping[field_name]!r}) is missing from the sheet. "
+            f"{effect} Until the mapping is fixed, anything grouped by this field "
+            "will undercount. To fix it: open this source's column mapping, pick the "
+            "column's new header for this field or clear it if the column is gone "
+            "for good, then save and sync again."
         )
 
     resolver = AliasResolver(db)
@@ -691,6 +768,7 @@ def _execute(
             row_ref=row_ref,
             incoming_end=incoming_end,
             vintages=vintages,
+            unseen_fields=vanished_descriptive,
         )
 
 
@@ -812,6 +890,7 @@ def _upsert(
     row_ref: str,
     incoming_end: date | None,
     vintages: dict[int, _SourceVintage],
+    unseen_fields: frozenset[str] = frozenset(),
 ) -> None:
     payload = {k: v for k, v in values.items() if k != "therapist_raw"}
 
@@ -828,7 +907,7 @@ def _upsert(
         result.rows_inserted += 1
         return
 
-    if current.differs_from(payload):
+    if current.differs_from(payload, ignore=unseen_fields):
         # A visit is global, so the same one arrives on more than one sheet: the
         # practice's export window rolls back into the previous quarter, and a
         # historical upload covers ground the live sheet also covers. When two sheets
@@ -865,7 +944,7 @@ def _upsert(
                 )
             )
             return
-        current.apply(payload)
+        current.apply(payload, ignore=unseen_fields)
         current.last_sync_run_id = run.id
         result.rows_updated += 1
     else:

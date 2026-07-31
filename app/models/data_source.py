@@ -217,6 +217,12 @@ class SyncRun(Base):
     # announces itself.
     unmapped_columns: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
 
+    # News a successful run still has to deliver, such as a mapped descriptive column
+    # that has vanished from the sheet. Persisted, not flashed: a warning that dies
+    # with the redirect is a warning nobody is guaranteed to have read, and the drift
+    # it describes then becomes permanent silent data loss.
+    warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     run_by_id: Mapped[int | None] = mapped_column(
