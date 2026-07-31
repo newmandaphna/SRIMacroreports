@@ -32,6 +32,33 @@
 </div>
 {% endif %}
 
+{% if run.warnings %}
+{# Persisted on the run, not flashed at the redirect, so the message survives
+   navigation. A vanished descriptive column that only warned once would become
+   permanent silent data loss the moment somebody closed the tab. #}
+<div class="alert alert--warning" role="alert">
+  <p>
+    <strong>
+      {%- if run.mode.value == "dry_run" %} The preview found gaps.
+      {%- else %} Imported with gaps.
+      {%- endif %}
+    </strong>
+    This run finished, but it could not see everything the mapping says the sheet
+    should have:
+  </p>
+  <ul>
+    {% for warning in run.warnings %}
+    <li>{{ warning }}</li>
+    {% endfor %}
+  </ul>
+  <p>
+    <a href="/admin/sources/{{ source.id }}">Fix the column mapping</a>, then sync
+    again. Nothing is guessed for you: deciding that a renamed header is the same
+    column is a call only a person should make.
+  </p>
+</div>
+{% endif %}
+
 <div class="card-grid">
   <div class="card">
     <p class="card__title">Rows read</p>

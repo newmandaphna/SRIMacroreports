@@ -141,6 +141,21 @@
   </div>
   {% endif %}
 
+  {% if stale_mappings %}
+  {# Caught here, before Sync, rather than discovered in a failed run or as gaps in
+     an imported quarter. Nothing is re-matched automatically: deciding that a
+     renamed header is the same column silently reassigns data if guessed wrong, so
+     the remap below is the admin's to make. #}
+  <div class="alert alert--warning" role="status">
+    <strong>The sheet no longer matches this mapping.</strong>
+    {{ stale_mappings|length }} mapped column{{ "s are" if stale_mappings|length != 1 else " is" }}
+    missing from the tab's current headers, flagged in the table below. Pick each
+    column's new header, or clear the field if the column is gone for good, then press
+    <em>Save source</em>. Syncing before fixing this fails the run if money or
+    identity columns are affected, and imports with gaps if descriptive ones are.
+  </div>
+  {% endif %}
+
   <table class="data-table">
     <thead>
       <tr>
@@ -171,6 +186,13 @@
           </select>
           {% if not saved and current %}
           <span class="pill pill--watch">suggested, not saved</span>
+          {% endif %}
+          {% if field_name in stale_mappings %}
+          <span
+            class="pill pill--below"
+            title="The saved mapping points at a header this tab no longer has. Pick the new header or clear the field, then save."
+            >mapped to {{ source.column_mapping.get(field_name) }}, not in this sheet</span
+          >
           {% endif %}
           {% else %}
           <input

@@ -232,7 +232,276 @@ def test_a_renamed_money_column_refuses_the_import(admin_client, source_id):
         )
     assert run.status is SyncStatus.FAILED, "a vanished money column must not import as zero"
     assert "total_paid" in (run.error_message or "")
+    # The original message is pinned sentence by sentence, because the spec for the
+    # graded split was "the same message"; asserting only the appended guidance would
+    # let a rewrite drop the explanation and still pass.
+    assert "no longer present in the sheet" in (run.error_message or "")
+    assert "Nothing was imported" in (run.error_message or "")
+    assert "read as zero" in (run.error_message or "")
+    assert "To fix it" in (run.error_message or ""), (
+        "the refusal must say what to do, not only what went wrong"
+    )
     assert counts(admin_client, source_id)["visits"] == 0
+
+
+def test_a_renamed_identity_column_also_fails_with_guidance(admin_client, source_id):
+    """A vanished identity column is caught by the required header guard, one check
+    before the graded branch, so the fix guidance has to live there too or identity
+    drift gets the one refusal in the pipeline that does not say what to do."""
+    renamed = HEADER.replace("CPT", "PROCEDURE")
+    response = upload(admin_client, source_id, renamed + GOOD_ROW)
+    assert response.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.status is SyncStatus.FAILED
+    assert "cpt" in (run.error_message or "")
+    assert "'CPT'" in (run.error_message or ""), "the message must name the expected header"
+    assert "To fix it" in (run.error_message or "")
+    assert counts(admin_client, source_id)["visits"] == 0
+
+
+def test_a_mixed_rename_names_everything_stale_in_one_failure(admin_client, source_id):
+    """A money rename beside a descriptive one must not be fixed one run at a time.
+
+    The failed run names the money column that stopped it AND the descriptive column
+    that would import with gaps, so the admin corrects the mapping in one visit. And a
+    FAILED run carries no warnings: they are phrased as "the import went ahead", which
+    beside an error saying it did not is the exact lie the zeroed row counters exist
+    to prevent.
+    """
+    renamed = HEADER.replace("Total paid", "Paid total").replace("NOTE", "MEMO")
+    response = upload(admin_client, source_id, renamed + GOOD_ROW)
+    assert response.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.status is SyncStatus.FAILED
+    assert "total_paid" in (run.error_message or "")
+    assert "note_code" in (run.error_message or ""), (
+        "the descriptive straggler must be named now, not discovered on the next run"
+    )
+    assert run.warnings == [], "a failed run must not carry warnings claiming an import"
+    assert counts(admin_client, source_id)["visits"] == 0
+
+
+def test_a_failed_write_discards_the_warnings_with_the_counters(
+    admin_client, source_id, monkeypatch
+):
+    """Same failure as the error boundary test, plus a vanished descriptive column:
+    the run fails during the writes, after the warnings were collected, and keeping
+    them would render "the import went ahead" beside "the run failed"."""
+    from app.sync import engine as engine_module
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("simulated database rejection during the write")
+
+    monkeypatch.setattr(engine_module, "_upsert", explode)
+    response = upload(admin_client, source_id, HEADER.replace("NOTE", "MEMO") + GOOD_ROW)
+    assert response.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.status is SyncStatus.FAILED
+    assert run.warnings == []
+
+    page = admin_client.get(f"/admin/sources/{source_id}/runs/{run.id}").text
+    assert "Imported with gaps" not in page
+
+
+def test_a_renamed_descriptive_column_warns_and_imports(admin_client, source_id):
+    """The other half of the graded response, from the incident that forced it.
+
+    "Recorded" retitled in the sheet blocked an entire quarter's import even though
+    nothing reads the field. A vanished descriptive column makes rows less complete,
+    not wrong, so the run now proceeds: the field lands empty, and a warning naming
+    the field and its expected header is persisted on the run so the drift is seen
+    and fixed rather than becoming permanent. See ASSUMPTIONS.md A-099.
+    """
+    renamed = HEADER.replace("NOTE", "MEMO")
+    response = upload(admin_client, source_id, renamed + GOOD_ROW)
+    assert response.status_code == 303
+
+    after = counts(admin_client, source_id)
+    assert after["visits"] == 1, "the quarter must import despite the cosmetic rename"
+    assert after["errors"] == 0
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+        visit = db.execute(select(Visit).where(Visit.source_id == source_id)).scalars().one()
+        note_code = visit.note_code
+
+    assert run.status is SyncStatus.SUCCESS
+    assert not run.error_message
+    assert note_code is None, "a column the run cannot see imports as empty, never as a guess"
+
+    warnings_text = " ".join(run.warnings or [])
+    assert "note_code" in warnings_text, "the warning must name the field"
+    assert "'NOTE'" in warnings_text, "the warning must name the expected header"
+    assert "To fix it" in warnings_text
+    assert "went ahead" in warnings_text, "a live run speaks in the past tense"
+
+    # Persisted, so it survives navigation: the run page still shows it later.
+    page = admin_client.get(f"/admin/sources/{source_id}/runs/{run.id}").text
+    assert "Imported with gaps" in page
+    assert "note_code" in page
+
+    # And on the audit trail, at parity with unmapped_columns.
+    from app.models.audit import AuditLog
+    from app.models.enums import AuditAction
+
+    with admin_client.app.state.db.session() as db:
+        entry = (
+            db.execute(
+                select(AuditLog)
+                .where(AuditLog.action == AuditAction.SYNC_RUN)
+                .order_by(AuditLog.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert "note_code" in (entry.detail or ""), "the audit record must carry the warning"
+
+
+def test_a_dry_run_previews_the_descriptive_warning(admin_client, source_id):
+    """The dry run exists to show what a live run would do, warnings included."""
+    renamed = HEADER.replace("NOTE", "MEMO")
+    response = upload(admin_client, source_id, renamed + GOOD_ROW, mode="dry_run")
+    assert response.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert run.status is SyncStatus.SUCCESS
+    assert any("note_code" in w for w in run.warnings or [])
+    assert counts(admin_client, source_id)["visits"] == 0, "a dry run still writes nothing"
+
+    # The preview must not claim writes happened: its page says "Nothing was written"
+    # two lines up, and a warning contradicting the page it sits on teaches the
+    # reader to trust neither.
+    warnings_text = " ".join(run.warnings or [])
+    assert "will land" in warnings_text
+    assert "went ahead" not in warnings_text
+
+
+def test_the_incident_field_recorded_flag_no_longer_blocks_a_quarter(admin_client, source_id):
+    """The exact incident from A-099: "Recorded" retitled in the sheet.
+
+    The source maps recorded_flag to a header the file does not have. Before the
+    graded split that failed the entire quarter's import; now the quarter lands,
+    the field is empty, and the warning names it.
+    """
+    with admin_client.app.state.db.session() as db:
+        source = db.get(DataSource, source_id)
+        mapping = dict(source.column_mapping)
+        mapping["recorded_flag"] = "Recorded"
+        source.column_mapping = mapping
+
+    response = upload(admin_client, source_id, HEADER + GOOD_ROW)
+    assert response.status_code == 303
+
+    after = counts(admin_client, source_id)
+    assert after["visits"] == 1, "the quarter must import"
+
+    with admin_client.app.state.db.session() as db:
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+        visit = db.execute(select(Visit).where(Visit.source_id == source_id)).scalars().one()
+        recorded = visit.recorded_flag
+
+    assert run.status is SyncStatus.SUCCESS
+    assert recorded is None
+    warnings_text = " ".join(run.warnings or [])
+    assert "recorded_flag" in warnings_text
+    assert "'Recorded'" in warnings_text
+
+
+def test_the_graded_split_covers_exactly_the_five_descriptive_fields():
+    """Pins the membership boundary of the split.
+
+    The descriptive set is computed as the allowlist minus money minus identity, so a
+    field added to the allowlist later lands on the warn side only if someone thought
+    about it here, and a money field can never drift onto the warn side without this
+    failing.
+    """
+    from app.models.data_source import IMPORT_ALLOWLIST, MONEY_FIELDS, REQUIRED_FIELDS
+
+    descriptive = set(IMPORT_ALLOWLIST) - MONEY_FIELDS - REQUIRED_FIELDS
+    assert descriptive == {
+        "patient_code",
+        "insurance_short",
+        "location_short",
+        "note_code",
+        "recorded_flag",
+    }
+
+
+def test_a_vanished_descriptive_column_does_not_erase_stored_values(admin_client, source_id):
+    """A run with no view of a column has no opinion about it.
+
+    The rows were imported with note codes. Re-syncing after the header rename used to
+    have two bad options: fail the quarter, or overwrite every stored value with the
+    blank the run could not see. Now the stored value stands, only rows never imported
+    before land without it, and the run reports the untouched rows as unchanged rather
+    than churning updated_at across the table.
+    """
+    first = upload(admin_client, source_id, HEADER + GOOD_ROW)
+    assert first.status_code == 303
+    with admin_client.app.state.db.session() as db:
+        stored = db.execute(select(Visit).where(Visit.source_id == source_id)).scalars().one()
+        assert stored.note_code == "OK", (
+            "the fixture must import a value for this test to mean anything"
+        )
+
+    second = upload(admin_client, source_id, HEADER.replace("NOTE", "MEMO") + GOOD_ROW)
+    assert second.status_code == 303
+
+    with admin_client.app.state.db.session() as db:
+        stored = db.execute(select(Visit).where(Visit.source_id == source_id)).scalars().one()
+        run = (
+            db.execute(
+                select(SyncRun).where(SyncRun.source_id == source_id).order_by(SyncRun.id.desc())
+            )
+            .scalars()
+            .first()
+        )
+    assert stored.note_code == "OK", "a value the run could not see must not be erased by it"
+    assert run.rows_unchanged == 1, "an identical row minus an unseen column is unchanged"
+    assert run.rows_updated == 0
 
 
 def test_a_deliberately_unmapped_column_stays_silent(admin_client, source_id):

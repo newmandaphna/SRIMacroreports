@@ -484,6 +484,57 @@ def test_a_saved_mapping_never_shows_the_warning(admin_client, demo):
     assert "suggested, not saved" not in page
 
 
+def test_the_mapping_page_flags_a_header_missing_from_the_sheet(admin_client, demo):
+    """Drift is caught while the admin is looking at the mapping, before Sync.
+
+    A saved mapping whose header the tab no longer has used to look exactly like a
+    healthy one: the dropdown quietly showed "not mapped" and the first sign of
+    trouble was a failed run, or worse, a quarter imported with gaps. The page now
+    names the stale header next to the dropdown and says what to do about it.
+    """
+    with admin_client.app.state.db.session() as db:
+        source = db.get(DataSource, demo)
+        mapping = dict(source.column_mapping)
+        mapping["note_code"] = "A HEADER THAT DOES NOT EXIST"
+        source.column_mapping = mapping
+
+    page = admin_client.get(f"/admin/sources/{demo}").text
+    assert "The sheet no longer matches this mapping" in page
+    assert "not in this sheet" in page
+    assert "A HEADER THAT DOES NOT EXIST" in page
+
+    # Nothing is re-matched for the admin: the stale field's dropdown must offer no
+    # selection at all, rather than a guessed replacement. Checked against the
+    # select element itself, because a page-wide assertion here proves nothing.
+    select_block = re.search(r'name="map__note_code".*?</select>', page, re.S)
+    assert select_block, "the note_code dropdown must render"
+    assert "selected" not in select_block.group(0), (
+        "the page guessed a replacement header instead of leaving the choice to the admin"
+    )
+
+
+def test_a_healthy_mapping_is_not_flagged(admin_client, demo):
+    """The flag must mean drift, or it becomes wallpaper."""
+    page = admin_client.get(f"/admin/sources/{demo}").text
+    assert "The sheet no longer matches this mapping" not in page
+    assert "not in this sheet" not in page
+
+
+def test_a_case_change_in_the_header_is_not_drift(admin_client, demo):
+    """The importer matches headers stripped and case insensitive, so the page must
+    apply the same rule: flagging a mapping the importer would resolve fine sends an
+    admin to fix something that is not broken."""
+    with admin_client.app.state.db.session() as db:
+        source = db.get(DataSource, demo)
+        mapping = dict(source.column_mapping)
+        assert mapping.get("therapist"), "the demo mapping must cover therapist"
+        mapping["therapist"] = "  " + mapping["therapist"].upper() + "  "
+        source.column_mapping = mapping
+
+    page = admin_client.get(f"/admin/sources/{demo}").text
+    assert "The sheet no longer matches this mapping" not in page
+
+
 def test_the_warning_stays_off_when_the_sheet_cannot_be_read(admin_client, demo):
     """No headers means no suggestion, so the honest message is the field list."""
     with admin_client.app.state.db.session() as db:

@@ -139,9 +139,23 @@ class Visit(Base):
         "total_balance",
     )
 
-    def differs_from(self, values: dict[str, object]) -> bool:
-        return any(getattr(self, field) != values.get(field) for field in self.COMPARED_FIELDS)
+    # `ignore` names fields the current sync could not see, because their mapped
+    # column is missing from the sheet. A run with no view of a column has no opinion
+    # about it: comparing against its None would mark every stored value as changed,
+    # and applying would erase real data (a quarter's payer codes, say) on the
+    # strength of a cosmetic header rename. New rows still land with NULL there,
+    # because for them the sheet genuinely said nothing.
 
-    def apply(self, values: dict[str, object]) -> None:
+    def differs_from(
+        self, values: dict[str, object], *, ignore: frozenset[str] = frozenset()
+    ) -> bool:
+        return any(
+            getattr(self, field) != values.get(field)
+            for field in self.COMPARED_FIELDS
+            if field not in ignore
+        )
+
+    def apply(self, values: dict[str, object], *, ignore: frozenset[str] = frozenset()) -> None:
         for field in self.COMPARED_FIELDS:
-            setattr(self, field, values.get(field))
+            if field not in ignore:
+                setattr(self, field, values.get(field))

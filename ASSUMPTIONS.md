@@ -587,6 +587,26 @@ column is globally unique, so two therapists cannot both claim one alias and a s
 impossible at the database level, not merely by convention. This is the PAVLOVA and ROSENFELD
 lesson from A-040a expressed as a constraint.
 
+**A-099. A vanished mapped column fails the run for money and identity, warns for the rest.**
+Decided 2026-07-30, after a cosmetic header rename in the Visits tab ("Recorded" retitled
+"Unrecorded") blocked an entire quarter's import even though nothing reads `recorded_flag`. The
+vanished column guard treated every mapped field the same, and the failure modes are not the same
+size. A missing money or identity column silently corrupts every figure, because blank money reads
+as zero by design, so those still fail the run outright. Money columns keep the same message as
+before; identity columns are intercepted one check earlier, by the required header guard, which is
+why the graded branch keeps `REQUIRED_FIELDS` only as belt and braces. Both refusals now end with
+how to fix it, and a mixed rename names the stale descriptive columns in the same error so the
+mapping is corrected in one visit. A missing descriptive column (`patient_code`, `insurance_short`,
+`location_short`, `note_code`, `recorded_flag`) makes rows less complete, not wrong: the run now
+proceeds, new rows land without the field, rows already stored keep the value they have rather than
+being overwritten with the blank the run could not see, and a warning naming the field and its
+expected header is persisted on the sync run (`SyncRun.warnings`) so it survives navigation. The
+mapping page also flags any saved mapping whose header is absent from the current sheet, before
+Sync is pressed. Deliberately no fuzzy or automatic re-matching in either place: guessing that
+"Unrecorded" means the column formerly called "Recorded" is exactly the kind of inference that
+silently attaches the wrong data to nine thousand rows, so a remap is something only an admin
+confirms, explicitly, in the mapping UI.
+
 ---
 
 ## 5b. Reporting decisions (Phase 3)
