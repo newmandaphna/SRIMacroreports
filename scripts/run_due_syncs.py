@@ -10,12 +10,13 @@ setting, the readiness and upload-source filtering, the oldest-first ordering, t
 per-source transaction, and the "auto-sync" audit label all behave exactly as they
 do in the loop.
 
-Run command for the scheduled deployment:  python scripts/run_due_syncs.py
+Run command for the scheduled deployment:  python3 -m scripts.run_due_syncs
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
 from app.config import load_settings
@@ -24,6 +25,13 @@ from app.logging_setup import configure_logging
 from app.sync.scheduler import run_due_syncs
 
 logger = logging.getLogger(__name__)
+
+# Replit injects DATABASE_URL for whichever app this job is published under.
+# When the job lives in a helper app, point it at the real dashboard database
+# by setting SYNC_DATABASE_URL; it always wins over the injected value.
+_override = os.environ.get("SYNC_DATABASE_URL")
+if _override:
+    os.environ["DATABASE_URL"] = _override
 
 
 def main() -> int:
