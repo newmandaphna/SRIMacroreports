@@ -97,72 +97,10 @@ def _run_migrations() -> None:
 
     from alembic import command as _cmd
     from alembic.script import ScriptDirectory
-    from sqlalchemy import create_engine, inspect as _sa_inspect, text
+    from sqlalchemy import create_engine, text
 
     cfg = _alembic_cfg()
-
-    # ------------------------------------------------------------------ #
-    # Pre-flight: if tables already exist but alembic_version does not,   #
-    # stamp to head so upgrade head does not try to re-run the baseline.  #
-    # This happens when a database was seeded outside of Alembic (e.g.    #
-    # a production DB provisioned from a dev snapshot without the version  #
-    # table) or when a previous startup crashed mid-migration.            #
-    # ------------------------------------------------------------------ #
-    db_url = os.environ.get("DATABASE_URL", "")
-    if db_url:
-        _pre_engine = create_engine(db_url, pool_pre_ping=True)
-        try:
-            _inspector = _sa_inspect(_pre_engine)
-            _has_version_table = _inspector.has_table("alembic_version")
-            _has_users_table = _inspector.has_table("users")
-        finally:
-            _pre_engine.dispose()
-
-        if not _has_version_table and _has_users_table:
-            logger.warning(
-                "Database has tables but no alembic_version record. "
-                "Stamping to head so Alembic does not re-run the baseline migration."
-            )
-            _cmd.stamp(cfg, "head")
-
-    try:
-        _cmd.upgrade(cfg, "head")
-    except Exception as _upgrade_exc:
-        # Self-heal: if upgrade head fails with DuplicateTable, check whether
-        # the full schema is already present. If it is, the database was
-        # provisioned outside Alembic (e.g. copied from a snapshot that
-        # included tables but not the version record, or a partially committed
-        # migration left tables behind). Stamp to head so the next boot is
-        # clean. If schema columns are missing, re-raise: we cannot safely
-        # auto-recover from genuine data loss.
-        from psycopg2.errors import DuplicateTable as _DuplicateTable
-        from sqlalchemy.exc import ProgrammingError as _ProgrammingError
-
-        _is_dup = isinstance(_upgrade_exc, _ProgrammingError) and isinstance(
-            _upgrade_exc.orig, _DuplicateTable
-        )
-        if not _is_dup or not db_url:
-            raise
-
-        _heal_engine = create_engine(db_url, pool_pre_ping=True)
-        try:
-            _drift = _schema_drift(_heal_engine)
-        finally:
-            _heal_engine.dispose()
-
-        if _drift:
-            raise RuntimeError(
-                f"DuplicateTable during migration AND schema has missing columns "
-                f"({_drift}) — cannot auto-recover. Manual intervention required."
-            ) from _upgrade_exc
-
-        logger.warning(
-            "Caught DuplicateTable during 'upgrade head' but schema is complete. "
-            "Stamping alembic_version to head and continuing. "
-            "This usually means the database was provisioned from a snapshot "
-            "that did not include the alembic_version table."
-        )
-        _cmd.stamp(cfg, "head")
+    _cmd.upgrade(cfg, "head")
 
     # ------------------------------------------------------------------ #
     # Schema integrity check                                               #

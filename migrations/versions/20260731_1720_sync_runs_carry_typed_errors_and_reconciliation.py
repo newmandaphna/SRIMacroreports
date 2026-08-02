@@ -25,9 +25,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column("sync_runs", sa.Column("error_kind", sa.String(length=40), nullable=True))
-    op.add_column("sync_runs", sa.Column("error_detail", sa.JSON(), nullable=True))
-    op.add_column("sync_runs", sa.Column("reconciliation", sa.JSON(), nullable=True))
+    # Use IF NOT EXISTS so the migration is idempotent against the partial-commit
+    # failure mode where the DDL lands in production but alembic_version does not.
+    op.execute("ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS error_kind VARCHAR(40)")
+    op.execute("ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS error_detail JSON")
+    op.execute("ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS reconciliation JSON")
 
 
 def downgrade() -> None:
