@@ -97,9 +97,34 @@ def _run_migrations() -> None:
 
     from alembic import command as _cmd
     from alembic.script import ScriptDirectory
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import create_engine, inspect as _sa_inspect, text
 
     cfg = _alembic_cfg()
+
+    # ------------------------------------------------------------------ #
+    # Pre-flight: if tables already exist but alembic_version does not,   #
+    # stamp to head so upgrade head does not try to re-run the baseline.  #
+    # This happens when a database was seeded outside of Alembic (e.g.    #
+    # a production DB provisioned from a dev snapshot without the version  #
+    # table) or when a previous startup crashed mid-migration.            #
+    # ------------------------------------------------------------------ #
+    db_url = os.environ.get("DATABASE_URL", "")
+    if db_url:
+        _pre_engine = create_engine(db_url, pool_pre_ping=True)
+        try:
+            _inspector = _sa_inspect(_pre_engine)
+            _has_version_table = _inspector.has_table("alembic_version")
+            _has_users_table = _inspector.has_table("users")
+        finally:
+            _pre_engine.dispose()
+
+        if not _has_version_table and _has_users_table:
+            logger.warning(
+                "Database has tables but no alembic_version record. "
+                "Stamping to head so Alembic does not re-run the baseline migration."
+            )
+            _cmd.stamp(cfg, "head")
+
     _cmd.upgrade(cfg, "head")
 
     # ------------------------------------------------------------------ #
