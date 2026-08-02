@@ -40,7 +40,7 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "scheduled"
-run = ["python3", "scripts/run_due_syncs.py"]
+run = ["python3", "-m", "scripts.run_due_syncs"]
 
 
 [postMerge]
