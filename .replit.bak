@@ -40,7 +40,7 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "scheduled"
-run = ["python3", "scripts/run_due_syncs.py"]
+run = ["python3", "-m", "uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "5000"]
 
 
 [postMerge]
