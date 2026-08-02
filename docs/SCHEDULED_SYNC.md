@@ -76,3 +76,6 @@ Workspace Secrets (Tools then Secrets), which are inherited into the deployment 
 - auto_sync_loop in app/sync/scheduler.py is now redundant. Removing it would avoid a double-sync if an Autoscale container ever stays warm for over an hour. Low risk, not done.
 - .replit.bak in app 2 is a backup of the pre-patch .replit. Safe to delete once the schedule has been stable for a while.
 
+
+See also: docs/PROJECT_CONTEXT.md - full background, the two-app / two-branch
+arrangement, traps already hit, and the current verified state.
