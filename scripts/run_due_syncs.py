@@ -19,6 +19,8 @@ import logging
 import os
 import sys
 
+from sqlalchemy import text
+
 from app.config import load_settings
 from app.db import DatabaseHandle
 from app.logging_setup import configure_logging
@@ -40,6 +42,30 @@ def main() -> int:
     handle = DatabaseHandle(settings)
     try:
         with handle.session() as db:
+            try:
+                logger.info(
+                    "Sync target: %s",
+                    "SYNC_DATABASE_URL override"
+                    if _override
+                    else "injected DATABASE_URL",
+                )
+                total = db.execute(
+                    text("select count(*) from data_sources")
+                ).scalar_one()
+                active = db.execute(
+                    text("select count(*) from data_sources where active")
+                ).scalar_one()
+                logger.info(
+                    "Data sources visible in this database: %d total, %d active",
+                    total,
+                    active,
+                )
+                logger.info(
+                    "Google service account credential present: %s",
+                    bool(os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")),
+                )
+            except Exception:
+                logger.warning("Pre-flight logging failed", exc_info=True)
             ran = run_due_syncs(db, settings)
         logger.info("Scheduled auto-sync pass complete: %d source(s) synced", ran)
         return 0

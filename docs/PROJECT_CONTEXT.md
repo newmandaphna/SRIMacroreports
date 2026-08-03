@@ -1,6 +1,6 @@
 # Project Context - SRI Practice Dashboard
 
-Last updated: 2026-08-02
+Last updated: 2026-08-03
 
 Purpose: a durable handover file. Any new assistant session (Claude in the
 browser, Claude Code, or a human picking this up cold) should read this file
@@ -229,3 +229,37 @@ rewritten by the Agent, or .replit having been clobbered by a branch mix-up.
 - app/sync/engine.py - run_sync(), the actual sheet-to-database work.
 - .replit - deployment config. Differs per branch ON PURPOSE.
 
+
+## 11. Correction and verification - 2026-08-03
+
+Sections 2, 3 and 8 above claim that auto_sync_loop never fires. That is WRONG. The loop fires whenever an Autoscale container happens to stay warm for longer than an hour, and on 2026-08-03 it did the real work that the scheduled runner was expected to do.
+
+Evidence, read from the live systems:
+
+- App 1 deployment log, 2026-08-03T02:39:28Z: Auto-sync check: interval=1 day(s), 1 source(s) due to sync
+- App 1 deployment log, 2026-08-03T02:42:37Z: Auto-sync wake complete: 1 source(s) synced this hour
+- Audit log, 2026-08-03 02:42:36 UTC: actor auto-sync, sync_run success, data_source #3, auto=true, no IP
+- The same hourly checks appear all through 2026-08-02, and an earlier one landed on 2026-07-29 02:00:25 UTC against data_source #1
+- The 04:00 UTC cron pass that morning therefore found 0 sources due, correctly, 78 minutes after the loop had already synced Q3
+
+App 2 is nevertheless wired correctly. Verified 2026-08-03 from the App 2 Shell, names lengths and booleans only, no secret values printed:
+
+- SYNC_DATABASE_URL, GOOGLE_SERVICE_ACCOUNT_JSON, SESSION_SECRET and ADMIN_INITIAL_PASSWORD are all present in the environment. The Secrets pane can render completely empty even when they are set. Trust the environment, not the pane.
+- Through SYNC_DATABASE_URL: 2 data sources, newest last_synced_at 2026-08-03 02:42:36 UTC, which matches the dashboard exactly.
+- Through the injected DATABASE_URL: 0 data sources. That is the orphaned Development Database, 30.13MB, still attached to App 2.
+- Proof that the DEPLOYED job reads production and not the orphan: the default for auto_sync_days is 0 (app/config_store.py) and the scheduler logs Auto-sync check: disabled (auto_sync_days=0) in that case. The orphan holds no config rows, so a job pointed at it would log disabled. Every deployed pass logged interval=1 day(s), and 1 is the production value set on 2026-07-31.
+- The Google credential works: building GoogleSheetsClient with the App 2 secret and calling list_tabs on the Q3 spreadsheet returned 13 tabs, including the configured tab. Metadata only, no writes.
+- Branch scheduled-runner is pushed: HEAD b5a3cb4 equals origin/scheduled-runner, so the open item in section 8 is closed. No .replit.bak exists in App 2.
+
+Changes landed on main in this session:
+
+- app/sync/scheduler.py: auto_sync_loop now returns immediately unless ENABLE_INPROCESS_AUTOSYNC is set to 1, true, yes or on. Default is off, so App 2 is the single source of truth and the race is gone. Setting the variable in App 1 Secrets restores the old behaviour with no code change, for example on an always-on Reserved VM.
+- scripts/run_due_syncs.py: every pass now logs which variable supplied the database URL, how many data sources are visible (total and active), and a boolean for whether the Google credential is present. A pass against the wrong database is now obvious from the log instead of looking like a quiet success. The block is wrapped in try and except so logging can never break a sync.
+- App 2 Scheduled Job Notifications switched from Disabled to Enabled under Publishing then Manage, so a failed pass emails the owner. That toggle needed no republish.
+
+Open after this session:
+
+- The runner has still never performed a live sync. With the loop off, the first pass after Q3 goes a full day stale should log 1 source due and write. Q3 was last synced 2026-08-03 02:42 UTC, so watch the 04:00 UTC pass on 2026-08-04.
+- One row dated 2026-07-22 was imported earlier but was absent from the sheet at the 2026-08-03 sync. Nothing was deleted, so the stored row still counts and the figures may overcount until somebody decides whether it was voided on purpose.
+- Q3 has 2 open rejected rows in the review queue.
+- The orphaned Development Database on App 2 is still attached and still billed. The owner deletes it, not an assistant. Do not republish App 2 afterwards.

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -148,8 +149,27 @@ def _sync_one(db: Session, settings: Settings, source_id: int) -> int:
     return 1
 
 
+def _inprocess_autosync_enabled() -> bool:
+    # Off by default. Auto-sync is driven from outside this process by the
+    # scheduled runner app, which is the only thing that fires reliably on
+    # Autoscale. When a container happens to stay warm for over an hour the
+    # loop below also fires, and then the two race: whichever gets there
+    # first makes the source no longer due, which is how the runner ended up
+    # reporting 0 sources due on every pass. Set ENABLE_INPROCESS_AUTOSYNC=1
+    # to switch the loop back on, for example on an always-on Reserved VM.
+    raw = os.environ.get("ENABLE_INPROCESS_AUTOSYNC", "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 async def auto_sync_loop(app) -> None:
     """Hourly forever. Sleeps first so boot is never slowed by a sync."""
+    if not _inprocess_autosync_enabled():
+        logger.info(
+            "In-process auto-sync is off (ENABLE_INPROCESS_AUTOSYNC unset). "
+            "The scheduled runner app drives auto-sync, so this loop stays "
+            "out of its way."
+        )
+        return
     while True:
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)
         try:

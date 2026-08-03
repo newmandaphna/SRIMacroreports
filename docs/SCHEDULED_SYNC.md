@@ -79,3 +79,13 @@ Workspace Secrets (Tools then Secrets), which are inherited into the deployment 
 
 See also: docs/PROJECT_CONTEXT.md - full background, the two-app / two-branch
 arrangement, traps already hit, and the current verified state.
+
+## Correction - 2026-08-03
+
+The sections above say the in-process loop never fires. It does. Whenever an Autoscale container stays warm for longer than an hour the loop wakes and syncs. On 2026-08-03 it synced Q3 itself between 02:39 and 02:42 UTC, 78 minutes before the 04:00 UTC cron pass, which then correctly reported 0 sources due.
+
+As of this commit the loop is gated behind ENABLE_INPROCESS_AUTOSYNC and is off by default, so this scheduled job is the only thing that drives auto-sync.
+
+A healthy pass now logs, in order: Database ready, Sync target, Data sources visible in this database, Google service account credential present, Auto-sync check, and Scheduled auto-sync pass complete. If Sync target reads injected DATABASE_URL, or the visible source count is 0, the job is pointed at the wrong database.
+
+Verified 2026-08-03: the deployed job reads the production database, proved by the auto_sync_days default of 0 against the logged interval=1; the Google service account authenticates and can list the Q3 tabs; and Scheduled Job Notifications are now enabled, so a failed pass emails the owner.
